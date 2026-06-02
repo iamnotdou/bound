@@ -1,4 +1,4 @@
-# CCP — Containment Certificate Protocol (Stellar)
+# Bound Protocol (Stellar)
 
 > Build On Stellar Hackathon — IBW 2026 Istanbul
 > Tracks: Main Track + Hack Agentic
@@ -9,12 +9,10 @@
 
 AI agents now hold wallets, sign transactions, and make payments autonomously. But classical trust models fail because:
 
-- **Probabilistic** — Past behavior weakly predicts future behavior (LLM outputs are stochastic)
+- **Probabilistic** — Past behavior weakly predicts future behavior
 - **Non-stationary** — Silent model updates change the entity being scored
-- **Ephemeral** — Creating a new identity is nearly costless, so punishment is meaningless
+- **Ephemeral** — Creating a new identity is nearly costless
 - **No worst-case bound** — Counterparties have no way to know their maximum possible loss
-
-The question a counterparty needs answered is not "will this agent behave well?" It is:
 
 > **"What is my worst-case loss, and who absorbs it?"**
 
@@ -22,210 +20,23 @@ The question a counterparty needs answered is not "will this agent behave well?"
 
 ## The Solution
 
-CCP is a protocol for issuing, publishing, and verifying **containment certificates** — on-chain attestations that an AI agent's economic impact is structurally bounded by agent-independent constraints, backed by exogenous reserves.
+Bound Protocol issues **Bound Certificates** — on-chain attestations that an AI agent's worst-case economic loss is *bounded*: a known, pre-funded number that an independent auditor has staked their own capital to guarantee.
 
-A certificate answers one question:
+We don't pretend to control the agent. We make its worst-case loss a number the counterparty can read before transacting — backed by a locked reserve, vouched by an auditor who loses their own money if the claim is false.
 
-> Does the surrounding system make this agent economically safe enough to transact with?
-
-The cage holds. Even if the agent goes rogue, the smart contract hard limit is absolute. The reserve covers losses. The auditor staked their own money on the claim.
+This is a surety bond for AI agents, on-chain. The reserve covers losses. The auditor staked their own capital on the attestation. A challenger who catches a false attestation slashes that stake and compensates the victim.
 
 ---
 
-## Core Concepts
-
-### Agent-Independent vs Agent-Influenceable
-
-| Type | Examples | Can Agent Degrade It? |
-|---|---|---|
-| Agent-Independent | Smart contract limits, multi-sig thresholds | No — code is code |
-| Agent-Influenceable | Human oversight, reputation scores, rate limits | Yes — agent can social-engineer |
-
-**Design rule:** Even if ALL agent-influenceable layers collapse, agent-independent layers must bound the loss to a level the reserve can absorb.
-
-Only agent-independent constraints count toward the containment bound.
-
-### The Hard Limit
-
-The agent does not hold funds directly. All payments flow through the `SpendingLimit` contract:
-
-```
-$0 → $X        agent signature alone → executes
-$X → hard max  NOT SUPPORTED in MVP (co-sign removed for simplicity)
-above hard max  always REVERT — no signature can override this
-```
-
-This means: the agent cannot spend more than `hard_max` under any circumstances. The contract code enforces it. The agent cannot change the contract.
-
----
-
-## Full System Flow
-
-### Actors
+## Actors
 
 | Actor | Role |
 |---|---|
 | Operator | Deploys the agent, sets up containment, locks reserve + fee |
 | Agent | The AI making payments (probabilistic, untrusted) |
 | Auditor | Independent reviewer who stakes own capital on honest attestation |
-| Counterparty | Entity deciding whether to accept payment/transact with agent |
+| Counterparty | Entity deciding whether to accept payment / transact with agent |
 | Challenger | Anyone watching the system — earns reward for catching fraud |
-
----
-
-### Phase 1 — Setup (done once per agent)
-
-```
-OPERATOR
-  │
-  ├─► Deploy SpendingLimit contract
-  │     - agent address
-  │     - hard limit: e.g. $50,000 (absolute ceiling, code-enforced)
-  │
-  ├─► Lock $10,000 USDC in ReserveVault
-  │     - operator cannot withdraw
-  │     - released only on certificate expiry or by ChallengeManager
-  │
-  └─► Lock $500 USDC in FeeEscrow (audit fee)
-        - released to auditor only after honest attestation
-
-
-AUDITOR
-  │
-  ├─► Stake $1,500 own USDC in AuditorStaking  ← skin in the game
-  │
-  ├─► Review the setup:
-  │     - Are limits real and correctly set?
-  │     - Is reserve deposited and locked?
-  │     - Is the operator address correct?
-  │
-  ├─► If satisfied: sign attestation
-  │
-  └─► FeeEscrow releases $500 to auditor
-
-
-OPERATOR
-  └─► Registry.publish(operatorSig, auditorSig)
-        → Certificate is now on-chain, publicly readable
-```
-
----
-
-### Phase 2 — Runtime (every transaction)
-
-```
-Agent decides to pay $500
-  │
-  └─► SpendingLimit.pay(500 USDC, recipient)
-        │
-        ├─ amount ≤ hard_limit?
-        │    YES → execute ✓
-        │
-        └─ amount > hard_limit?
-             → always REVERT ✗
-                (impossible by code, no workaround)
-```
-
-The agent's funds are held by the contract, not the agent wallet. The agent can only call the contract. It cannot bypass it.
-
----
-
-### Phase 3 — Verification (counterparty checks before transacting)
-
-```
-Counterparty: "This agent wants to send me $3,000. Should I accept?"
-  │
-  └─► Registry.verify(agentAddress)
-        │
-        ├─ Certificate exists?                  ✓
-        ├─ Operator signature valid?            ✓
-        ├─ Auditor signature valid?             ✓
-        ├─ Auditor stake still locked?          ✓  ($1,500)
-        ├─ Reserve sufficient?                  ✓  ($10,000)
-        ├─ $3k < hard limit?                    ✓  ($50,000 limit)
-        ├─ Certificate not expired?             ✓
-        │
-        └─► PASS → accept the transaction
-
-Counterparty reasoning:
-  "Even if the agent goes rogue, it can't exceed $50k.
-   $10k reserve exists to cover my loss.
-   Auditor staked $1,500 — they lose it if they lied.
-   My $3k transaction is safe."
-```
-
----
-
-### Phase 4 — Challenge (if something goes wrong)
-
-```
-Challenger notices: fraudulent certificate / insufficient reserve / limit exceeded
-  │
-  └─► ChallengeManager.challenge(certId, proof)
-        + small stake (spam prevention)
-
-ChallengeManager evaluates:
-
-  CHALLENGE WINS:
-    ├─► AuditorStaking → slash auditor's $1,500
-    ├─► slashed amount → reward to challenger
-    ├─► ReserveVault → compensate harmed counterparty
-    └─► certificate marked invalid
-
-  CHALLENGE LOSES:
-    └─► challenger's stake is slashed
-```
-
----
-
-## Nash Equilibrium
-
-Each actor's dominant strategy when everyone else plays honestly:
-
-| Actor | Defection Scenario | Why It Fails |
-|---|---|---|
-| Operator | Set fake limits ($500k instead of $50k) | Auditor catches it — no attestation, no certificate |
-| Operator | Don't deposit reserve | Auditor won't sign. Counterparty verify fails. |
-| Auditor | Sign without reviewing | If system is exploited, stake slashed + reputation destroyed |
-| Auditor | Collude with operator | Challenger watches — challenge wins, both slashed |
-| Agent | Exceed hard limit | Contract code prevents it — physically impossible |
-| Counterparty | Trust without verifying | Their own risk — verified users are protected |
-| Challenger | Challenge valid certificate | Loses stake |
-| Challenger | Ignore real fraud | Misses reward |
-
-**No actor benefits from unilateral deviation. Nash equilibrium holds.**
-
----
-
-## Stellar-Specific Design
-
-### Why Stellar
-
-| Feature | CCP Benefit |
-|---|---|
-| 3-5s finality | Certificate verification is near-instant |
-| Sub-cent fees | Micro-transactions viable, agent payments cheap |
-| Native USDC (Circle) | Real stablecoin, no mock needed |
-| Native multi-sig | Threshold accounts replace hardware co-signers |
-| Soroban | Expressive enough for all 6 contracts |
-| x402 protocol | Agents can pay for HTTP services through CCP limits |
-
-### x402 Integration (Killer Feature)
-
-x402 is Stellar's native agentic payment protocol. When an agent makes an HTTP request to a service that costs money:
-
-```
-Normal flow (no CCP):
-Agent → HTTP request → 402 Payment Required → agent pays directly → service
-
-CCP + x402 flow:
-Agent → HTTP request → 402 Payment Required
-  → agent calls SpendingLimit.pay() via x402
-  → if amount ≤ hard_limit → executes → service responds
-  → if amount > hard_limit → REVERT → agent cannot proceed
-```
-
-This makes CCP directly pluggable into real agentic commerce. The agent doesn't need to know about CCP — the SpendingLimit contract is transparent middleware.
 
 ---
 
@@ -233,186 +44,419 @@ This makes CCP directly pluggable into real agentic commerce. The agent doesn't 
 
 | Contract | Purpose |
 |---|---|
-| `Registry` | Store, publish, read, verify certificates |
-| `SpendingLimit` | Hard limit enforcement — agent pays through this |
-| `ReserveVault` | Locked USDC reserve + audit fee bucket |
+| `Registry` | Store, publish, read, verify Bound Certificates |
+| `ReserveVault` | Locked USDC reserve — absorbs worst-case loss |
 | `AuditorStaking` | Auditor's own stake — slashable on fraud |
 | `FeeEscrow` | Conditional audit fee — released after attestation |
-| `ChallengeManager` | Dispute resolution — slash + compensate |
+| `ChallengeManager` | Dispute resolution — slash auditor + compensate victim |
 
-All contracts written in Rust (Soroban). Deployed to Stellar Testnet.
+5 contracts, all written in Rust (Soroban). Deployed to Stellar Testnet.
+
+The certificate's `bound` is an **attested coverage limit** — a number the auditor signs and stakes on, not a value enforced by a separate on-chain cap. The guarantee is economic (reserve + slashable stake), not preventive.
 
 ---
 
 ## Repository Structure
 
 ```
-ccp-stellar/
+bound/
+├── Cargo.toml                          # Soroban workspace root
+├── package.json                        # single Next.js package
+├── .env.testnet                        # 5 account keys + contract addresses
+│
 ├── contracts/
-│   ├── registry/
-│   ├── spending-limit/
-│   ├── reserve-vault/
-│   ├── auditor-staking/
-│   ├── fee-escrow/
-│   └── challenge-manager/
-├── sdk/
-│   └── src/
-│       ├── index.ts           publishCertificate, verifyCertificate
-│       ├── payments.ts        executePayment (x402 compatible)
-│       └── client.ts          Soroban contract clients (auto-generated)
-├── apps/
-│   └── web/                   Next.js — landing + dashboard + live demo
-├── Cargo.toml
-├── package.json
-└── turbo.json
+│   ├── reserve-vault/src/lib.rs
+│   ├── auditor-staking/src/lib.rs
+│   ├── fee-escrow/src/lib.rs
+│   ├── challenge-manager/src/lib.rs    ← demo climax: slash + compensate
+│   └── registry/src/lib.rs
+│
+├── scripts/
+│   ├── setup-accounts.ts               # create + fund 5 testnet accounts
+│   ├── deploy-all.ts                   # deploy all 5 contracts → .env.testnet
+│   └── demo.ts                         # 8-step E2E validation script
+│
+└── app/                                # Next.js app
+    ├── page.tsx                        # Landing
+    ├── dashboard/page.tsx              # Certificate lookup by agent address
+    ├── chat/page.tsx                   # Operator ↔ Agent chat (main demo)
+    ├── auditor/page.tsx                # Auditor signs certificates
+    ├── api/
+    │   ├── chat/route.ts               # streaming chat + agent tools
+    │   └── verify/route.ts             # Registry.verify endpoint
+    ├── components/
+    │   ├── CertificateCard.tsx
+    │   ├── ToolCallCard.tsx            # visual card per tool call (green/red)
+    │   └── QuickPrompts.tsx            # preset scenario buttons
+    └── lib/
+        ├── bound-client.ts             # BoundClient + all 5 contract calls
+        ├── agent-tools.ts              # Claude tool definitions
+        ├── payments.ts                 # executePayment (direct USDC) + x402
+        └── accounts.ts                 # demo keypairs (server-side only)
 ```
 
 ---
 
-## End-to-End Ship Plan
+## Build Plan (36 Hours)
 
-### Step 0 — Environment Setup (Day 1, Hour 0-2)
+### Phase 0 — Environment (Hours 0–3)
 
-- [ ] Init monorepo: `pnpm init` + `turbo.json`
-- [ ] Install Stellar CLI: `cargo install --locked stellar-cli`
-- [ ] Create 4 Stellar testnet accounts: operator, agent, auditor, challenger
-- [ ] Fund all accounts via testnet faucet
-- [ ] Get testnet USDC from Circle faucet
-- [ ] Scaffold Soroban workspace: `stellar contract init`
+- [ ] pnpm init + turbo.json + pnpm-workspace.yaml
+- [ ] Root Cargo.toml with 5 members
+- [ ] `cargo install --locked stellar-cli`
+- [ ] `scripts/setup-accounts.ts` — generate 5 keypairs, fund via friendbot + Circle faucet
+- [ ] Write all keys to `.env.testnet`
 
-### Step 1 — Core Contracts (Day 1, Hour 2-10)
+### Phase 1 — Contracts (Hours 3–14)
 
-Write and test contracts in this order (each depends on the previous):
+Build in dependency order. Each: write → unit test → deploy.
 
-1. **ReserveVault** — simplest, just deposit/lock/release USDC
-2. **AuditorStaking** — stake, slash, release
-3. **FeeEscrow** — deposit, release on condition, slash on condition
-4. **SpendingLimit** — pay(), enforce hard limit, track spend
-5. **ChallengeManager** — challenge(), evaluate(), slash(), compensate()
-6. **Registry** — publish(operatorSig, auditorSig), verify(agentAddress)
+1. **ReserveVault** (Hours 3–5.5) — deposit/lock/release USDC, payout to victim
+2. **AuditorStaking** (Hours 5.5–7.5) — stake/slash/release
+3. **FeeEscrow** (Hours 7.5–9) — conditional release on attestation
+4. **ChallengeManager** (Hours 9–12) — challenge/evaluate/slash + compensate
+5. **Registry** (Hours 12–14) — publish(operatorSig, auditorSig) + verify(agentAddress)
 
-For each contract:
-- Write `src/lib.rs`
-- Write unit tests in `#[cfg(test)]`
-- Deploy to testnet: `stellar contract deploy`
-- Note deployed contract address
+**ChallengeManager — the critical path:**
 
-### Step 2 — Integration Test (Day 1, Hour 10-13)
+Two resolution paths, split by what a contract can actually prove on-chain:
 
-Write one end-to-end script (TypeScript) that runs the full demo flow:
+```rust
+// challenger posts a bond + names the harmed victim
+pub fn challenge(env, challenger, cert_id, proof_type, victim, stake) -> u64
 
-1. Auditor stakes → `AuditorStaking.stake(1500)`
-2. Operator deposits reserve → `ReserveVault.deposit(10000)`
-3. Operator deposits fee → `FeeEscrow.deposit(500)`
-4. Auditor attests → signs certificate data
-5. Operator publishes → `Registry.publish(operatorSig, auditorSig)`
-6. Counterparty verifies → `Registry.verify(agentAddress)` → PASS
-7. Agent pays $500 → `SpendingLimit.pay(500)` → EXECUTES
-8. Agent tries $80,000 → `SpendingLimit.pay(80000)` → REVERT
+// TRUSTLESS — the contract proves the fraud itself, no oracle, no human.
+// Only valid for InsufficientReserve (objectively verifiable on-chain).
+pub fn resolve(env: Env, challenge_id: u64) {
+    let fraud = match proof_type {
+        InsufficientReserve => {
+            let claimed = Registry::get_cert_reserve(cert_id);   // what the cert claims
+            let actual  = ReserveVault::get_balance();           // what is really locked
+            actual < claimed                                     // math, not opinion
+        }
+        _ => panic!("needs_arbiter"),
+    };
+    if fraud {
+        AuditorStaking::slash(auditor, victim, 80%);   // most of stake → victim
+        AuditorStaking::slash(auditor, challenger, 20%); // finder's fee
+        ReserveVault::release_to_victim(victim, balance);
+        Registry::invalidate(cert_id);
+        // challenger's bond returned                   // ← the demo climax
+    } // else: challenger forfeits bond
+}
 
-All 8 steps must pass before moving to web app.
-
-### Step 3 — x402 Integration (Day 1, Hour 13-16)
-
-- Implement `sdk/src/payments.ts` wrapping x402 + SpendingLimit
-- Write a mock HTTP service that returns `402 Payment Required`
-- Agent calls mock service → x402 triggers SpendingLimit → payment executes or blocks
-- This becomes the centerpiece of the demo
-
-### Step 4 — Web App (Day 1 Hour 16 — Day 2 Hour 8)
-
-Single Next.js app with 3 pages:
-
-**Page 1: Landing**
-- What is CCP? (one paragraph)
-- The problem: AI agents need trust infrastructure
-- The solution: structural containment, not behavioral reputation
-- CTA: "See Live Demo"
-
-**Page 2: Dashboard**
-- Connect wallet (Passkey-Kit or Freighter)
-- Search agent address → show certificate details
-- Certificate card shows:
-  - Hard limit
-  - Reserve amount
-  - Auditor stake
-  - Certificate status (VALID / EXPIRED / CHALLENGED)
-  - Risk contribution breakdown (Reserve: 50%, Limit: 30%, Auditor: 20%)
-
-**Page 3: Live Demo**
-- Step-by-step interactive demo
-- Button: "Agent pays $500" → show tx hash → PASS
-- Button: "Agent pays $80,000" → show REVERT → BLOCKED
-- Button: "Verify Certificate" → show all green checks
-- Button: "Challenger attacks" → show slash
-
-### Step 5 — Deploy & Verify (Day 2, Hour 8-10)
-
-- Deploy all 6 contracts to Stellar Testnet
-- Note all contract addresses
-- Update SDK with deployed addresses
-- Run full demo script against live testnet
-- Verify everything passes
-
-### Step 6 — Polish & Submission (Day 2, Hour 10-13)
-
-- Write README: what it is, how to run, deployed addresses
-- Write technical design doc (judges read this)
-- Record 2-minute demo video
-- Prepare 5-minute pitch (template from hackathon)
-- Submit on risein.com portal
-  - Tick: Main Track
-  - Tick: Hack Agentic
-
----
-
-## Demo Script (5-minute pitch)
-
-```
-0:00 - 0:45  The problem
-  "AI agents now hold wallets. How do you trust an AI?"
-  "You can't. But you can trust the cage."
-
-0:45 - 1:30  The certificate
-  "CCP issues a containment certificate — an on-chain proof
-   that the agent cannot exceed its limits, backed by real reserves."
-
-1:30 - 3:00  Live demo
-  - Agent pays $500 → executes
-  - Agent pays $80k → BLOCKED on chain
-  - Counterparty verifies certificate → all green
-
-3:00 - 3:45  Why Stellar + x402
-  "x402 makes this transparent middleware —
-   agents pay for HTTP services, CCP silently enforces limits."
-
-3:45 - 4:30  Nash equilibrium
-  "Auditor stakes own money → honest review is dominant strategy
-   Challenger earns from fraud → system self-polices"
-
-4:30 - 5:00  Ask
-  "We're the safety layer for agentic commerce on Stellar."
+// ARBITER-GATED — for claims no contract can verify (BoundExceeded,
+// FakeSignature). Explicit trust assumption, arbiter named at init.
+pub fn resolve_by_arbiter(env, challenge_id, fraud_proven)
 ```
 
----
+**Why InsufficientReserve is the demo's trustless climax:** payments are direct
+USDC transfers, so there is no on-chain record of what the agent *spent* —
+"BoundExceeded" needs an oracle. But "the reserve is smaller than the auditor
+attested" is pure arithmetic the contract checks itself. That's the scenario the
+demo runs end-to-end with zero trusted parties.
 
-## Judging Criteria Alignment
+### Phase 2 — Deploy + Bindings (Hours 14–16)
 
-| Criteria | Our Answer |
+```bash
+# deploy-all.ts runs these in sequence, captures addresses → .env.testnet
+stellar contract deploy --wasm contracts/reserve-vault/...wasm --source operator --network testnet
+stellar contract deploy --wasm contracts/auditor-staking/...wasm ...
+stellar contract deploy --wasm contracts/fee-escrow/...wasm ...
+stellar contract deploy --wasm contracts/challenge-manager/...wasm ...
+stellar contract deploy --wasm contracts/registry/...wasm ...
+
+# generate TypeScript bindings for each
+stellar contract bindings typescript --network testnet --contract-id $ADDRESS --output-dir ./sdk/src/contracts/<name>
+```
+
+### Phase 3 — SDK (Hours 16–19)
+
+- `BoundClient` class wrapping all 5 auto-generated contract clients
+- `publishCertificate(params)` → certId
+- `verifyCertificate(agentAddress)` → VerifyResult
+- `executePayment(amount, recipient, keypair)` → txHash (direct USDC transfer)
+- `challengeCertificate(certId, proofType, victim, keypair)` → posts bond, then `resolve()` slashes auditor + compensates victim
+- x402 `agentFetch(url, keypair)` — intercepts 402, pays via executePayment
+
+### Phase 4 — Claude Agent (Hours 19–22)
+
+`sdk/src/agent.ts` — tools + `runBoundAgent(task, keypair)` loop:
+
+**Tools the agent has:**
+
+| Tool | What it does |
 |---|---|
-| Meaningful idea | AI agent trust is the defining infrastructure problem of 2026 |
-| Real-world impact | Every autonomous agent doing payments needs this |
-| Technical implementation | 6 Soroban contracts, full test suite, deployed testnet |
-| User experience | One-click verify, dashboard, live demo |
-| Ecosystem fit | x402 native, Soroban, Circle USDC, Passkey-Kit |
-| Agentic track | Autonomous spending, clear safeguards, x402 integration |
+| `verify_agent_certificate` | Check an agent's Bound Certificate — bound, reserve, auditor stake, status |
+| `execute_payment` | Send USDC directly to a recipient |
+| `fetch_paid_service` | HTTP request with automatic x402 payment |
+| `get_balance` | Current USDC balance of the agent |
+| `challenge_certificate` | Prove a false attestation on-chain (`resolve()`) — slashes auditor, compensates victim |
+
+**Counterparty runner pattern (the core interaction):**
+```typescript
+async function counterpartyDecides(agent: Address, amount: i128) {
+  // before accepting payment, counterparty reads the certificate
+  const cert = await verifyCertificate(agent);
+  // cert.status === VALID, cert.bound, cert.reserve, cert.auditorStake
+  // decision: "worst-case loss is bounded at cert.bound, pre-funded by reserve,
+  //            vouched by an auditor who loses cert.auditorStake if false"
+  // → accept the agent as a counterparty
+}
+```
+
+### Phase 5 — E2E Demo Script (Hours 22–24)
+
+`scripts/demo.ts` — 8 steps, all must pass before moving to web:
+
+```
+Step 1/8  Auditor stakes $1,500            → AuditorStaking    ✓
+Step 2/8  Operator deposits reserve        → ReserveVault      ✓  but only $4k...
+Step 3/8  Operator deposits $500 fee       → FeeEscrow         ✓
+Step 4/8  Auditor attests "reserve $10k"   → Registry.attest   ✓  (the false vouch)
+Step 5/8  Operator publishes cert          → Registry          ✓  cert_id: XXXXX
+Step 6/8  Counterparty verifies → accepts  → Registry.verify   ✓  VALID, reserve $10k
+Step 7/8  Agent pays $500 to counterparty  → USDC transfer     ✓  tx: ABCDE
+Step 8/8  Challenger proves reserve short  → ChallengeManager  ✓  SLASHED + PAID
+```
+
+Step 8 is the trustless climax. The certificate claims a $10k reserve, but the
+vault only holds $4k. A challenger calls `resolve()` — and the **contract proves
+the fraud itself**: it reads `Registry.get_cert_reserve()` ($10k claimed) and
+`ReserveVault.get_balance()` ($4k actual), sees `actual < claimed`, and in one
+atomic transaction **slashes the auditor's $1,500 stake** (80% → counterparty,
+20% → challenger), drains the remaining reserve to the counterparty, and
+**invalidates the cert**. No oracle. No arbiter. Pure on-chain arithmetic.
+"Step 8 success" = the auditor's false vouch cost them their stake.
+
+### Phase 6 — Web App (Hours 24–31)
+
+**Landing** — hero, 4-panel how-it-works, why Stellar, CTA
+
+**Dashboard** — search by agent address → CertificateCard showing:
+- Status badge: VALID / EXPIRED / CHALLENGED / SLASHED
+- Bound (attested coverage limit), Reserve, Auditor stake
+- Issued/expires timestamps
+
+**Chat page** (`/chat`) — operator (human) ↔ agent conversation. Main demo interface.
+- `useChat` hook (Vercel AI SDK) handles streaming + tool call state
+- Tool calls rendered as `ToolCallCard` (green = executed, amber = challenged, red = slashed)
+- Quick prompt buttons: "Verify this agent's certificate", "Pay $500 for API service", "Access premium service (x402)", "Challenge a bad attestation"
+- All contract calls server-side in `/api/chat/route.ts` — secret keys never touch browser
+
+**Auditor page** (`/auditor`) — separate simple page where auditor reviews setup and signs.
+- Shows pending certificate data (operator address, limits, reserve amount)
+- "Sign & Publish" button → calls Registry.publish(operatorSig, auditorSig)
+- In demo: hardcoded auditor keypair signs automatically (simulated auditor)
+
+All contract calls happen server-side in Next.js API routes. Secret keys never touch the browser.
+
+### Phase 7 — Deploy + Verify (Hours 31–35)
+
+- Run `scripts/demo.ts` green against live testnet
+- Deploy web to Vercel: `vercel --prod`
+- Update README with all 5 contract addresses
+- Open /chat, run all 4 quick prompts, verify tool call cards and tx hashes
+
+### Phase 8 — Submit (Hours 35–36)
+
+- risein.com portal: Main Track + Hack Agentic
+- GitHub public + Vercel URL
+- Answer the 3 mandatory agentic questions
+
+---
+
+## Testing Strategy
+
+### Layer 1: Contract Unit Tests (Rust)
+
+Each `lib.rs` has `#[cfg(test)]` module using `soroban_sdk::testutils`.
+
+`ChallengeManager` unit tests cover what can be tested without deployed
+dependencies (bond minimum, double-resolve guard). The full cross-contract
+slash + compensate path uses live `invoke_contract` calls into Registry /
+AuditorStaking / ReserveVault, so it is exercised in Layer 2 against real
+deployed contracts — not in unit tests.
+
+```rust
+#[test] #[should_panic(expected = "stake_below_minimum")]
+fn test_challenge_below_min_stake_panics() { ... }
+
+#[test] #[should_panic(expected = "already_resolved")]
+fn test_double_resolve_panics() { ... }
+```
+
+Run: `cargo test -p challenge-manager`
+
+### Layer 2: SDK Integration Tests (TypeScript, real testnet)
+
+`sdk/src/__tests__/integration.test.ts` with Vitest, `--timeout 30000`.
+
+- publish + verify certificate
+- counterparty reads cert (bound, reserve, stake) before accepting
+- payment to counterparty succeeds
+- reserve under-funded → `resolve()` proves it on-chain → auditor slashed, victim + challenger paid, cert invalidated
+- reserve correctly funded → `resolve()` finds no fraud → challenger forfeits bond
+- `release_to_operator` before expiry reverts (`reserve_still_locked`)
+
+### Layer 3: Agent Tool Tests
+
+`sdk/src/__tests__/agent.test.ts`:
+
+- agent verifies a counterparty's certificate → returns bound, reserve, stake, status
+- agent completes $500 payment task → `success: true` + `tx_hash`
+- agent pays a service via x402 → `success: true` + `tx_hash`
+
+### Layer 4: E2E
+
+`scripts/demo.ts` — all 8 steps pass = submission gate.
+
+---
+
+## Environment Variables (.env.testnet)
+
+```
+STELLAR_NETWORK=testnet
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+
+OPERATOR_SECRET=S...
+AGENT_SECRET=S...
+AUDITOR_SECRET=S...
+CHALLENGER_SECRET=S...
+COUNTERPARTY_SECRET=S...
+
+OPERATOR_ADDRESS=G...
+AGENT_ADDRESS=G...
+AUDITOR_ADDRESS=G...
+CHALLENGER_ADDRESS=G...
+COUNTERPARTY_ADDRESS=G...
+
+RESERVE_VAULT_ADDRESS=C...
+AUDITOR_STAKING_ADDRESS=C...
+FEE_ESCROW_ADDRESS=C...
+CHALLENGE_MANAGER_ADDRESS=C...
+REGISTRY_ADDRESS=C...
+
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+---
+
+## Live Demo Flow (What the Judge Sees)
+
+Judge opens `/chat`. Certificate is already published (pre-seeded on page load).
+
+**Quick prompt — "Verify this agent's certificate":**
+```
+👤 Counterparty: "Before I transact, what's this agent's Bound Certificate?"
+
+🤖 Agent: "Reading the certificate from the Registry..."
+┌─────────────────────────────────────┐
+│ 🔧 verify_agent_certificate         │
+│ agent: GAGENT...1234                │
+│ ✓ VALID                             │
+│   bound:         $50,000            │
+│   reserve:       $10,000 (locked)   │
+│   auditor stake: $1,500 (slashable) │
+│   auditor:       GAUDITOR...5678    │
+└─────────────────────────────────────┘
+"Your worst-case loss is bounded at $50k, pre-funded by a $10k
+ locked reserve, and an auditor staked $1,500 of their own money
+ on this attestation. If it's false, you get compensated and they
+ get slashed."
+```
+
+**Quick prompt — "Pay $500 for API service":**
+```
+👤 Operator: "Pay $500 for the data API service"
+
+🤖 Agent: "Executing payment..."
+┌─────────────────────────────────┐
+│ 🔧 execute_payment              │
+│ amount: $500 · GCOUNTERPARTY... │
+│ ✓ tx: ABCDE12345 (stellar.exp)  │
+└─────────────────────────────────┘
+"Payment complete. $500 USDC sent and confirmed on Stellar Testnet."
+```
+
+**Quick prompt — "Challenge this certificate" (the climax):**
+```
+👤 Challenger: "The cert claims a $10k reserve. Prove it's actually there."
+
+🤖 "Calling ChallengeManager.resolve() — the contract checks for itself..."
+┌──────────────────────────────────────┐
+│ 🔧 challenge_certificate             │
+│ cert_id: XXXXX · InsufficientReserve │
+│   claimed reserve:  $10,000          │
+│   actual on-chain:  $4,000           │
+│ ⚡ FRAUD PROVEN — by arithmetic       │
+│   auditor stake $1,500 → SLASHED     │
+│     → $1,200 counterparty            │
+│     → $300 challenger (finder's fee) │
+│   reserve $4,000 → counterparty      │
+│   cert status → INVALID              │
+└──────────────────────────────────────┘
+"No oracle. No arbiter. The contract read the certificate's claim
+ ($10k) against the live vault balance ($4k), proved the auditor's
+ vouch was false, and slashed their stake on-chain in one transaction.
+ The counterparty walked away with $5,200. Vouching isn't free."
+```
+
+The auditor put their own money behind a false claim. The contract — not a
+human — caught it and made the victim whole. The cage was economic, and it held.
+
+---
+
+## Nash Equilibrium
+
+| Actor | Defection | Why It Fails |
+|---|---|---|
+| Operator | Under-fund the reserve | Any challenger proves it on-chain (`actual < claimed`) → auditor slashed, victim compensated |
+| Operator | Withdraw reserve early | `release_to_operator` is time-locked until cert expiry — reverts |
+| Auditor | Attest a reserve that isn't there | Trustless challenge wins by arithmetic → their stake is slashed |
+| Auditor | Sign without reviewing | Same — if any claim is false, their stake pays for it |
+| Auditor | Withdraw stake after attesting | `attest()` bonds the stake to the cert; `release()` reverts (`stake_locked`) until expiry |
+| Challenger | False challenge | `resolve()` finds `actual >= claimed` → challenger forfeits bond |
+
+---
+
+## Trust Model & Known Limitations
+
+Being precise about what is *trustless* vs. what rests on an *economic* or *scope* assumption:
+
+**Trustless (the contract proves it itself):**
+- `InsufficientReserve`: `resolve()` reads the cert's claimed reserve and the live vault balance and slashes on `actual < claimed`. No oracle, no human.
+- Reserve lock: the operator cannot reclaim the reserve until cert expiry (`reserve_still_locked`).
+- **Stake bond: once an auditor attests, their stake is locked to the cert until expiry — they cannot vouch and then walk their capital out (`stake_locked`).** *(Fixed: `AuditorStaking.lock`, set by `Registry.attest`.)*
+
+**Economic / scope assumptions (honest about the edges):**
+- **Victim is named by the challenger, not verified on-chain.** Payments are direct USDC transfers with no on-chain record, so the contract can punish the auditor trustlessly but cannot *prove who was harmed*. Compensation routing trusts the challenger to name the true victim. (Same root cause as why `BoundExceeded` needs an arbiter.)
+- **One reserve vault = one operator, single balance.** Per-cert reserve segregation is out of MVP scope; a production build would isolate reserves per certificate.
+- **`bound` is an attested number, not an on-chain cap.** No contract reads it. With `reserve < bound`, only the reserve is pre-funded; the remainder is backed by the (now-locked) auditor stake and their reputation. The certificate's honest claim is "loss is pre-funded up to the reserve, and an auditor staked slashable capital on the attestation."
+- A forfeited challenge bond currently stays in the ChallengeManager (not redistributed).
+
+---
+
+## Submission Checklist
+
+- [ ] GitHub public with README + all 5 contract addresses
+- [ ] All 5 contracts deployed to Stellar Testnet
+- [ ] SDK works against live testnet
+- [ ] Web app deployed (Vercel)
+- [ ] `scripts/demo.ts` all 8 steps pass
+- [ ] Chat page: all 4 quick prompts work, tool call cards render correctly
+- [ ] Claude agent: verify cert → $500 executes → challenge slashes auditor + compensates
+- [ ] Pitch deck prepared
+- [ ] Submitted on risein.com: Main Track + Hack Agentic ticked
 
 ---
 
 ## What NOT to Build (MVP Scope)
 
-- No co-sign threshold (hard limit is sufficient for demo)
-- No ENS / Stellar Federation naming (use raw addresses)
+- No on-chain spending-cap enforcement (the bound is an attested, slashable claim — not a hard cap)
+- No co-sign threshold
+- No ENS / Stellar Federation naming
 - No docs site (README is enough)
 - No mainnet deployment (testnet only)
-- No frontend wallet creation flow (hardcode demo accounts)
+- No frontend wallet creation (hardcode demo accounts)

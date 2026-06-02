@@ -1,0 +1,20 @@
+# ── Secrets — NEVER commit (these hold the 5 account secret keys + API key) ──
+.env
+.env.*
+!.env.example
+*.bak
+*.bak-*
+
+# ── Node / Next.js ──
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# ── Rust / Soroban ──
+target/
+
+# ── OS / editor ──
+.DS_Store
+*.log

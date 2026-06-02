@@ -1,0 +1,40 @@
+{
+  "name": "bound-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "setup": "ts-node --project scripts/tsconfig.json scripts/setup-accounts.ts",
+    "deploy": "ts-node --project scripts/tsconfig.json scripts/deploy-all.ts",
+    "demo": "ts-node --project scripts/tsconfig.json scripts/demo.ts",
+    "mcp": "ts-node --transpile-only --project scripts/tsconfig.json mcp/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "tools-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/tools-smoke.ts",
+    "sdk-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/sdk-smoke.ts",
+    "mcp-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/mcp-smoke.ts",
+    "routes-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/routes-smoke.ts",
+    "verify-all": "pnpm typecheck && pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm routes-smoke"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.2.12",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@stellar/stellar-sdk": "^14.6.1",
+    "ai": "^4.3.16",
+    "next": "15.3.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.25.56"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^16.5.0",
+    "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5"
+  }
+}
