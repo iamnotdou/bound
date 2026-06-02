@@ -33,10 +33,11 @@ function expiresAt(): bigint {
 export async function GET() {
   const agent = accounts.agent.publicKey();
   try {
-    const [current, stake, registered] = await Promise.all([
+    const [current, stake, registered, certId] = await Promise.all([
       bound.verifyCertificate(agent),
       bound.auditorStake(accounts.auditor.publicKey()),
       bound.auditorRegistered(accounts.auditor.publicKey()),
+      bound.certIdForAgent(agent),
     ]);
     // The stake that will back the cert after signing: the auditor's current
     // locked capital, or AUDITOR_STAKE if they still need to register.
@@ -53,7 +54,7 @@ export async function GET() {
         willStakeOnSign: !registered,
         expiryDays: EXPIRY_DAYS,
       },
-      current: toCertView(agent, current),
+      current: toCertView(agent, current, certId),
     });
   } catch (err) {
     return Response.json({ error: (err as Error).message }, { status: 502 });
@@ -94,7 +95,7 @@ export async function POST(req: Request) {
     await bound.attestCertificate(accounts.auditor, certId);
 
     const cert = await bound.verifyCertificate(agent);
-    return Response.json({ certId: Number(certId), cert: toCertView(agent, cert) });
+    return Response.json({ certId: Number(certId), cert: toCertView(agent, cert, Number(certId)) });
   } catch (err) {
     return Response.json(
       { error: `Sign & publish failed: ${(err as Error).message}` },

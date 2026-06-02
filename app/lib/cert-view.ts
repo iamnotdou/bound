@@ -21,9 +21,11 @@ export interface CertView {
   expiresAtIso: string | null;
   /** false when the registry has no certificate mapped to this agent at all. */
   hasCert: boolean;
+  /** The cert id mapped to this agent (needed to challenge); null if none. */
+  certId: number | null;
 }
 
-export function toCertView(agent: string, v: VerifyResult): CertView {
+export function toCertView(agent: string, v: VerifyResult, certId: number | null = null): CertView {
   const hasCert = v.bound > 0n || v.auditor != null;
   const expiresAtUnix = Number(v.expires_at);
   return {
@@ -37,5 +39,6 @@ export function toCertView(agent: string, v: VerifyResult): CertView {
     expiresAtUnix,
     expiresAtIso: expiresAtUnix > 0 ? new Date(expiresAtUnix * 1000).toISOString() : null,
     hasCert,
+    certId,
   };
 }

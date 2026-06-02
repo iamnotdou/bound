@@ -31,8 +31,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await bound.verifyCertificate(agent);
-    return Response.json(toCertView(agent, result));
+    const [result, certId] = await Promise.all([
+      bound.verifyCertificate(agent),
+      bound.certIdForAgent(agent),
+    ]);
+    return Response.json(toCertView(agent, result, certId));
   } catch (err) {
     return Response.json(
       { error: `On-chain read failed: ${(err as Error).message}` },

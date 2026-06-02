@@ -35,13 +35,18 @@ if (typeof window !== 'undefined') {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CDWNIJZ4RGTQ3YQYAP7SHMWFDSZMEKISSIGIUZM3IWR6KNK2HKQ46ZNT",
+    contractId: "CCSJTEXOJZ322XI5ZJF6YZ2IRLCRKNXTGHGK3ZLATKL6Y7CGQODS4VZB",
   }
 } as const
 
-export type DataKey = {tag: "ChallengeManager", values: void} | {tag: "Token", values: void} | {tag: "MinRegistrationStake", values: void} | {tag: "Stake", values: readonly [string]};
+export type DataKey = {tag: "ChallengeManager", values: void} | {tag: "Registry", values: void} | {tag: "Token", values: void} | {tag: "MinRegistrationStake", values: void} | {tag: "Stake", values: readonly [string]} | {tag: "LockedUntil", values: readonly [string]};
 
 export interface Client {
+  /**
+   * Construct and simulate a lock transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  lock: ({auditor, until}: {auditor: string, until: u64}, options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+
   /**
    * Construct and simulate a slash transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
@@ -65,7 +70,12 @@ export interface Client {
   /**
    * Construct and simulate a initialize transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  initialize: ({challenge_manager, token, min_stake}: {challenge_manager: string, token: string, min_stake: i128}, options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+  initialize: ({challenge_manager, registry, token, min_stake}: {challenge_manager: string, registry: string, token: string, min_stake: i128}, options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+
+  /**
+   * Construct and simulate a locked_until transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  locked_until: ({auditor}: {auditor: string}, options?: AssembledTransactionOptions<u64>) => Promise<AssembledTransaction<u64>>
 
   /**
    * Construct and simulate a get_min_stake transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -95,23 +105,27 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAAAAAAAAAAAAAFc2xhc2gAAAAAAAADAAAAAAAAAAdhdWRpdG9yAAAAABMAAAAAAAAACXJlY2lwaWVudAAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAA=",
+      new ContractSpec([ "AAAAAAAAAAAAAAAEbG9jawAAAAIAAAAAAAAAB2F1ZGl0b3IAAAAAEwAAAAAAAAAFdW50aWwAAAAAAAAGAAAAAA==",
+        "AAAAAAAAAAAAAAAFc2xhc2gAAAAAAAADAAAAAAAAAAdhdWRpdG9yAAAAABMAAAAAAAAACXJlY2lwaWVudAAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAA=",
         "AAAAAAAAAAAAAAAFc3Rha2UAAAAAAAACAAAAAAAAAAdhdWRpdG9yAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAA=",
         "AAAAAAAAAAAAAAAHcmVsZWFzZQAAAAABAAAAAAAAAAdhdWRpdG9yAAAAABMAAAAA",
         "AAAAAAAAAAAAAAAJZ2V0X3N0YWtlAAAAAAAAAQAAAAAAAAAHYXVkaXRvcgAAAAATAAAAAQAAAAs=",
-        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAABAAAAAAAAAAAAAAAEENoYWxsZW5nZU1hbmFnZXIAAAAAAAAAAAAAAAVUb2tlbgAAAAAAAAAAAAAAAAAAFE1pblJlZ2lzdHJhdGlvblN0YWtlAAAAAQAAAAAAAAAFU3Rha2UAAAAAAAABAAAAEw==",
-        "AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAAAwAAAAAAAAARY2hhbGxlbmdlX21hbmFnZXIAAAAAAAATAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAAAAAACW1pbl9zdGFrZQAAAAAAAAsAAAAA",
+        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAABgAAAAAAAAAAAAAAEENoYWxsZW5nZU1hbmFnZXIAAAAAAAAAAAAAAAhSZWdpc3RyeQAAAAAAAAAAAAAABVRva2VuAAAAAAAAAAAAAAAAAAAUTWluUmVnaXN0cmF0aW9uU3Rha2UAAAABAAAAAAAAAAVTdGFrZQAAAAAAAAEAAAATAAAAAQAAAAAAAAALTG9ja2VkVW50aWwAAAAAAQAAABM=",
+        "AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAABAAAAAAAAAARY2hhbGxlbmdlX21hbmFnZXIAAAAAAAATAAAAAAAAAAhyZWdpc3RyeQAAABMAAAAAAAAABXRva2VuAAAAAAAAEwAAAAAAAAAJbWluX3N0YWtlAAAAAAAACwAAAAA=",
+        "AAAAAAAAAAAAAAAMbG9ja2VkX3VudGlsAAAAAQAAAAAAAAAHYXVkaXRvcgAAAAATAAAAAQAAAAY=",
         "AAAAAAAAAAAAAAANZ2V0X21pbl9zdGFrZQAAAAAAAAAAAAABAAAACw==",
         "AAAAAAAAAAAAAAANaXNfcmVnaXN0ZXJlZAAAAAAAAAEAAAAAAAAAB2F1ZGl0b3IAAAAAEwAAAAEAAAAB" ]),
       options
     )
   }
   public readonly fromJSON = {
-    slash: this.txFromJSON<null>,
+    lock: this.txFromJSON<null>,
+        slash: this.txFromJSON<null>,
         stake: this.txFromJSON<null>,
         release: this.txFromJSON<null>,
         get_stake: this.txFromJSON<i128>,
         initialize: this.txFromJSON<null>,
+        locked_until: this.txFromJSON<u64>,
         get_min_stake: this.txFromJSON<i128>,
         is_registered: this.txFromJSON<boolean>
   }

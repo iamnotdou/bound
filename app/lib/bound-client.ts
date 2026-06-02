@@ -70,6 +70,19 @@ export class BoundClient {
     return at.result;
   }
 
+  /**
+   * The cert id mapped to an agent, or null if none. The challenge flow needs
+   * this and `verify()` doesn't return it, so the UI reads it here.
+   */
+  async certIdForAgent(agent: string): Promise<number | null> {
+    try {
+      const id = (await this.registry().get_cert_id({ agent })).result;
+      return id ? Number(id) : null;
+    } catch {
+      return null; // no cert mapped to this agent yet
+    }
+  }
+
   async usdcBalance(address: string): Promise<bigint> {
     return (await this.token().balance({ id: address })).result;
   }
@@ -162,6 +175,26 @@ export class BoundClient {
     );
     await send(() => cm.resolve({ challenge_id: challengeId }));
     return challengeId;
+  }
+
+  // ---- cheat simulations (read-only) ----------------------------------------
+  // These build + simulate a defection WITHOUT signing/submitting. If the
+  // contract's lock holds, simulation traps and the promise rejects — that
+  // rejection IS the proof. No state changes, no funds spent. Used by the
+  // /control adversarial lane to show "the cage holds" on screen.
+
+  /** Operator tries to reclaim the reserve before expiry → expect `reserve_still_locked`. */
+  async simulateReleaseReserve(operator: Keypair): Promise<void> {
+    const tx = await this.reserve(operator).release_to_operator();
+    // With a signer configured the client won't reject on a failed simulation;
+    // reading `.result` forces the verdict so a trapped lock surfaces as a throw.
+    void (tx as { result: unknown }).result;
+  }
+
+  /** Auditor tries to withdraw a stake bonded to a live cert → expect `stake_locked`. */
+  async simulateReleaseStake(auditor: Keypair): Promise<void> {
+    const tx = await this.staking(auditor).release({ auditor: auditor.publicKey() });
+    void (tx as { result: unknown }).result;
   }
 }
 

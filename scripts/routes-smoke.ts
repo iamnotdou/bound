@@ -18,6 +18,10 @@ loadEnv({ path: ".env.testnet" });
 import { GET as paidService } from "../app/api/paid-service/route";
 import { POST as verifyPost } from "../app/api/verify/route";
 import { GET as auditorGet, POST as auditorPost } from "../app/api/auditor/route";
+import { GET as ledgerGet } from "../app/api/ledger/route";
+import { POST as cheatPost } from "../app/api/cheat/route";
+import { POST as operatorPost } from "../app/api/operator/route";
+import { POST as challengerPost } from "../app/api/challenger/route";
 import { runBoundAgent } from "../app/lib/agent";
 
 const AGENT = process.env.AGENT_ADDRESS!;
@@ -85,6 +89,57 @@ async function main() {
   assert(typeof aud.current?.status === "string", "expected current cert view");
   assert(typeof auditorPost === "function", "auditor POST (sign-publish) must be exported");
   console.log("  ✓ auditor GET serves pending params + current cert (POST present, not invoked — it mutates state)\n");
+
+  console.log("================ /api/ledger (proof board) ================");
+  const rLedger = await ledgerGet();
+  const ledger = await rLedger.json();
+  console.log(`  ledger      → ${rLedger.status}`,
+    JSON.stringify({
+      accounts: ledger.accounts?.length,
+      reserveHeld: ledger.contracts?.reserveHeldUsd,
+      claimed: ledger.contracts?.reserveClaimedUsd,
+      stake: ledger.contracts?.auditorStakeUsd,
+      cert: ledger.cert?.status,
+    }));
+  assert(rLedger.status === 200, "expected 200 from ledger GET");
+  assert(Array.isArray(ledger.accounts) && ledger.accounts.length === 5, "expected 5 actor balances");
+  assert(ledger.accounts.every((a: any) => typeof a.usdc === "string" && a.address?.startsWith("G")), "expected role/usdc/address per actor");
+  assert(typeof ledger.contracts?.reserveHeldUsd === "string", "expected reserveHeldUsd");
+  assert(typeof ledger.cert?.status === "string", "expected cert view in ledger");
+  console.log("  ✓ ledger serves all 5 balances + reserve held/claimed + stake + cert\n");
+
+  console.log("================ /api/cheat (locks — read-only simulation) ================");
+  // NOTE: the reserve/stake locks only bind while a cert is VERIFIED + unexpired.
+  // When the live cert is Invalid (post-slash), nothing is locked and these
+  // simulations legitimately succeed. So here we assert the MECHANISM (route
+  // returns 200 + a boolean verdict) and report the live lock status. The
+  // "lock holds" assertion belongs in the post-reset demo, where a fresh cert
+  // is Verified — see FRONTEND.md §11.5.
+  const certStatus = ledger.cert?.status;
+  for (const action of ["withdraw-reserve", "withdraw-stake"] as const) {
+    const r = await cheatPost(new Request("http://local/api/cheat", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }));
+    const b = await r.json();
+    console.log(`  ${action.padEnd(16)} → reverted=${b.reverted} (${b.expected ?? b.reason ?? "no active lock"})`);
+    assert(r.status === 200, `expected 200 from cheat ${action}`);
+    assert(typeof b.reverted === "boolean", `expected a boolean verdict from cheat ${action}`);
+    if (certStatus === "Verified") {
+      assert(b.reverted === true, `cert is Verified → ${action} MUST revert (the lock must hold)`);
+    }
+  }
+  console.log(
+    certStatus === "Verified"
+      ? "  ✓ cert is Verified → defections trap on-chain (locks hold, no funds moved)\n"
+      : `  ✓ cheat route works; cert is ${certStatus} so no locks are active — reset to Verified to prove the cage holds\n`,
+  );
+
+  console.log("================ /control write routes (presence only) ================");
+  // These MUTATE state / spend testnet funds, so we only assert they are wired.
+  assert(typeof operatorPost === "function", "operator POST (deposit/publish) must be exported");
+  assert(typeof challengerPost === "function", "challenger POST (challenge+resolve) must be exported");
+  console.log("  ✓ operator + challenger POST present (not invoked — they mutate state)\n");
 
   console.log("================ app/lib/agent (AI SDK) ================");
   const stream = runBoundAgent([{ role: "user", content: "ping" }]);
