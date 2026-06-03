@@ -1,11 +1,20 @@
 // AI SDK adapter — runs Claude in a tool-use loop over the Bound tools. Used by
 // the /chat demo. Claude lives inside our app; the tools call BoundClient.
-import { anthropic } from "@ai-sdk/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import { streamText, tool, type CoreMessage } from "ai";
 import { z } from "zod";
 import { boundTools } from "./agent-tools";
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5";
+
+// Provider points at whatever Anthropic-compatible endpoint ANTHROPIC_BASE_URL
+// names. Default is the openllm.sh gateway (Anthropic format on /v1/messages);
+// the SDK appends `/messages`, so the base URL ends in `/v1`. To talk to
+// Anthropic directly, set ANTHROPIC_BASE_URL=https://api.anthropic.com/v1.
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  baseURL: process.env.ANTHROPIC_BASE_URL ?? "https://openllm.sh/v1",
+});
 
 const SYSTEM = `You are an autonomous AI payment agent operating on the Stellar network through the Bound Protocol.
 
