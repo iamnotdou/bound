@@ -146,6 +146,11 @@ export class BoundClient {
     return send(() => this.registry(auditor).attest({ auditor: auditor.publicKey(), cert_id: certId }));
   }
 
+  /** Issuer (operator) mints test USDC to a recipient — used to fund a connected wallet. */
+  async mintUsdc(issuer: Keypair, to: string, amount: bigint) {
+    return send(() => this.token(issuer).mint({ to, amount }));
+  }
+
   /** Agent (or anyone) sends USDC directly to a recipient. Returns the tx hash. */
   async executePayment(signer: Keypair, recipient: string, amount: bigint): Promise<string | undefined> {
     const { hash } = await send(() =>
@@ -175,6 +180,16 @@ export class BoundClient {
     );
     await send(() => cm.resolve({ challenge_id: challengeId }));
     return challengeId;
+  }
+
+  /**
+   * Resolve a challenge that was already opened (e.g. by a connected wallet that
+   * signed `challenge` itself). `resolve` is permissionless — any funded signer
+   * can trigger the on-chain proof; the finder's fee still routes to the
+   * challenger recorded on the challenge. Used by the wallet challenger flow.
+   */
+  async resolveChallenge(signer: Keypair, challengeId: bigint) {
+    return send(() => this.challenges(signer).resolve({ challenge_id: challengeId }));
   }
 
   // ---- cheat simulations (read-only) ----------------------------------------

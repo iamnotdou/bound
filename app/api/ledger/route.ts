@@ -49,7 +49,9 @@ export async function GET() {
 
     return Response.json({
       accounts: [
-        { role: "Operator", address: operator, usdc: formatUsdc(opBal) },
+        // The operator is the USDC SAC issuer, so its "balance" is unbounded
+        // (~$922B). Flag it so the board renders "∞ (issuer)" instead of noise.
+        { role: "Operator", address: operator, usdc: formatUsdc(opBal), isIssuer: true },
         { role: "Agent", address: agent, usdc: formatUsdc(agentBal) },
         { role: "Auditor", address: auditor, usdc: formatUsdc(audBal) },
         { role: "Counterparty", address: counterparty, usdc: formatUsdc(cpBal) },
