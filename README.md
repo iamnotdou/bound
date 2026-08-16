@@ -29,9 +29,14 @@ The honest edge: a **short reserve** is provable on-chain with zero trusted part
 Proving _who was harmed_ or _how much an agent spent_ can't be — those name a victim
 or fall back to a named arbiter. The certificate tells you which is which.
 
-See [`WRITEUP.md`](./WRITEUP.md) for the full academic framing, developer docs, and
-narrative; [`PROJECT.md`](./PROJECT.md) for the build plan; [`VERIFY.md`](./VERIFY.md)
-for verification steps.
+Full documentation lives in [`docs/`](./docs):
+
+| Document                                   | What it covers                                      |
+| ------------------------------------------ | --------------------------------------------------- |
+| [`docs/WRITEUP.md`](./docs/WRITEUP.md)     | The academic framing, developer docs, and narrative |
+| [`docs/PROJECT.md`](./docs/PROJECT.md)     | The build plan, trust model, and known limitations  |
+| [`docs/VERIFY.md`](./docs/VERIFY.md)       | How to verify the deployment yourself               |
+| [`docs/RESOURCES.md`](./docs/RESOURCES.md) | Reference material and external links               |
 
 ---
 

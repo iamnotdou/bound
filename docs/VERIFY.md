@@ -8,7 +8,7 @@ confirm the thesis holds.
 ---
 
 You are auditing the Bound Protocol hackathon project. Work dir: `/Users/dogu/bound`.
-Read `PROJECT.md` first (vision + "Trust Model & Known Limitations") and `.env.testnet`
+Read [`PROJECT.md`](./PROJECT.md) first (vision + "Trust Model & Known Limitations") and `.env.testnet`
 (source of truth for addresses/secrets; never print secret keys). Then run the checks
 below and produce a single PASS/FAIL report. Do NOT redeploy contracts or run the demo
 unless a check fails and the user approves — those spend testnet funds and change addresses.
@@ -65,7 +65,7 @@ The headline is the **trustless slash**, not a blocked payment.
    `release_to_operator` reverts (`reserve_still_locked`) before `unlock_at`, and
    `release_to_victim` / `slash` are auth-gated to the ChallengeManager only.
 
-8. **Honesty of the claim.** Re-read PROJECT.md "Trust Model & Known Limitations" and
+8. **Honesty of the claim.** Re-read [`PROJECT.md`](./PROJECT.md) "Trust Model & Known Limitations" and
    confirm each stated limitation still matches the code:
    - victim is named by the challenger, not verified on-chain;
    - one reserve vault = one operator (no per-cert segregation);
