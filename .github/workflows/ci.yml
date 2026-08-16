@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  # `edited` is required so a title rename re-runs pr-title. Without it the
+  # job only fires on open/push/reopen and a bad title can land uncaught.
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+# One group per ref: a new push to the same PR cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # TypeScript + the offline verify suite + a production build.
+  # verify includes the contract fmt/clippy/test steps, so this job needs Rust
+  # as well as Node. The contracts job still exists beside it so a Rust-only
+  # failure is attributed clearly and so the two can use independent caches.
+  web:
+    # Title-only edits re-run pr-title; no need to rebuild the world for them.
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # Reads packageManager from package.json (pnpm@10.27.0).
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Pin matches rust-toolchain.toml. The action requires an explicit
+      # toolchain input (empty is rejected); keep the two in lockstep.
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm verify
+
+      # next build evaluates server modules that import app/lib/config.ts, which
+      # throws if the contract addresses are missing. Those addresses are public
+      # data already committed in bindings/*/src/index.ts — not secrets. Export
+      # them (plus the public actor G... addresses from the live deployment,
+      # also in README) so the build can run with zero credentials.
+      - name: Export public addresses for build
+        run: |
+          {
+            echo "STELLAR_NETWORK=testnet"
+            echo "STELLAR_RPC_URL=https://soroban-testnet.stellar.org"
+            echo "STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org"
+            echo "STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015"
+            echo "OPERATOR_ADDRESS=GBSDOSQUT5JMGAA4DMFOAPHZIINIQET7AUO7ABGMMZVWDG7Y3G2FLFUC"
+            echo "AGENT_ADDRESS=GCPOBMCWPO5A24KJJJRD27T4TKITHQI5MYY2FCQRR3HUXUFT4LO473ZT"
+            echo "AUDITOR_ADDRESS=GCBVHBXWW7CIFKZSGHOZIRYUYIS6S455EW64QK4FXZZ7WVW6R2FZN523"
+            echo "CHALLENGER_ADDRESS=GDLS74UPBPMXTFVAWHZXWDPQEIXQZGEPWN6PZSADL42UF5PBXGFMHWIP"
+            echo "COUNTERPARTY_ADDRESS=GDWIIDO6AYJ7KMQBZALWUEWA2TRUQUIV7R673LL536TSGCEBQ4BDYZSZ"
+            node <<'NODE'
+          const fs = require("fs");
+          const map = {
+            registry: "REGISTRY_ADDRESS",
+            reserve_vault: "RESERVE_VAULT_ADDRESS",
+            auditor_staking: "AUDITOR_STAKING_ADDRESS",
+            fee_escrow: "FEE_ESCROW_ADDRESS",
+            challenge_manager: "CHALLENGE_MANAGER_ADDRESS",
+            usdc: "USDC_ADDRESS",
+          };
+          for (const [pkg, env] of Object.entries(map)) {
+            const src = fs.readFileSync(`bindings/${pkg}/src/index.ts`, "utf8");
+            const m = src.match(/contractId:\s*"([^"]+)"/);
+            if (!m) {
+              console.error(`no contractId in bindings/${pkg}/src/index.ts`);
+              process.exit(1);
+            }
+            console.log(`${env}=${m[1]}`);
+          }
+          NODE
+          } >> "$GITHUB_ENV"
+
+      - run: pnpm build
+
+  # Rust-only path. Independent of Node so a contract failure is obvious and so
+  # the cache is not coupled to the pnpm store.
+  contracts:
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  # Squash-merge writes the PR title as the single commit on main, so the title
+  # is what actually lands in history. Lint it against the same commitlint
+  # config the commit-msg hook uses, so the two can never disagree.
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # TITLE via env, never via ${{ }} interpolation into the shell, so a
+      # hostile PR title cannot inject into the script.
+      - name: Lint PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$TITLE" | pnpm exec commitlint
