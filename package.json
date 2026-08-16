@@ -21,7 +21,13 @@
     "mcp-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/mcp-smoke.ts",
     "routes-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/routes-smoke.ts",
     "wallet-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/wallet-smoke.ts",
-    "verify-all": "pnpm typecheck && pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm routes-smoke && pnpm wallet-smoke"
+    "verify-all": "pnpm typecheck && pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm routes-smoke && pnpm wallet-smoke",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,mjs,cjs,json,md,css,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
@@ -45,6 +51,8 @@
     "zod": "^3.25.56"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
@@ -53,6 +61,8 @@
     "dotenv": "^16.5.0",
     "eslint": "^9",
     "eslint-config-next": "15.3.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.9.6",
     "shadcn": "^4.10.0",
     "tailwindcss": "^4",
