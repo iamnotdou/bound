@@ -20,7 +20,9 @@ impl FeeEscrow {
         if env.storage().instance().has(&DataKey::ChallengeManager) {
             panic!("already_initialized");
         }
-        env.storage().instance().set(&DataKey::ChallengeManager, &challenge_manager);
+        env.storage()
+            .instance()
+            .set(&DataKey::ChallengeManager, &challenge_manager);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Released, &false);
         env.storage().instance().set(&DataKey::Amount, &0i128);
@@ -70,7 +72,11 @@ impl FeeEscrow {
 
     // ChallengeManager slashes fee to challenger if auditor committed fraud
     pub fn slash_to_challenger(env: Env, challenger: Address) {
-        let cm: Address = env.storage().instance().get(&DataKey::ChallengeManager).unwrap();
+        let cm: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
         cm.require_auth();
 
         let amount: i128 = env.storage().instance().get(&DataKey::Amount).unwrap();
@@ -93,7 +99,10 @@ impl FeeEscrow {
     }
 
     pub fn is_released(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::Released).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Released)
+            .unwrap_or(false)
     }
 }
 
@@ -119,7 +128,9 @@ mod tests {
         // Simulate a completed deposit + first release by setting state directly
         env.as_contract(&contract_id, || {
             env.storage().instance().set(&DataKey::Auditor, &auditor);
-            env.storage().instance().set(&DataKey::Amount, &500_0000000i128);
+            env.storage()
+                .instance()
+                .set(&DataKey::Amount, &500_0000000i128);
             env.storage().instance().set(&DataKey::Released, &true); // already released
         });
 

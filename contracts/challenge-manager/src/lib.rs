@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Val, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Val, Vec,
+};
 
 #[contracttype]
 #[derive(Clone, PartialEq)]
@@ -63,13 +65,21 @@ impl ChallengeManager {
             panic!("already_initialized");
         }
         env.storage().instance().set(&DataKey::Registry, &registry);
-        env.storage().instance().set(&DataKey::AuditorStaking, &auditor_staking);
-        env.storage().instance().set(&DataKey::ReserveVault, &reserve_vault);
-        env.storage().instance().set(&DataKey::FeeEscrow, &fee_escrow);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuditorStaking, &auditor_staking);
+        env.storage()
+            .instance()
+            .set(&DataKey::ReserveVault, &reserve_vault);
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeEscrow, &fee_escrow);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Arbiter, &arbiter);
         env.storage().instance().set(&DataKey::MinStake, &min_stake);
-        env.storage().instance().set(&DataKey::ChallengeCount, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::ChallengeCount, &0u64);
     }
 
     // Anyone can submit a challenge — must post a bond to prevent spam.
@@ -97,7 +107,11 @@ impl ChallengeManager {
             &stake,
         );
 
-        let count: u64 = env.storage().instance().get(&DataKey::ChallengeCount).unwrap();
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeCount)
+            .unwrap();
         let challenge_id = count + 1;
 
         env.storage().persistent().set(
@@ -111,7 +125,9 @@ impl ChallengeManager {
                 verdict: Verdict::Pending,
             },
         );
-        env.storage().instance().set(&DataKey::ChallengeCount, &challenge_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::ChallengeCount, &challenge_id);
 
         challenge_id
     }
@@ -159,7 +175,10 @@ impl ChallengeManager {
     }
 
     pub fn get_challenge_count(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::ChallengeCount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::ChallengeCount)
+            .unwrap_or(0)
     }
 
     // ----- internals -----
@@ -179,7 +198,11 @@ impl ChallengeManager {
     // On-chain proof: the live reserve balance is below what the certificate claims.
     fn verify_insufficient_reserve(env: &Env, cert_id: u64) -> bool {
         let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
-        let reserve_vault: Address = env.storage().instance().get(&DataKey::ReserveVault).unwrap();
+        let reserve_vault: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReserveVault)
+            .unwrap();
 
         let claimed: i128 = env.invoke_contract(
             &registry,
@@ -200,8 +223,16 @@ impl ChallengeManager {
     // and return the challenger's bond. All on-chain, one transaction.
     fn settle_fraud(env: &Env, challenge_id: u64, ch: &Challenge) {
         let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
-        let staking: Address = env.storage().instance().get(&DataKey::AuditorStaking).unwrap();
-        let vault: Address = env.storage().instance().get(&DataKey::ReserveVault).unwrap();
+        let staking: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::AuditorStaking)
+            .unwrap();
+        let vault: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReserveVault)
+            .unwrap();
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
 
         // Who vouched for this certificate?
@@ -282,7 +313,9 @@ impl ChallengeManager {
 
         let mut resolved = ch.clone();
         resolved.verdict = Verdict::ChallengeWins;
-        env.storage().persistent().set(&DataKey::Challenge(challenge_id), &resolved);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Challenge(challenge_id), &resolved);
     }
 
     // Challenge failed: the challenger forfeits their bond (it stays in the contract).
@@ -293,7 +326,9 @@ impl ChallengeManager {
             .get(&DataKey::Challenge(challenge_id))
             .expect("challenge_not_found");
         ch.verdict = Verdict::ChallengeFails;
-        env.storage().persistent().set(&DataKey::Challenge(challenge_id), &ch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Challenge(challenge_id), &ch);
     }
 }
 

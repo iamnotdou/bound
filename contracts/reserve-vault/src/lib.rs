@@ -28,7 +28,9 @@ impl ReserveVault {
         }
         // Reserve stays locked to the operator until the certificate expires.
         env.storage().instance().set(&DataKey::Operator, &operator);
-        env.storage().instance().set(&DataKey::ChallengeManager, &challenge_manager);
+        env.storage()
+            .instance()
+            .set(&DataKey::ChallengeManager, &challenge_manager);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Balance, &0i128);
         env.storage().instance().set(&DataKey::Locked, &false);
@@ -47,7 +49,9 @@ impl ReserveVault {
         );
 
         let balance: i128 = env.storage().instance().get(&DataKey::Balance).unwrap();
-        env.storage().instance().set(&DataKey::Balance, &(balance + amount));
+        env.storage()
+            .instance()
+            .set(&DataKey::Balance, &(balance + amount));
         env.storage().instance().set(&DataKey::Locked, &true);
     }
 
@@ -57,7 +61,11 @@ impl ReserveVault {
 
     // Only ChallengeManager can call this — compensates a harmed counterparty
     pub fn release_to_victim(env: Env, victim: Address, amount: i128) {
-        let cm: Address = env.storage().instance().get(&DataKey::ChallengeManager).unwrap();
+        let cm: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
         cm.require_auth();
 
         let balance: i128 = env.storage().instance().get(&DataKey::Balance).unwrap();
@@ -72,7 +80,9 @@ impl ReserveVault {
             &amount,
         );
 
-        env.storage().instance().set(&DataKey::Balance, &(balance - amount));
+        env.storage()
+            .instance()
+            .set(&DataKey::Balance, &(balance - amount));
     }
 
     // Operator reclaims reserve only after certificate expiry, with no incidents

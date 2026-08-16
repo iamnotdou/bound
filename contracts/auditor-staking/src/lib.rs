@@ -28,11 +28,15 @@ impl AuditorStaking {
         if env.storage().instance().has(&DataKey::ChallengeManager) {
             panic!("already_initialized");
         }
-        env.storage().instance().set(&DataKey::ChallengeManager, &challenge_manager);
+        env.storage()
+            .instance()
+            .set(&DataKey::ChallengeManager, &challenge_manager);
         // Only the Registry may bond an auditor's stake to a certificate (on attest).
         env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage().instance().set(&DataKey::Token, &token);
-        env.storage().instance().set(&DataKey::MinRegistrationStake, &min_stake);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinRegistrationStake, &min_stake);
     }
 
     // Stake USDC → otomatik olarak registered auditor olursun
@@ -101,7 +105,9 @@ impl AuditorStaking {
             .get(&DataKey::LockedUntil(auditor.clone()))
             .unwrap_or(0);
         if until > current {
-            env.storage().persistent().set(&DataKey::LockedUntil(auditor), &until);
+            env.storage()
+                .persistent()
+                .set(&DataKey::LockedUntil(auditor), &until);
         }
     }
 
@@ -114,7 +120,11 @@ impl AuditorStaking {
 
     // Sadece ChallengeManager slash edebilir — yanlış attest ederse stake gider
     pub fn slash(env: Env, auditor: Address, recipient: Address, amount: i128) {
-        let cm: Address = env.storage().instance().get(&DataKey::ChallengeManager).unwrap();
+        let cm: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
         cm.require_auth();
 
         let stake: i128 = env
@@ -257,8 +267,12 @@ mod tests {
 
         // Auditor has stake, bonded to a cert that expires at t=5000.
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Stake(auditor.clone()), &1_500_0000000i128);
-            env.storage().persistent().set(&DataKey::LockedUntil(auditor.clone()), &5000u64);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Stake(auditor.clone()), &1_500_0000000i128);
+            env.storage()
+                .persistent()
+                .set(&DataKey::LockedUntil(auditor.clone()), &5000u64);
         });
         env.ledger().set_timestamp(1000); // before expiry — stake must stay put
         client.release(&auditor); // → panic: stake_locked
@@ -272,7 +286,9 @@ mod tests {
         let auditor = Address::generate(&env);
 
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::LockedUntil(auditor.clone()), &5000u64);
+            env.storage()
+                .persistent()
+                .set(&DataKey::LockedUntil(auditor.clone()), &5000u64);
         });
         // After the certificate's expiry the bond is lifted: release no longer
         // panics (zero stake → early return, but past the lock check).

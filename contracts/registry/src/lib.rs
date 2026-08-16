@@ -4,9 +4,9 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, S
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum CertStatus {
-    Pending,   // operator yayınladı, auditor bekleniyor
-    Verified,  // auditor onayladı
-    Invalid,   // challenge ile iptal edildi
+    Pending,  // operator yayınladı, auditor bekleniyor
+    Verified, // auditor onayladı
+    Invalid,  // challenge ile iptal edildi
 }
 
 #[contracttype]
@@ -55,8 +55,12 @@ impl Registry {
         if env.storage().instance().has(&DataKey::ChallengeManager) {
             panic!("already_initialized");
         }
-        env.storage().instance().set(&DataKey::ChallengeManager, &challenge_manager);
-        env.storage().instance().set(&DataKey::AuditorStaking, &auditor_staking);
+        env.storage()
+            .instance()
+            .set(&DataKey::ChallengeManager, &challenge_manager);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuditorStaking, &auditor_staking);
         env.storage().instance().set(&DataKey::CertCount, &0u64);
     }
 
@@ -100,8 +104,12 @@ impl Registry {
             status: CertStatus::Pending,
         };
 
-        env.storage().persistent().set(&DataKey::Certificate(cert_id), &cert);
-        env.storage().persistent().set(&DataKey::AgentCert(agent), &cert_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Certificate(cert_id), &cert);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AgentCert(agent), &cert_id);
         env.storage().instance().set(&DataKey::CertCount, &cert_id);
 
         cert_id
@@ -155,10 +163,15 @@ impl Registry {
         env.invoke_contract::<()>(
             &auditor_staking,
             &Symbol::new(&env, "lock"),
-            Vec::from_array(&env, [auditor.into_val(&env), cert.expires_at.into_val(&env)]),
+            Vec::from_array(
+                &env,
+                [auditor.into_val(&env), cert.expires_at.into_val(&env)],
+            ),
         );
 
-        env.storage().persistent().set(&DataKey::Certificate(cert_id), &cert);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Certificate(cert_id), &cert);
     }
 
     pub fn verify(env: Env, agent: Address) -> VerifyResult {
@@ -214,7 +227,10 @@ impl Registry {
     }
 
     pub fn get_cert_count(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::CertCount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::CertCount)
+            .unwrap_or(0)
     }
 
     // ChallengeManager bunları cross-contract okur — slash kararı için gerekli alanlar
@@ -237,7 +253,11 @@ impl Registry {
     }
 
     pub fn invalidate(env: Env, cert_id: u64) {
-        let cm: Address = env.storage().instance().get(&DataKey::ChallengeManager).unwrap();
+        let cm: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
         cm.require_auth();
 
         let mut cert: Certificate = env
@@ -247,7 +267,9 @@ impl Registry {
             .expect("certificate_not_found");
 
         cert.status = CertStatus::Invalid;
-        env.storage().persistent().set(&DataKey::Certificate(cert_id), &cert);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Certificate(cert_id), &cert);
     }
 }
 
@@ -312,7 +334,12 @@ mod tests {
         (client, cm)
     }
 
-    fn publish_cert(client: &RegistryClient, env: &Env, operator: &Address, agent: &Address) -> u64 {
+    fn publish_cert(
+        client: &RegistryClient,
+        env: &Env,
+        operator: &Address,
+        agent: &Address,
+    ) -> u64 {
         let rv = Address::generate(env);
         let ast = Address::generate(env);
         client.publish(
@@ -425,10 +452,13 @@ mod tests {
         let ast = Address::generate(&env);
 
         let cert_id = client.publish(
-            &operator, &agent,
-            &50_000_0000000i128, &10_000_0000000i128,
+            &operator,
+            &agent,
+            &50_000_0000000i128,
+            &10_000_0000000i128,
             &2000u64,
-            &rv, &ast,
+            &rv,
+            &ast,
         );
 
         client.attest(&auditor, &cert_id);
@@ -472,10 +502,13 @@ mod tests {
         let ast = Address::generate(&env);
 
         client.publish(
-            &operator, &agent,
-            &50_000_0000000i128, &10_000_0000000i128,
+            &operator,
+            &agent,
+            &50_000_0000000i128,
+            &10_000_0000000i128,
             &1000u64,
-            &rv, &ast,
+            &rv,
+            &ast,
         );
     }
 }
