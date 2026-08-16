@@ -20,6 +20,11 @@ export interface Deployment {
   deployedAt: string;
   /** Full commit SHA of the code that was deployed. */
   deployCommit: string;
+  /**
+   * Public key of a funded account the RPC may use as the source of
+   * read-only simulations (sequence number). Not a secret — G..., not S....
+   */
+  readSource: string;
   contracts: {
     registry: string;
     reserveVault: string;
@@ -69,6 +74,7 @@ export function serializeDeployment(d: Deployment): string {
     horizonUrl: d.horizonUrl,
     deployedAt: d.deployedAt,
     deployCommit: d.deployCommit,
+    readSource: d.readSource,
     contracts: {
       registry: d.contracts.registry,
       reserveVault: d.contracts.reserveVault,

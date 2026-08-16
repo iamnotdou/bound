@@ -1,8 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { usdc, formatUsdc, USDC_DECIMALS } from "./config";
+import { usdc, formatUsdc, USDC_DECIMALS, contracts, network, readSource } from "./config";
+import { getDeployment } from "./deployments";
 
 // USDC on Stellar carries 7 decimals, so one dollar is 10^7 stroops.
 const ONE_DOLLAR = 10_000_000n;
+
+describe("config reads the deployments file", () => {
+  const deployment = getDeployment();
+
+  it("exposes the same six contract addresses as getDeployment()", () => {
+    expect(contracts).toEqual(deployment.contracts);
+  });
+
+  it("exposes the same network endpoints", () => {
+    expect(network.rpcUrl).toBe(deployment.rpcUrl);
+    expect(network.passphrase).toBe(deployment.networkPassphrase);
+  });
+
+  it("exposes the committed readSource account", () => {
+    expect(readSource).toBe(deployment.readSource);
+    expect(readSource).toMatch(/^G[A-Z0-9]{55}$/);
+  });
+
+  it("loads without any REGISTRY_ADDRESS (or other C...) in the environment", () => {
+    // The whole point of 3.3: unit tests and a fresh clone do not need
+    // .env.testnet for public configuration.
+    expect(process.env.REGISTRY_ADDRESS).toBeUndefined();
+  });
+});
 
 describe("usdc()", () => {
   it("uses 7 decimals", () => {
