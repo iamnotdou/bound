@@ -14,7 +14,7 @@ import { POST as cheatPost } from "../app/api/cheat/route";
 import { GET as ledgerGet } from "../app/api/ledger/route";
 import { bound } from "../app/lib/bound-client";
 import { accounts } from "../app/lib/accounts";
-import { usdc, formatUsdc } from "../app/lib/config";
+import { usdc } from "../app/lib/config";
 
 const j = (r: Response) => r.json();
 const post = (h: (req: Request) => Promise<Response>, body: unknown) =>

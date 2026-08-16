@@ -10,6 +10,25 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
+  {
+    // `next lint` only ever looked at the app source directories. Running
+    // `eslint .` widens the scope to the whole repo, so build output and
+    // generated code have to be excluded explicitly or they dominate the
+    // report — .next alone accounts for ~2900 errors in emitted artifacts.
+    ignores: [
+      ".next/**",
+      "out/**",
+      "node_modules/**",
+      "target/**",
+      // Generated from the contract wasm by the Stellar CLI. Regenerated with
+      // `build:bindings`, never edited by hand, so linting them reports on
+      // code nobody can fix here.
+      "bindings/**",
+      // Written by Next on every build.
+      "next-env.d.ts",
+      "**/*.tsbuildinfo",
+    ],
+  },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     // The verified backend SDK (app/lib, scripts, mcp) uses deliberate `any` at
@@ -18,6 +37,17 @@ const eslintConfig = [
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-require-imports": "warn",
+      // Honour the leading-underscore convention for deliberately unused
+      // bindings, so a parameter kept for call-site clarity can stay without
+      // being deleted to satisfy the linter.
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
     },
   },
 ];
