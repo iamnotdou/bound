@@ -60,6 +60,9 @@ Each is a rule because the consequence is expensive or irreversible.
   to compare secrets, compare hashes.
 - **Never edit `bindings/` by hand.** It is generated from the contract wasm. A
   hand edit is silently discarded the next time it is regenerated.
+- **Never hand-edit `deployments/*.json`.** The deploy script owns that file —
+  it is rewritten on every `pnpm deploy`. Edit the serialiser if the shape is
+  wrong, not the JSON.
 - **Never commit `.env*` except `.env.example`.**
 
 ## Map
@@ -85,9 +88,10 @@ Worth knowing before touching configuration, because they are in **two** places:
 2. `bindings/*/src/index.ts` — a `networks.testnet.contractId` field in each of
    the six packages. **These are committed and public.**
 
-Both currently agree. Contract addresses are public data, not secrets, so this
-is not a leak — but it does mean "change the address" is not a one-file edit
-today. Consolidating them into `deployments/testnet.json` is planned work.
+Both currently agree with `deployments/testnet.json`, which is the file that
+will become the single source of truth at step 3.3. Contract addresses are
+public data, not secrets — the risk is drift between the three copies, not
+leakage.
 
 There is deliberately **no `build:bindings` script yet.** The committed bindings
 were generated against a live deployment (`--contract-id`), which is what
