@@ -109,8 +109,12 @@ pnpm test:e2e          # 5 live smoke suites against testnet
 pnpm demo              # 8-step: stake → reserve → fee → attest → publish → verify → pay → SLASH
 ```
 
-Copy `.env.example` to `.env.testnet` and fill in your account keys + contract
-addresses. **Never commit `.env*` files** — they hold secret keys.
+Contract addresses and network endpoints are committed in
+[`deployments/testnet.json`](./deployments/testnet.json), so `pnpm verify`,
+`pnpm build` and `pnpm dev` need no configuration at all.
+
+For the live commands, copy `.env.example` to `.env.testnet` and fill in the
+five account secret keys. **Never commit `.env*` files** — they hold secret keys.
 
 ---
 

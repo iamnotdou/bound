@@ -103,6 +103,14 @@ function main() {
       deployCommit: gitHead(),
       // Public G... key used as the RPC simulation source — not a secret.
       readSource: operatorAddr,
+      // Demo actor public keys (G...). Secrets never leave .env.testnet.
+      accounts: {
+        operator: operatorAddr,
+        agent: env.AGENT_ADDRESS,
+        auditor: env.AUDITOR_ADDRESS,
+        challenger: env.CHALLENGER_ADDRESS,
+        counterparty: env.COUNTERPARTY_ADDRESS,
+      },
       contracts: {
         registry: addr.registry,
         reserveVault: addr.reserve_vault,

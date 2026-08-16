@@ -22,12 +22,16 @@ const deployment = getDeployment(resolveNetwork());
 
 export const network = {
   rpcUrl: deployment.rpcUrl,
+  horizonUrl: deployment.horizonUrl,
   passphrase: deployment.networkPassphrase,
 };
 
 // Read-only simulations still need a real, funded source account (the RPC reads
 // its sequence number). Public G... key, committed in the deployments file.
 export const readSource = deployment.readSource;
+
+// Demo actor public keys (G...). Secrets for these live only in env (accounts.ts).
+export const accounts = deployment.accounts;
 
 export const contracts = {
   registry: deployment.contracts.registry,

@@ -9,7 +9,7 @@ import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
 import { AlbedoModule } from "@creit.tech/stellar-wallets-kit/modules/albedo";
 import { HanaModule } from "@creit.tech/stellar-wallets-kit/modules/hana";
 import { RabetModule } from "@creit.tech/stellar-wallets-kit/modules/rabet";
-import { NETWORK } from "../ui-config";
+import { IS_PUBLIC_NETWORK } from "../ui-config";
 
 let _inited = false;
 
@@ -17,7 +17,7 @@ let _inited = false;
 export function ensureKit(): typeof StellarWalletsKit {
   if (!_inited) {
     StellarWalletsKit.init({
-      network: NETWORK === "public" ? Networks.PUBLIC : Networks.TESTNET,
+      network: IS_PUBLIC_NETWORK ? Networks.PUBLIC : Networks.TESTNET,
       selectedWalletId: FREIGHTER_ID,
       modules: [
         new FreighterModule(),
