@@ -1,36 +1,41 @@
-// Server-side configuration for the Bound SDK. Reads the deployed contract
-// addresses and network settings from the environment. Never import this into
-// browser code — it pulls in secrets and Node-only modules.
+// Server-side configuration for the Bound SDK.
 //
-// Outside Next.js (scripts, smoke tests) we lazily load .env.testnet so the SDK
-// works the same way the deploy/demo scripts do.
-if (typeof window === "undefined" && !process.env.REGISTRY_ADDRESS) {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  require("dotenv").config({ path: ".env.testnet" });
+// Public configuration (network endpoints, contract addresses, the RPC
+// read-source account) comes from the committed deployments map. Credentials
+// (*_SECRET, ANTHROPIC_API_KEY) stay in the environment — see accounts.ts.
+//
+// Never import this into browser code: it is the server half of the split.
+// Client components get addresses via next.config until step 3.4, then via
+// the deployments module directly.
+import { getDeployment, type NetworkName } from "./deployments";
+
+function resolveNetwork(): NetworkName {
+  const raw = process.env.STELLAR_NETWORK;
+  if (!raw || raw === "testnet") return "testnet";
+  throw new Error(
+    `unknown STELLAR_NETWORK=${JSON.stringify(raw)} — known: testnet. ` +
+      `Add a deployments/<network>.json and a DEPLOYMENTS entry before using it.`,
+  );
 }
 
-function req(key: string): string {
-  const v = process.env[key];
-  if (!v) throw new Error(`missing ${key} — run \`pnpm setup\` && \`pnpm deploy\``);
-  return v;
-}
+const deployment = getDeployment(resolveNetwork());
 
 export const network = {
-  rpcUrl: process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
-  passphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
+  rpcUrl: deployment.rpcUrl,
+  passphrase: deployment.networkPassphrase,
 };
 
 // Read-only simulations still need a real, funded source account (the RPC reads
-// its sequence number). The operator works fine for that.
-export const readSource = req("OPERATOR_ADDRESS");
+// its sequence number). Public G... key, committed in the deployments file.
+export const readSource = deployment.readSource;
 
 export const contracts = {
-  registry: req("REGISTRY_ADDRESS"),
-  reserveVault: req("RESERVE_VAULT_ADDRESS"),
-  auditorStaking: req("AUDITOR_STAKING_ADDRESS"),
-  feeEscrow: req("FEE_ESCROW_ADDRESS"),
-  challengeManager: req("CHALLENGE_MANAGER_ADDRESS"),
-  usdc: req("USDC_ADDRESS"),
+  registry: deployment.contracts.registry,
+  reserveVault: deployment.contracts.reserveVault,
+  auditorStaking: deployment.contracts.auditorStaking,
+  feeEscrow: deployment.contracts.feeEscrow,
+  challengeManager: deployment.contracts.challengeManager,
+  usdc: deployment.contracts.usdc,
 };
 
 // USDC on Stellar uses 7 decimals.

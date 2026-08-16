@@ -28,11 +28,12 @@ describe("getDeployment()", () => {
     );
   });
 
-  it("carries network endpoints and deploy provenance", () => {
+  it("carries network endpoints, readSource, and deploy provenance", () => {
     const d = getDeployment();
     expect(d.rpcUrl).toMatch(/^https:\/\//);
     expect(d.horizonUrl).toMatch(/^https:\/\//);
     expect(d.networkPassphrase.length).toBeGreaterThan(0);
+    expect(d.readSource).toMatch(/^G[A-Z0-9]{55}$/);
     expect(d.deployCommit).toMatch(/^[0-9a-f]{40}$/);
     expect(() => new Date(d.deployedAt).toISOString()).not.toThrow();
   });
@@ -58,6 +59,7 @@ describe("serializeDeployment()", () => {
     horizonUrl: "https://horizon.example.test",
     deployedAt: "2026-01-02T03:04:05.000Z",
     deployCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    readSource: "G" + "A".repeat(55),
     contracts: {
       registry: "C" + "A".repeat(55),
       reserveVault: "C" + "B".repeat(55),
@@ -77,6 +79,7 @@ describe("serializeDeployment()", () => {
   "horizonUrl": "https://horizon.example.test",
   "deployedAt": "2026-01-02T03:04:05.000Z",
   "deployCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "readSource": "G${"A".repeat(55)}",
   "contracts": {
     "registry": "C${"A".repeat(55)}",
     "reserveVault": "C${"B".repeat(55)}",

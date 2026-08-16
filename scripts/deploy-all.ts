@@ -101,6 +101,8 @@ function main() {
       horizonUrl: env.STELLAR_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
       deployedAt: new Date().toISOString(),
       deployCommit: gitHead(),
+      // Public G... key used as the RPC simulation source — not a secret.
+      readSource: operatorAddr,
       contracts: {
         registry: addr.registry,
         reserveVault: addr.reserve_vault,

@@ -82,16 +82,16 @@ Each is a rule because the consequence is expensive or irreversible.
 
 ## Where contract addresses actually live
 
-Worth knowing before touching configuration, because they are in **two** places:
+Three places, of which **one is load-bearing for the server**:
 
-1. `.env.testnet` — gitignored, local only.
-2. `bindings/*/src/index.ts` — a `networks.testnet.contractId` field in each of
-   the six packages. **These are committed and public.**
-
-Both currently agree with `deployments/testnet.json`, which is the file that
-will become the single source of truth at step 3.3. Contract addresses are
-public data, not secrets — the risk is drift between the three copies, not
-leakage.
+1. **`deployments/testnet.json`** — committed. `app/lib/config.ts` reads this
+   (via `getDeployment()`). This is the source of truth for network endpoints,
+   contract ids, and the RPC read-source account.
+2. `.env.testnet` — gitignored. **Secrets only** (`*_SECRET`, `ANTHROPIC_API_KEY`),
+   plus a legacy copy of the public addresses still used by `next.config.ts`
+   for the browser until step 3.4.
+3. `bindings/*/src/index.ts` — a `networks.testnet.contractId` field in each
+   package. Generated, committed, public. Not what the app reads.
 
 There is deliberately **no `build:bindings` script yet.** The committed bindings
 were generated against a live deployment (`--contract-id`), which is what
