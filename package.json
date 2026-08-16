@@ -11,6 +11,8 @@
     "deploy": "ts-node --project scripts/tsconfig.json scripts/deploy-all.ts",
     "demo": "ts-node --project scripts/tsconfig.json scripts/demo.ts",
     "mcp": "ts-node --transpile-only --project scripts/tsconfig.json mcp/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -67,6 +69,7 @@
     "shadcn": "^4.10.0",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
