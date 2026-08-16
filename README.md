@@ -29,6 +29,9 @@ The honest edge: a **short reserve** is provable on-chain with zero trusted part
 Proving _who was harmed_ or _how much an agent spent_ can't be — those name a victim
 or fall back to a named arbiter. The certificate tells you which is which.
 
+Contributing, or pointing an agent at this repo? Start with
+[`AGENTS.md`](./AGENTS.md) — commands, prohibitions, and the definition of done.
+
 Full documentation lives in [`docs/`](./docs):
 
 | Document                                   | What it covers                                      |
