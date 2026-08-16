@@ -1,4 +1,11 @@
 #![no_std]
+// `publish` takes 8 arguments, one over clippy's default threshold. The argument
+// list of a `pub fn` in a #[contractimpl] block is the contract's on-chain ABI:
+// changing it would change the generated bindings and force a redeploy to a new
+// address. The lint has to be silenced at crate level rather than on the impl
+// block, because #[contractimpl] re-emits the signature as sibling items that an
+// item-level allow does not cover.
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, Symbol, Vec};
 
 #[contracttype]
@@ -312,6 +319,11 @@ mod mock_staking_unregistered {
 }
 
 #[cfg(test)]
+// USDC amounts are written as <dollars>_<7 decimals>, e.g. 50_000_0000000 is
+// $50,000. Clippy reads that as inconsistent grouping and suggests
+// 500_000_000_000, which is the same number with the dollar figure no longer
+// legible. The grouping is deliberate.
+#[allow(clippy::inconsistent_digit_grouping)]
 mod tests {
     use super::*;
     use soroban_sdk::{
@@ -319,7 +331,7 @@ mod tests {
         Env,
     };
 
-    fn setup_with_mock(env: &Env, registered: bool) -> (RegistryClient, Address) {
+    fn setup_with_mock(env: &Env, registered: bool) -> (RegistryClient<'_>, Address) {
         let cm = Address::generate(env);
 
         let mock_staking_id = if registered {

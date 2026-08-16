@@ -1,4 +1,11 @@
 #![no_std]
+// `initialize` takes 8 arguments, one over clippy's default threshold. The argument
+// list of a `pub fn` in a #[contractimpl] block is the contract's on-chain ABI:
+// changing it would change the generated bindings and force a redeploy to a new
+// address. The lint has to be silenced at crate level rather than on the impl
+// block, because #[contractimpl] re-emits the signature as sibling items that an
+// item-level allow does not cover.
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Val, Vec,
 };
@@ -337,7 +344,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
-    fn init_client(env: &Env) -> (ChallengeManagerClient, Address) {
+    fn init_client(env: &Env) -> (ChallengeManagerClient<'_>, Address) {
         let registry = Address::generate(env);
         let auditor_staking = Address::generate(env);
         let reserve_vault = Address::generate(env);

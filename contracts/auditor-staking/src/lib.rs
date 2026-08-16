@@ -186,6 +186,11 @@ impl AuditorStaking {
 }
 
 #[cfg(test)]
+// USDC amounts are written as <dollars>_<7 decimals>, e.g. 50_000_0000000 is
+// $50,000. Clippy reads that as inconsistent grouping and suggests
+// 500_000_000_000, which is the same number with the dollar figure no longer
+// legible. The grouping is deliberate.
+#[allow(clippy::inconsistent_digit_grouping)]
 mod tests {
     use super::*;
     use soroban_sdk::{
@@ -193,7 +198,7 @@ mod tests {
         Env,
     };
 
-    fn setup(env: &Env, min_stake: i128) -> (AuditorStakingClient, Address) {
+    fn setup(env: &Env, min_stake: i128) -> (AuditorStakingClient<'_>, Address) {
         let cm = Address::generate(env);
         let registry = Address::generate(env);
         let token = Address::generate(env);
