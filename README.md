@@ -75,16 +75,34 @@ scripts/                  # setup-accounts, deploy-all, demo (8-step E2E), smoke
 ## Running it
 
 ```bash
-# Contracts
-cargo test                                              # unit tests
-cargo build --release --target wasm32-unknown-unknown   # 5 wasm artifacts
-
-# TypeScript + live testnet smoke
 pnpm install
-pnpm typecheck
-pnpm verify-all        # typecheck + tools/sdk/mcp/routes smoke suites
+pnpm verify            # everything CI runs — offline, no secrets, ~6s
+```
 
-# E2E demo (spends testnet funds, mutates state — run intentionally)
+`pnpm verify` is the definition of done: typecheck, lint, formatting, unit
+tests, and the contract fmt/clippy/test suites. It needs no network and no
+credentials, so a fresh clone can run it immediately.
+
+The individual pieces, if you want to run one on its own:
+
+```bash
+# TypeScript
+pnpm test              # unit tests, offline
+pnpm typecheck
+pnpm lint              # eslint .
+pnpm format:check      # prettier
+
+# Contracts
+pnpm test:contracts    # cargo test — 21 tests across 5 contracts
+pnpm lint:contracts    # cargo clippy -D warnings
+pnpm build:contracts   # 5 wasm artifacts
+```
+
+Two commands spend testnet funds and mutate on-chain state, so they are kept
+out of `verify` and are never automated. Both need `.env.testnet`:
+
+```bash
+pnpm test:e2e          # 5 live smoke suites against testnet
 pnpm demo              # 8-step: stake → reserve → fee → attest → publish → verify → pay → SLASH
 ```
 

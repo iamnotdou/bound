@@ -28,7 +28,8 @@
     "mcp-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/mcp-smoke.ts",
     "routes-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/routes-smoke.ts",
     "wallet-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/wallet-smoke.ts",
-    "verify-all": "pnpm typecheck && pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm routes-smoke && pnpm wallet-smoke",
+    "test:e2e": "pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm routes-smoke && pnpm wallet-smoke",
+    "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm format:contracts && pnpm lint:contracts && pnpm test:contracts",
     "prepare": "husky"
   },
   "lint-staged": {

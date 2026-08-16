@@ -340,9 +340,11 @@ await bound.resolve(challengeId); // slashes auditor + compensates victim
 cargo test                                          # 21 unit tests
 cargo build --release --target wasm32-unknown-unknown   # 5 wasm artifacts
 
-# TypeScript + live testnet smoke
-pnpm typecheck
-pnpm verify-all        # typecheck + tools/sdk/mcp/routes smoke suites
+# TypeScript — offline, no secrets
+pnpm verify            # typecheck + lint + format + unit tests + contract suites
+
+# Live testnet smoke (needs .env.testnet)
+pnpm test:e2e          # tools/sdk/mcp/routes/wallet smoke suites
 
 # E2E demo (spends testnet funds, mutates state — run intentionally)
 pnpm demo              # 8-step: stake → reserve → fee → attest → publish → verify → pay → SLASH

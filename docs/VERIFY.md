@@ -30,7 +30,8 @@ The headline is the **trustless slash**, not a blocked payment.
 1. `cargo test` → expect **21 tests pass** across 5 contracts (reserve-vault 3,
    auditor-staking 6, fee-escrow 2, challenge-manager 2, registry 8).
 2. `cargo build --release --target wasm32-unknown-unknown` → 5 `.wasm` artifacts, no errors.
-3. `pnpm verify-all` → runs typecheck + 4 live smoke suites. Expect all ✓:
+3. `pnpm test:e2e` → runs the 5 live smoke suites (needs `.env.testnet`).
+   `pnpm verify` covers everything that does _not_ need the network. Expect all ✓:
    - tools-smoke / sdk-smoke: read a real cert + balances from testnet
    - mcp-smoke: 5 MCP tools exposed
    - routes-smoke: `/api/paid-service` (402→pay→200), `/api/verify` (400 + live cert),
