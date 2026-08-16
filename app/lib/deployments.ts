@@ -50,3 +50,33 @@ export function getDeployment(network: NetworkName = "testnet"): Deployment {
 export function listNetworks(): NetworkName[] {
   return Object.keys(DEPLOYMENTS) as NetworkName[];
 }
+
+/**
+ * Pure serialiser used by the deploy script. Addresses in, canonical JSON
+ * string out — no filesystem, no network, no `Date.now()`. Callers supply
+ * provenance so the function is deterministic and unit-testable.
+ *
+ * Key order is fixed to match `deployments/testnet.json`, so a round-trip
+ * through this function is a no-op for a well-formed file.
+ */
+export function serializeDeployment(d: Deployment): string {
+  // Rebuild field-by-field rather than spreading, so a caller that passes
+  // extra properties cannot change the on-disk shape.
+  const body: Deployment = {
+    network: d.network,
+    networkPassphrase: d.networkPassphrase,
+    rpcUrl: d.rpcUrl,
+    horizonUrl: d.horizonUrl,
+    deployedAt: d.deployedAt,
+    deployCommit: d.deployCommit,
+    contracts: {
+      registry: d.contracts.registry,
+      reserveVault: d.contracts.reserveVault,
+      auditorStaking: d.contracts.auditorStaking,
+      feeEscrow: d.contracts.feeEscrow,
+      challengeManager: d.contracts.challengeManager,
+      usdc: d.contracts.usdc,
+    },
+  };
+  return `${JSON.stringify(body, null, 2)}\n`;
+}

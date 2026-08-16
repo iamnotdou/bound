@@ -8,11 +8,21 @@
 // calls — so we deploy all 5 first, then initialize once every address is known.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
-import { readEnv, writeEnvValues, deploy, initialize, usdc } from "./lib";
+import { existsSync, writeFileSync } from "node:fs";
+import { readEnv, writeEnvValues, deploy, initialize, usdc, NETWORK } from "./lib";
+import { serializeDeployment } from "../app/lib/deployments";
 
 const ROOT = resolve(__dirname, "..");
 const WASM_DIR = resolve(ROOT, "target", "wasm32-unknown-unknown", "release");
+const DEPLOYMENTS_DIR = resolve(ROOT, "deployments");
+
+/** Current HEAD — recorded as deploy provenance in deployments/<network>.json. */
+function gitHead(): string {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).trim();
+}
 
 // contract → wasm filename (cargo replaces '-' with '_')
 const WASM = {
@@ -77,6 +87,31 @@ function main() {
     CHALLENGE_MANAGER_ADDRESS: addr.challenge_manager,
     REGISTRY_ADDRESS: addr.registry,
   });
+
+  // Output of record: committed deployment data. .env.testnet still gets the
+  // same addresses (above) for local secrets workflows; this file is what the
+  // app and the SDK will read after step 3.3.
+  const deploymentPath = resolve(DEPLOYMENTS_DIR, `${NETWORK}.json`);
+  writeFileSync(
+    deploymentPath,
+    serializeDeployment({
+      network: "testnet",
+      networkPassphrase: env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
+      rpcUrl: env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
+      horizonUrl: env.STELLAR_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
+      deployedAt: new Date().toISOString(),
+      deployCommit: gitHead(),
+      contracts: {
+        registry: addr.registry,
+        reserveVault: addr.reserve_vault,
+        auditorStaking: addr.auditor_staking,
+        feeEscrow: addr.fee_escrow,
+        challengeManager: addr.challenge_manager,
+        usdc: usdcAddr,
+      },
+    }),
+  );
+  console.log(`  wrote ${deploymentPath}`);
 
   // --- Phase B: initialize (all addresses known) ---
   const unlockAt = String(Math.floor(Date.now() / 1000) + RESERVE_LOCK_SECONDS);
@@ -145,7 +180,9 @@ function main() {
     addr.auditor_staking,
   ]);
 
-  console.log("\n✓ All 5 contracts deployed, initialized, and written to .env.testnet");
+  console.log(
+    `\n✓ All 5 contracts deployed, initialized, written to .env.testnet and deployments/${NETWORK}.json`,
+  );
 }
 
 main();
