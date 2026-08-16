@@ -28,8 +28,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@master
-        # No toolchain pin here — rust-toolchain.toml is the source of truth.
+      # Pin matches rust-toolchain.toml. The action requires an explicit
+      # toolchain input (empty is rejected); keep the two in lockstep.
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
 
@@ -85,7 +88,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
 
