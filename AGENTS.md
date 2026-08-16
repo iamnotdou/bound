@@ -95,6 +95,19 @@ optional `STELLAR_NETWORK` selector. `pnpm build` and `pnpm verify` run with no
 package — generated, committed, public, and **not** what the app reads. It is a
 duplicate to keep in mind when addresses change.
 
+## Workspace layout
+
+`pnpm-workspace.yaml` globs `packages/*`, `apps/*`, and `bindings/*`. The first
+two are empty today and exist so later steps land without re-plumbing.
+
+The six `bindings/*` packages are workspace members but are **imported by
+relative path** (`../../bindings/registry/src`), never by package name. That is
+deliberate: the Stellar CLI names them `registry`, `usdc`, `fee_escrow` and so
+on, and `registry` and `usdc` are **real, unrelated packages on npm**. Adding
+either as a named dependency would be ambiguous at best and fetch a stranger's
+code at worst. Keep the path imports until the bindings are bundled into the
+SDK.
+
 There is deliberately **no `build:bindings` script yet.** The committed bindings
 were generated against a live deployment (`--contract-id`), which is what
 populates that `networks` block; regenerating from a local wasm produces no
