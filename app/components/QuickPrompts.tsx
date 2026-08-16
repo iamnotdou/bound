@@ -78,7 +78,11 @@ export function QuickPrompts({
           disabled={disabled || p.disabled}
           title={p.disabled ? "Seed a certificate first (Auditor or Control page)" : p.hint}
           onClick={() => onPick(p.prompt)}
-          className={p.destructive ? "border-red-500/40 text-red-600 hover:bg-red-500/10 dark:text-red-400" : ""}
+          className={
+            p.destructive
+              ? "border-red-500/40 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+              : ""
+          }
         >
           <p.Icon className="size-3.5" />
           {p.label}

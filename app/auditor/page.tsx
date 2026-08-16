@@ -10,13 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CertificateCard } from "@/app/components/CertificateCard";
@@ -36,7 +30,15 @@ interface Pending {
   expiryDays: number;
 }
 
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: React.ReactNode;
+  hint?: string;
+}) {
   return (
     <div className="space-y-1">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
@@ -111,8 +113,8 @@ export default function AuditorPage() {
           <CardHeader>
             <CardTitle>Attestation request</CardTitle>
             <CardDescription>
-              What the operator is asking you to stand behind. The reserve is the{" "}
-              <em>claimed</em> coverage you sign off on.
+              What the operator is asking you to stand behind. The reserve is the <em>claimed</em>{" "}
+              coverage you sign off on.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -144,19 +146,24 @@ export default function AuditorPage() {
                     <UsdAmount value={pending.boundUsd} className="text-base font-semibold" />
                   </Field>
                   <Field label="Reserve" hint="claimed, pre-funded">
-                    <UsdAmount value={pending.reserveClaimedUsd} className="text-base font-semibold" />
+                    <UsdAmount
+                      value={pending.reserveClaimedUsd}
+                      className="text-base font-semibold"
+                    />
                   </Field>
                   <Field label="Your stake" hint="slashable">
-                    <UsdAmount value={pending.auditorStakeUsd} className="text-base font-semibold" />
+                    <UsdAmount
+                      value={pending.auditorStakeUsd}
+                      className="text-base font-semibold"
+                    />
                   </Field>
                 </div>
 
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.04] px-3 py-2 text-xs text-muted-foreground">
                   {pending.willStakeOnSign ? (
                     <>
-                      Signing will stake{" "}
-                      <UsdAmount value={pending.auditorStakeUsd} muted /> of your own capital and lock
-                      it to this certificate until expiry.
+                      Signing will stake <UsdAmount value={pending.auditorStakeUsd} muted /> of your
+                      own capital and lock it to this certificate until expiry.
                     </>
                   ) : (
                     <>

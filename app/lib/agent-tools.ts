@@ -39,7 +39,9 @@ export const boundTools: Record<string, BoundTool> = {
 
   get_balance: {
     description: "Get the USDC balance of an address. Defaults to this agent's own balance.",
-    parameters: { address: z.string().optional().describe("G... address; omit for the agent itself") },
+    parameters: {
+      address: z.string().optional().describe("G... address; omit for the agent itself"),
+    },
     execute: async ({ address }: { address?: string }) => {
       const addr = address ?? accounts.agent.publicKey();
       return { address: addr, balance: formatUsdc(await bound.usdcBalance(addr)) };
@@ -68,7 +70,9 @@ export const boundTools: Record<string, BoundTool> = {
       const body = await response.text();
       return {
         status: response.status,
-        paid: paid ? { amountUsd: paid.amount, recipient: paid.recipient, txHash: paid.txHash } : null,
+        paid: paid
+          ? { amountUsd: paid.amount, recipient: paid.recipient, txHash: paid.txHash }
+          : null,
         body,
       };
     },
@@ -106,7 +110,10 @@ export const boundTools: Record<string, BoundTool> = {
         challengeId: Number(challengeId),
         certStatusBefore: before.status.tag,
         certStatusAfter: after.status.tag,
-        outcome: after.status.tag === "Invalid" ? "FRAUD_PROVEN — auditor slashed, victim compensated" : "challenge did not invalidate",
+        outcome:
+          after.status.tag === "Invalid"
+            ? "FRAUD_PROVEN — auditor slashed, victim compensated"
+            : "challenge did not invalidate",
       };
     },
   },

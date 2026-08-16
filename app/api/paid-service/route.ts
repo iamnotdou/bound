@@ -12,10 +12,7 @@ export async function GET(req: Request) {
 
   const payment = req.headers.get("x-payment");
   if (!payment) {
-    return Response.json(
-      { amount: price, recipient: RECIPIENT, asset: "USDC" },
-      { status: 402 },
-    );
+    return Response.json({ amount: price, recipient: RECIPIENT, asset: "USDC" }, { status: 402 });
   }
 
   // In a real service we'd verify `payment` (tx hash) settled the demanded

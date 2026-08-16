@@ -9,8 +9,7 @@ export const NETWORK = process.env.STELLAR_NETWORK ?? "testnet";
 export const network = {
   rpcUrl: process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
   horizonUrl: process.env.STELLAR_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
-  passphrase:
-    process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
+  passphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
 };
 
 export type RoleKey = "operator" | "agent" | "auditor" | "counterparty" | "challenger";

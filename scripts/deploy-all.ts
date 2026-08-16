@@ -30,11 +30,10 @@ const RESERVE_LOCK_SECONDS = 365 * 24 * 3600; // reserve locked ~1 year out
 
 function buildWasm(): void {
   console.log("Building contracts (release wasm)…");
-  execFileSync(
-    "cargo",
-    ["build", "--release", "--target", "wasm32-unknown-unknown"],
-    { cwd: ROOT, stdio: "inherit" },
-  );
+  execFileSync("cargo", ["build", "--release", "--target", "wasm32-unknown-unknown"], {
+    cwd: ROOT,
+    stdio: "inherit",
+  });
 }
 
 function wasmPath(file: string): string {
@@ -49,7 +48,11 @@ function main() {
   const operatorAddr = env.OPERATOR_ADDRESS;
   const usdcAddr = env.USDC_ADDRESS;
 
-  for (const [k, v] of Object.entries({ OPERATOR_SECRET: operatorSecret, OPERATOR_ADDRESS: operatorAddr, USDC_ADDRESS: usdcAddr })) {
+  for (const [k, v] of Object.entries({
+    OPERATOR_SECRET: operatorSecret,
+    OPERATOR_ADDRESS: operatorAddr,
+    USDC_ADDRESS: usdcAddr,
+  })) {
     if (!v) throw new Error(`missing ${k} in .env.testnet — run \`pnpm setup\` first`);
   }
 
@@ -86,41 +89,60 @@ function main() {
 
   console.log("  reserve_vault");
   initialize(addr.reserve_vault, operatorSecret, [
-    "--operator", operatorAddr,
-    "--challenge_manager", addr.challenge_manager,
-    "--token", usdcAddr,
-    "--unlock_at", unlockAt,
+    "--operator",
+    operatorAddr,
+    "--challenge_manager",
+    addr.challenge_manager,
+    "--token",
+    usdcAddr,
+    "--unlock_at",
+    unlockAt,
   ]);
 
   console.log("  auditor_staking");
   initialize(addr.auditor_staking, operatorSecret, [
-    "--challenge_manager", addr.challenge_manager,
-    "--registry", addr.registry,
-    "--token", usdcAddr,
-    "--min_stake", AUDITOR_MIN_STAKE,
+    "--challenge_manager",
+    addr.challenge_manager,
+    "--registry",
+    addr.registry,
+    "--token",
+    usdcAddr,
+    "--min_stake",
+    AUDITOR_MIN_STAKE,
   ]);
 
   console.log("  fee_escrow");
   initialize(addr.fee_escrow, operatorSecret, [
-    "--challenge_manager", addr.challenge_manager,
-    "--token", usdcAddr,
+    "--challenge_manager",
+    addr.challenge_manager,
+    "--token",
+    usdcAddr,
   ]);
 
   console.log("  challenge_manager");
   initialize(addr.challenge_manager, operatorSecret, [
-    "--registry", addr.registry,
-    "--auditor_staking", addr.auditor_staking,
-    "--reserve_vault", addr.reserve_vault,
-    "--fee_escrow", addr.fee_escrow,
-    "--token", usdcAddr,
-    "--arbiter", arbiter,
-    "--min_stake", CHALLENGE_MIN_BOND,
+    "--registry",
+    addr.registry,
+    "--auditor_staking",
+    addr.auditor_staking,
+    "--reserve_vault",
+    addr.reserve_vault,
+    "--fee_escrow",
+    addr.fee_escrow,
+    "--token",
+    usdcAddr,
+    "--arbiter",
+    arbiter,
+    "--min_stake",
+    CHALLENGE_MIN_BOND,
   ]);
 
   console.log("  registry");
   initialize(addr.registry, operatorSecret, [
-    "--challenge_manager", addr.challenge_manager,
-    "--auditor_staking", addr.auditor_staking,
+    "--challenge_manager",
+    addr.challenge_manager,
+    "--auditor_staking",
+    addr.auditor_staking,
   ]);
 
   console.log("\n✓ All 5 contracts deployed, initialized, and written to .env.testnet");

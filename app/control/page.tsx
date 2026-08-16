@@ -29,7 +29,15 @@ async function post<T = Record<string, unknown>>(url: string, body: unknown = {}
   return data as T;
 }
 
-function Lane({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+function Lane({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-2">
       <div>
@@ -65,7 +73,8 @@ export default function ControlPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Proof cockpit</h1>
         <p className="text-sm text-muted-foreground">
           Drive all five actors on live testnet. Value moves between named accounts, and every
-          defection is punished on-chain. Run it with demo keys, or play a role with your own wallet.
+          defection is punished on-chain. Run it with demo keys, or play a role with your own
+          wallet.
         </p>
       </div>
 
@@ -76,7 +85,9 @@ export default function ControlPage() {
         <Card>
           <CardHeader>
             <CardTitle>Run the proof</CardTitle>
-            <CardDescription>Server-signed demo keys — the deterministic happy path + climax.</CardDescription>
+            <CardDescription>
+              Server-signed demo keys — the deterministic happy path + climax.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <Lane title="Reset" hint="Re-seed a fresh Verified cert (re-stakes the auditor).">
@@ -84,7 +95,9 @@ export default function ControlPage() {
                 label="Seed / Reset cert"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ certId: number }>("/api/auditor", { action: "sign-publish" });
+                  const d = await post<{ certId: number }>("/api/auditor", {
+                    action: "sign-publish",
+                  });
                   return `Seeded cert #${d.certId} → Verified`;
                 }}
               />
@@ -92,16 +105,22 @@ export default function ControlPage() {
 
             <Separator />
 
-            <Lane title="Operator" hint="Fund the reserve below the $10k claim to set the trap, or at/above for the honest path.">
+            <Lane
+              title="Operator"
+              hint="Fund the reserve below the $10k claim to set the trap, or at/above for the honest path."
+            >
               <ActionButton
                 label="Fund $4k (trap)"
                 variant="secondary"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ reserveHeldUsd: string; claimedUsd: string }>("/api/operator", {
-                    action: "deposit-reserve",
-                    amountUsd: 4000,
-                  });
+                  const d = await post<{ reserveHeldUsd: string; claimedUsd: string }>(
+                    "/api/operator",
+                    {
+                      action: "deposit-reserve",
+                      amountUsd: 4000,
+                    },
+                  );
                   return `Reserve → ${d.reserveHeldUsd} (claims ${d.claimedUsd})`;
                 }}
               />
@@ -110,10 +129,13 @@ export default function ControlPage() {
                 variant="secondary"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ reserveHeldUsd: string; claimedUsd: string }>("/api/operator", {
-                    action: "deposit-reserve",
-                    amountUsd: 10000,
-                  });
+                  const d = await post<{ reserveHeldUsd: string; claimedUsd: string }>(
+                    "/api/operator",
+                    {
+                      action: "deposit-reserve",
+                      amountUsd: 10000,
+                    },
+                  );
                   return `Reserve → ${d.reserveHeldUsd} (claims ${d.claimedUsd})`;
                 }}
               />
@@ -122,7 +144,9 @@ export default function ControlPage() {
                 variant="outline"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ feeUsd: string }>("/api/operator", { action: "deposit-fee" });
+                  const d = await post<{ feeUsd: string }>("/api/operator", {
+                    action: "deposit-fee",
+                  });
                   return `Fee escrowed ${d.feeUsd}`;
                 }}
               />
@@ -130,15 +154,20 @@ export default function ControlPage() {
 
             <Separator />
 
-            <Lane title="Challenger — the climax" hint="resolve() proves fraud by arithmetic. Slash if reserve is short; bond forfeit if funded.">
+            <Lane
+              title="Challenger — the climax"
+              hint="resolve() proves fraud by arithmetic. Slash if reserve is short; bond forfeit if funded."
+            >
               <ActionButton
                 label="Challenge → resolve"
                 variant="destructive"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ outcome: string; victimUsdBefore: string; victimUsdAfter: string }>(
-                    "/api/challenger",
-                  );
+                  const d = await post<{
+                    outcome: string;
+                    victimUsdBefore: string;
+                    victimUsdAfter: string;
+                  }>("/api/challenger");
                   return `${d.outcome} · victim ${d.victimUsdBefore} → ${d.victimUsdAfter}`;
                 }}
               />
@@ -146,16 +175,24 @@ export default function ControlPage() {
 
             <Separator />
 
-            <Lane title="Cheat lane" hint="Each defection is simulated and EXPECTED to revert — the revert is the proof (no funds move).">
+            <Lane
+              title="Cheat lane"
+              hint="Each defection is simulated and EXPECTED to revert — the revert is the proof (no funds move)."
+            >
               <ActionButton
                 label="Withdraw reserve early"
                 variant="outline"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ reverted: boolean; reason?: string; expected?: string }>("/api/cheat", {
-                    action: "withdraw-reserve",
-                  });
-                  return d.reverted ? `REVERTED ✓ — ${d.expected ?? d.reason}` : "⚠ did NOT revert — lock failed";
+                  const d = await post<{ reverted: boolean; reason?: string; expected?: string }>(
+                    "/api/cheat",
+                    {
+                      action: "withdraw-reserve",
+                    },
+                  );
+                  return d.reverted
+                    ? `REVERTED ✓ — ${d.expected ?? d.reason}`
+                    : "⚠ did NOT revert — lock failed";
                 }}
               />
               <ActionButton
@@ -163,10 +200,15 @@ export default function ControlPage() {
                 variant="outline"
                 onDone={refetch}
                 run={async () => {
-                  const d = await post<{ reverted: boolean; reason?: string; expected?: string }>("/api/cheat", {
-                    action: "withdraw-stake",
-                  });
-                  return d.reverted ? `REVERTED ✓ — ${d.expected ?? d.reason}` : "⚠ did NOT revert — lock failed";
+                  const d = await post<{ reverted: boolean; reason?: string; expected?: string }>(
+                    "/api/cheat",
+                    {
+                      action: "withdraw-stake",
+                    },
+                  );
+                  return d.reverted
+                    ? `REVERTED ✓ — ${d.expected ?? d.reason}`
+                    : "⚠ did NOT revert — lock failed";
                 }}
               />
             </Lane>
@@ -225,20 +267,31 @@ export default function ControlPage() {
 
             <Separator />
 
-            <Lane title="Operator" hint="Publish a cert and escrow the fee (reserve stays server-side by design).">
+            <Lane
+              title="Operator"
+              hint="Publish a cert and escrow the fee (reserve stays server-side by design)."
+            >
               <ActionButton
                 label="Publish cert"
                 variant="outline"
                 disabled={!address}
                 onDone={refetch}
-                run={w("publish", { agent: roles.agent.address }, (r) => `Published cert #${r} (Pending)`)}
+                run={w(
+                  "publish",
+                  { agent: roles.agent.address },
+                  (r) => `Published cert #${r} (Pending)`,
+                )}
               />
               <ActionButton
                 label="Deposit fee $500"
                 variant="outline"
                 disabled={!address}
                 onDone={refetch}
-                run={w("deposit-fee", { auditor: roles.auditor.address, amountUsd: 500 }, () => "Fee escrowed $500")}
+                run={w(
+                  "deposit-fee",
+                  { auditor: roles.auditor.address, amountUsd: 500 },
+                  () => "Fee escrowed $500",
+                )}
               />
             </Lane>
 
@@ -249,13 +302,20 @@ export default function ControlPage() {
                 label="Pay $500 → Counterparty"
                 disabled={!address}
                 onDone={refetch}
-                run={w("pay", { to: roles.counterparty.address, amountUsd: 500 }, () => "Paid $500 → Counterparty")}
+                run={w(
+                  "pay",
+                  { to: roles.counterparty.address, amountUsd: 500 },
+                  () => "Paid $500 → Counterparty",
+                )}
               />
             </Lane>
 
             <Separator />
 
-            <Lane title="Challenger" hint="Post a $100 bond and trigger the slash — the finder's fee lands in your wallet.">
+            <Lane
+              title="Challenger"
+              hint="Post a $100 bond and trigger the slash — the finder's fee lands in your wallet."
+            >
               <ActionButton
                 label="Challenge → resolve"
                 variant="destructive"

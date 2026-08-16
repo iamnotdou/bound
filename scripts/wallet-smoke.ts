@@ -20,7 +20,10 @@ async function main() {
 
   // Soroban contract call: agent pays $1 USDC → counterparty. Simulates cleanly
   // (agent is funded). Built with publicKey=AGENT, no signer.
-  ok("pay $1 (agent→counterparty)", await buildActionXdr("pay", AGENT, { to: COUNTERPARTY, amountUsd: 1 }));
+  ok(
+    "pay $1 (agent→counterparty)",
+    await buildActionXdr("pay", AGENT, { to: COUNTERPARTY, amountUsd: 1 }),
+  );
 
   // Classic changeTrust to USDC:OPERATOR — the wallet funding trustline step.
   ok("trustline (changeTrust USDC)", await buildTrustlineXdr(AGENT));

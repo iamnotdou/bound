@@ -111,10 +111,20 @@ function renderResult(toolName: string, result: any): { tone: Tone; body: React.
                 {valid ? "VALID" : status.toUpperCase()}
               </span>
             </KV>
-            <KV k="bound (worst case)"><Mono>{result?.bound ?? "—"}</Mono></KV>
-            <KV k="reserve (locked)"><Mono>{result?.reserve ?? "—"}</Mono></KV>
-            <KV k="auditor stake (slashable)"><Mono>{result?.auditorStake ?? "—"}</Mono></KV>
-            {result?.auditor && <KV k="auditor"><Mono>{truncate(result.auditor)}</Mono></KV>}
+            <KV k="bound (worst case)">
+              <Mono>{result?.bound ?? "—"}</Mono>
+            </KV>
+            <KV k="reserve (locked)">
+              <Mono>{result?.reserve ?? "—"}</Mono>
+            </KV>
+            <KV k="auditor stake (slashable)">
+              <Mono>{result?.auditorStake ?? "—"}</Mono>
+            </KV>
+            {result?.auditor && (
+              <KV k="auditor">
+                <Mono>{truncate(result.auditor)}</Mono>
+              </KV>
+            )}
           </div>
         ),
       };
@@ -131,15 +141,23 @@ function renderResult(toolName: string, result: any): { tone: Tone; body: React.
                 ${Number(result?.amountUsd ?? 0).toLocaleString()}
               </span>
             </KV>
-            <KV k="recipient"><Mono>{truncate(String(result?.recipient ?? "—"))}</Mono></KV>
-            <KV k="tx"><TxLink hash={result?.txHash} /></KV>
+            <KV k="recipient">
+              <Mono>{truncate(String(result?.recipient ?? "—"))}</Mono>
+            </KV>
+            <KV k="tx">
+              <TxLink hash={result?.txHash} />
+            </KV>
           </div>
         ),
       };
     }
 
     case "fetch_paid_service": {
-      const paid = result?.paid as { amountUsd?: number; recipient?: string; txHash?: string } | null;
+      const paid = result?.paid as {
+        amountUsd?: number;
+        recipient?: string;
+        txHash?: string;
+      } | null;
       let bodyText = "";
       try {
         const parsed = typeof result?.body === "string" ? JSON.parse(result.body) : result?.body;
@@ -151,7 +169,9 @@ function renderResult(toolName: string, result: any): { tone: Tone; body: React.
         tone: "ok",
         body: (
           <div className="space-y-1.5">
-            <KV k="http status"><Mono>{result?.status ?? "—"}</Mono></KV>
+            <KV k="http status">
+              <Mono>{result?.status ?? "—"}</Mono>
+            </KV>
             {paid ? (
               <>
                 <KV k="paid (x402)">
@@ -159,10 +179,14 @@ function renderResult(toolName: string, result: any): { tone: Tone; body: React.
                     ${Number(paid.amountUsd ?? 0).toLocaleString()}
                   </span>
                 </KV>
-                <KV k="tx"><TxLink hash={paid.txHash} /></KV>
+                <KV k="tx">
+                  <TxLink hash={paid.txHash} />
+                </KV>
               </>
             ) : (
-              <KV k="payment"><span className="text-muted-foreground">none required</span></KV>
+              <KV k="payment">
+                <span className="text-muted-foreground">none required</span>
+              </KV>
             )}
             {bodyText && (
               <p className="border-t pt-1.5 text-xs text-muted-foreground">{bodyText}</p>
@@ -183,7 +207,9 @@ function renderResult(toolName: string, result: any): { tone: Tone; body: React.
                 <Zap className="size-3.5" /> FRAUD PROVEN — by arithmetic
               </div>
             )}
-            <KV k="challenge id"><Mono>#{result?.challengeId ?? "—"}</Mono></KV>
+            <KV k="challenge id">
+              <Mono>#{result?.challengeId ?? "—"}</Mono>
+            </KV>
             <KV k="cert status">
               <span className="font-mono">
                 {result?.certStatusBefore ?? "—"} → {result?.certStatusAfter ?? "—"}
@@ -200,8 +226,12 @@ function renderResult(toolName: string, result: any): { tone: Tone; body: React.
         tone: "ok",
         body: (
           <div className="space-y-1.5">
-            <KV k="address"><Mono>{truncate(String(result?.address ?? "—"))}</Mono></KV>
-            <KV k="balance"><span className="font-mono font-semibold">{result?.balance ?? "—"}</span></KV>
+            <KV k="address">
+              <Mono>{truncate(String(result?.address ?? "—"))}</Mono>
+            </KV>
+            <KV k="balance">
+              <span className="font-mono font-semibold">{result?.balance ?? "—"}</span>
+            </KV>
           </div>
         ),
       };
@@ -242,7 +272,13 @@ export function ToolCallCard({ inv }: { inv: ToolInvocation }) {
           )}
         >
           <StatusIcon className={cn("size-3", running && "animate-spin")} />
-          {running ? "running" : tone === "bad" ? "slashed" : tone === "warn" ? "challenged" : "done"}
+          {running
+            ? "running"
+            : tone === "bad"
+              ? "slashed"
+              : tone === "warn"
+                ? "challenged"
+                : "done"}
         </span>
       </div>
       {body && <div className="mt-2.5">{body}</div>}

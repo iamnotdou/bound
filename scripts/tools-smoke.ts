@@ -13,7 +13,9 @@ async function main() {
   console.log("get_balance (agent):");
   console.log(" ", JSON.stringify(await boundTools.get_balance.execute({})));
 
-  console.log("\n✓ Tool layer is wired to BoundClient. (execute_payment / fetch_paid_service / challenge_certificate mutate state — exercised via the demo.)");
+  console.log(
+    "\n✓ Tool layer is wired to BoundClient. (execute_payment / fetch_paid_service / challenge_certificate mutate state — exercised via the demo.)",
+  );
 }
 
 main().catch((e) => {

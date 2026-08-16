@@ -66,6 +66,9 @@ export async function POST(req: Request) {
         return Response.json({ error: `unknown step: ${step}` }, { status: 400 });
     }
   } catch (err) {
-    return Response.json({ error: `${step || "fund"} failed: ${(err as Error).message}` }, { status: 502 });
+    return Response.json(
+      { error: `${step || "fund"} failed: ${(err as Error).message}` },
+      { status: 502 },
+    );
   }
 }

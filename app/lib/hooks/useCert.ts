@@ -5,10 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CertView } from "../cert-view";
 
-export function useCert(
-  address: string | null,
-  opts?: { pollMs?: number; enabled?: boolean },
-) {
+export function useCert(address: string | null, opts?: { pollMs?: number; enabled?: boolean }) {
   const [cert, setCert] = useState<CertView | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

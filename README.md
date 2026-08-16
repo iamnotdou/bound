@@ -3,10 +3,10 @@
 > **A surety bond for AI agents, on-chain.**
 > Built for the Build On Stellar Hackathon — IBW 2026 Istanbul · Main Track + Hack Agentic
 
-Know your worst case *before* you transact. AI agents now hold wallets and move money
+Know your worst case _before_ you transact. AI agents now hold wallets and move money
 autonomously, but reputation can't tell you your maximum downside — models change
 silently and a fresh identity is free. Bound Protocol replaces the unanswerable
-*"can I trust this agent?"* with a number you can look up:
+_"can I trust this agent?"_ with a number you can look up:
 
 > **"Your worst-case loss is bounded at $X, it's pre-funded, and an independent auditor
 > staked their own money that this is true."**
@@ -26,7 +26,7 @@ silently and a fresh identity is free. Bound Protocol replaces the unanswerable
    20% to whoever caught it. No oracle. No judge. Just arithmetic.
 
 The honest edge: a **short reserve** is provable on-chain with zero trusted parties.
-Proving *who was harmed* or *how much an agent spent* can't be — those name a victim
+Proving _who was harmed_ or _how much an agent spent_ can't be — those name a victim
 or fall back to a named arbiter. The certificate tells you which is which.
 
 See [`WRITEUP.md`](./WRITEUP.md) for the full academic framing, developer docs, and
@@ -56,13 +56,13 @@ scripts/                  # setup-accounts, deploy-all, demo (8-step E2E), smoke
 
 ## Deployed contracts (Stellar Testnet)
 
-| Contract | Address |
-|---|---|
-| Registry | `CBM2UAVZFUI2QGZIS35VB6P3W5FYC3HW3KV3E2AF6KFQDUMFIZPPAJWV` |
-| ReserveVault | `CDN6S5DKUCC4O33L3RGTTO4LYNJVPLPIYYZTUANPJJZYAHZCR32O4WFB` |
-| AuditorStaking | `CCSJTEXOJZ322XI5ZJF6YZ2IRLCRKNXTGHGK3ZLATKL6Y7CGQODS4VZB` |
-| FeeEscrow | `CD4EZ5FCFC7D65OHBB5HHF6ASM4OCRGNAO6XQZQ5LKH4QB327SF5EYOF` |
-| ChallengeManager | `CANDUKOYQIMZDK4MUWHN6MKJI5ORY5R4BPBEQIOQQSINJYITMY47UNZH` |
+| Contract          | Address                                                    |
+| ----------------- | ---------------------------------------------------------- |
+| Registry          | `CBM2UAVZFUI2QGZIS35VB6P3W5FYC3HW3KV3E2AF6KFQDUMFIZPPAJWV` |
+| ReserveVault      | `CDN6S5DKUCC4O33L3RGTTO4LYNJVPLPIYYZTUANPJJZYAHZCR32O4WFB` |
+| AuditorStaking    | `CCSJTEXOJZ322XI5ZJF6YZ2IRLCRKNXTGHGK3ZLATKL6Y7CGQODS4VZB` |
+| FeeEscrow         | `CD4EZ5FCFC7D65OHBB5HHF6ASM4OCRGNAO6XQZQ5LKH4QB327SF5EYOF` |
+| ChallengeManager  | `CANDUKOYQIMZDK4MUWHN6MKJI5ORY5R4BPBEQIOQQSINJYITMY47UNZH` |
 | USDC (Circle SAC) | `CBIBCQ6EIQX3DU2SIJ3MFN7MQBNXBCETNLTFHNQOSTTLZDSGQLENPVWV` |
 
 ---

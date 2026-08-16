@@ -23,27 +23,18 @@ export async function GET() {
     const counterparty = accounts.counterparty.publicKey();
     const challenger = accounts.challenger.publicKey();
 
-    const [
-      opBal,
-      agentBal,
-      audBal,
-      cpBal,
-      chalBal,
-      reserve,
-      stake,
-      cert,
-      certId,
-    ] = await Promise.all([
-      bound.usdcBalance(operator),
-      bound.usdcBalance(agent),
-      bound.usdcBalance(auditor),
-      bound.usdcBalance(counterparty),
-      bound.usdcBalance(challenger),
-      bound.reserveBalance(),
-      bound.auditorStake(auditor),
-      bound.verifyCertificate(agent),
-      bound.certIdForAgent(agent),
-    ]);
+    const [opBal, agentBal, audBal, cpBal, chalBal, reserve, stake, cert, certId] =
+      await Promise.all([
+        bound.usdcBalance(operator),
+        bound.usdcBalance(agent),
+        bound.usdcBalance(auditor),
+        bound.usdcBalance(counterparty),
+        bound.usdcBalance(challenger),
+        bound.reserveBalance(),
+        bound.auditorStake(auditor),
+        bound.verifyCertificate(agent),
+        bound.certIdForAgent(agent),
+      ]);
 
     const view = toCertView(agent, cert, certId);
 

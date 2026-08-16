@@ -14,6 +14,7 @@ below and produce a single PASS/FAIL report. Do NOT redeploy contracts or run th
 unless a check fails and the user approves — those spend testnet funds and change addresses.
 
 ## Core idea you are verifying it matches
+
 Bonding/insurance model, NOT a spending cap. An auditor **stakes their own capital** to
 vouch that an agent's worst-case loss is bounded and pre-funded by a **locked reserve**.
 A counterparty reads the certificate before transacting. If the vouch is false
@@ -71,7 +72,7 @@ The headline is the **trustless slash**, not a blocked payment.
    - `bound` is attested, never read by any contract (`reserve < bound` ⇒ only the
      reserve is pre-funded; the rest rests on the locked auditor stake);
    - forfeited challenge bond stays in ChallengeManager.
-   Flag any NEW gap not already documented. If a limitation is no longer true, say so.
+     Flag any NEW gap not already documented. If a limitation is no longer true, say so.
 
 ## Part C — Safety / leaks
 
@@ -80,6 +81,7 @@ The headline is the **trustless slash**, not a blocked payment.
    should ever appear in your report or in any tracked file.
 
 ## Report format
+
 A table of PASS/FAIL per numbered check with the one-line evidence (count, status, or the
 revert reason). Then a 2-line verdict: (1) does it WORK, (2) does it MATCH THE IDEA —
 including whether any undocumented gap was found. If anything fails, propose the fix but

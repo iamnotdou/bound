@@ -65,28 +65,46 @@ function main() {
   // 1 — Auditor stakes their own capital (skin in the game)
   step(`Auditor stakes ${money(AUDITOR_STAKE)}`);
   invoke(AUDITOR_STAKING, AUDITOR_SK, "stake", ["--auditor", AUDITOR, "--amount", AUDITOR_STAKE]);
-  console.log(`  ✓ auditor stake: ${money(invoke(AUDITOR_STAKING, OPERATOR_SK, "get_stake", ["--auditor", AUDITOR]).replace(/"/g, ""))}`);
+  console.log(
+    `  ✓ auditor stake: ${money(invoke(AUDITOR_STAKING, OPERATOR_SK, "get_stake", ["--auditor", AUDITOR]).replace(/"/g, ""))}`,
+  );
 
   // 2 — Operator funds the reserve... but short
   step(`Operator deposits reserve — but only ${money(RESERVE_DEPOSIT)}`);
   invoke(RESERVE_VAULT, OPERATOR_SK, "deposit", ["--amount", RESERVE_DEPOSIT]);
-  console.log(`  ✓ vault balance: ${money(invoke(RESERVE_VAULT, OPERATOR_SK, "get_balance", []).replace(/"/g, ""))} (cert will claim ${money(RESERVE_CLAIMED)})`);
+  console.log(
+    `  ✓ vault balance: ${money(invoke(RESERVE_VAULT, OPERATOR_SK, "get_balance", []).replace(/"/g, ""))} (cert will claim ${money(RESERVE_CLAIMED)})`,
+  );
 
   // 3 — Operator deposits the audit fee
   step(`Operator deposits ${money(FEE)} audit fee`);
-  invoke(FEE_ESCROW, OPERATOR_SK, "deposit", ["--operator", OPERATOR, "--auditor", AUDITOR, "--amount", FEE]);
+  invoke(FEE_ESCROW, OPERATOR_SK, "deposit", [
+    "--operator",
+    OPERATOR,
+    "--auditor",
+    AUDITOR,
+    "--amount",
+    FEE,
+  ]);
   console.log(`  ✓ fee escrowed for auditor`);
 
   // 4 — Operator publishes the certificate (PENDING). It claims $10k reserve.
   step(`Operator publishes certificate (claims reserve ${money(RESERVE_CLAIMED)})`);
   const certId = invoke(REGISTRY, OPERATOR_SK, "publish", [
-    "--operator", OPERATOR,
-    "--agent", AGENT,
-    "--bound", BOUND,
-    "--reserve_amount", RESERVE_CLAIMED,
-    "--expires_at", EXPIRES_AT,
-    "--reserve_vault_contract", RESERVE_VAULT,
-    "--auditor_staking_contract", AUDITOR_STAKING,
+    "--operator",
+    OPERATOR,
+    "--agent",
+    AGENT,
+    "--bound",
+    BOUND,
+    "--reserve_amount",
+    RESERVE_CLAIMED,
+    "--expires_at",
+    EXPIRES_AT,
+    "--reserve_vault_contract",
+    RESERVE_VAULT,
+    "--auditor_staking_contract",
+    AUDITOR_STAKING,
   ]).replace(/"/g, "");
   console.log(`  ✓ cert_id: ${certId} (status: PENDING)`);
 
@@ -99,7 +117,9 @@ function main() {
   step(`Counterparty verifies the certificate`);
   const verify = JSON.parse(invoke(REGISTRY, OPERATOR_SK, "verify", ["--agent", AGENT]));
   console.log(`  valid: ${verify.valid} · status: ${verify.status}`);
-  console.log(`  bound: ${money(verify.bound)} · reserve (claimed): ${money(verify.reserve)} · auditor stake: ${money(verify.auditor_stake)}`);
+  console.log(
+    `  bound: ${money(verify.bound)} · reserve (claimed): ${money(verify.reserve)} · auditor stake: ${money(verify.auditor_stake)}`,
+  );
   console.log(`  ✓ counterparty accepts — "worst-case is bounded and vouched"`);
 
   // 7 — Agent pays the counterparty (direct USDC transfer)
@@ -115,21 +135,34 @@ function main() {
   const challengerBefore = usdcBalance(CHALLENGER);
 
   const challengeId = invoke(CHALLENGE_MANAGER, CHALLENGER_SK, "challenge", [
-    "--challenger", CHALLENGER,
-    "--cert_id", certId,
-    "--proof_type", '"InsufficientReserve"', // enum passed as JSON string
-    "--victim", COUNTERPARTY,
-    "--stake", CHALLENGE_BOND,
+    "--challenger",
+    CHALLENGER,
+    "--cert_id",
+    certId,
+    "--proof_type",
+    '"InsufficientReserve"', // enum passed as JSON string
+    "--victim",
+    COUNTERPARTY,
+    "--stake",
+    CHALLENGE_BOND,
   ]).replace(/"/g, "");
   console.log(`  challenge_id: ${challengeId} · bond posted: ${money(CHALLENGE_BOND)}`);
   console.log(`  calling resolve() — the contract checks claim vs live balance…`);
   invoke(CHALLENGE_MANAGER, CHALLENGER_SK, "resolve", ["--challenge_id", challengeId]);
 
   const verifyAfter = JSON.parse(invoke(REGISTRY, OPERATOR_SK, "verify", ["--agent", AGENT]));
-  console.log(`\n  ⚡ FRAUD PROVEN (claimed ${money(RESERVE_CLAIMED)} > actual ${money(RESERVE_DEPOSIT)})`);
-  console.log(`     auditor staking pool: ${money(auditorStakeBefore)} → ${money(usdcBalance(AUDITOR_STAKING))} (slashed)`);
-  console.log(`     counterparty:         ${money(cpBeforeSlash)} → ${money(usdcBalance(COUNTERPARTY))} (compensated)`);
-  console.log(`     challenger:           ${money(challengerBefore)} → ${money(usdcBalance(CHALLENGER))} (bond back + reward)`);
+  console.log(
+    `\n  ⚡ FRAUD PROVEN (claimed ${money(RESERVE_CLAIMED)} > actual ${money(RESERVE_DEPOSIT)})`,
+  );
+  console.log(
+    `     auditor staking pool: ${money(auditorStakeBefore)} → ${money(usdcBalance(AUDITOR_STAKING))} (slashed)`,
+  );
+  console.log(
+    `     counterparty:         ${money(cpBeforeSlash)} → ${money(usdcBalance(COUNTERPARTY))} (compensated)`,
+  );
+  console.log(
+    `     challenger:           ${money(challengerBefore)} → ${money(usdcBalance(CHALLENGER))} (bond back + reward)`,
+  );
   console.log(`     cert status:          ${verifyAfter.status} (valid: ${verifyAfter.valid})`);
 
   console.log("\n══════════════════════════════════════════════");

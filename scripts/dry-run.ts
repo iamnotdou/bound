@@ -25,7 +25,9 @@ async function ledger(label: string) {
   const row = (r: any) => `${r.role.padEnd(13)} ${r.usdc}`;
   console.log(`\n── ledger: ${label} ──`);
   l.accounts.forEach((a: any) => console.log("   " + row(a)));
-  console.log(`   reserve held ${l.contracts.reserveHeldUsd} / claimed ${l.contracts.reserveClaimedUsd} · stake ${l.contracts.auditorStakeUsd} · cert ${l.cert.status}`);
+  console.log(
+    `   reserve held ${l.contracts.reserveHeldUsd} / claimed ${l.contracts.reserveClaimedUsd} · stake ${l.contracts.auditorStakeUsd} · cert ${l.cert.status}`,
+  );
   return l;
 }
 
@@ -37,7 +39,9 @@ async function main() {
   console.log("\n[1/6] Seed cert (auditor sign & publish)…");
   const seed = await post(auditorPost, { action: "sign-publish" });
   if (seed.error) throw new Error("seed failed: " + seed.error);
-  console.log(`   ✓ cert #${seed.certId} → ${seed.cert.status} (bound ${seed.cert.boundUsd}, claims ${seed.cert.reserveUsd})`);
+  console.log(
+    `   ✓ cert #${seed.certId} → ${seed.cert.status} (bound ${seed.cert.boundUsd}, claims ${seed.cert.reserveUsd})`,
+  );
   const certId = seed.certId;
 
   // 2 — Cheat lane: while the cert is VERIFIED both locks must hold.
@@ -48,7 +52,9 @@ async function main() {
   for (const action of ["withdraw-stake", "withdraw-reserve"] as const) {
     const c = await post(cheatPost, { action });
     const ok = c.reverted === true;
-    console.log(`   ${ok ? "✓" : "✗"} ${action.padEnd(16)} reverted=${c.reverted} ${c.expected ? `(${c.expected})` : `(${c.reason ?? "NO REVERT — lock failed"})`}`);
+    console.log(
+      `   ${ok ? "✓" : "✗"} ${action.padEnd(16)} reverted=${c.reverted} ${c.expected ? `(${c.expected})` : `(${c.reason ?? "NO REVERT — lock failed"})`}`,
+    );
     if (!ok) throw new Error(`${action} did NOT revert while cert Verified — lock not enforced`);
   }
 
@@ -60,7 +66,11 @@ async function main() {
 
   // 4 — Agent autonomously pays the counterparty $500
   console.log("\n[4/6] Agent pays $500 USDC to the counterparty…");
-  const hash = await bound.executePayment(accounts.agent, accounts.counterparty.publicKey(), usdc(500));
+  const hash = await bound.executePayment(
+    accounts.agent,
+    accounts.counterparty.publicKey(),
+    usdc(500),
+  );
   console.log(`   ✓ tx ${hash}`);
 
   await ledger("after pay + under-funded reserve");
@@ -70,7 +80,9 @@ async function main() {
   const chal = await post(challengerPost, { certId });
   if (chal.error) throw new Error("challenge failed: " + chal.error);
   console.log(`   ${chal.outcome}`);
-  console.log(`   victim ${chal.victimUsdBefore} → ${chal.victimUsdAfter} · auditor stake → ${chal.auditorStakeAfterUsd} · reserve → ${chal.reserveAfterUsd}`);
+  console.log(
+    `   victim ${chal.victimUsdBefore} → ${chal.victimUsdAfter} · auditor stake → ${chal.auditorStakeAfterUsd} · reserve → ${chal.reserveAfterUsd}`,
+  );
   console.log(`   cert ${chal.certBefore.status} → ${chal.certAfter.status}`);
   if (chal.certAfter.status !== "Invalid") throw new Error("challenge did not invalidate the cert");
 
@@ -78,7 +90,9 @@ async function main() {
   await ledger("end (expected: cert Invalid, stake $0, victim up)");
 
   console.log("\n======== ✓ FULL LOOP PASSED — seed → locks hold → pay → SLASH ========");
-  console.log("Note: cert is now Invalid again (the resting state). Re-run [1] /auditor to reset before the live demo.");
+  console.log(
+    "Note: cert is now Invalid again (the resting state). Re-run [1] /auditor to reset before the live demo.",
+  );
 }
 
 main().catch((e) => {

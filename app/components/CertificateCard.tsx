@@ -88,7 +88,11 @@ export function CertificateCard({ cert, className }: { cert: CertView; className
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Auditor">
-            {cert.auditor ? <AddressPill address={cert.auditor} showRole /> : <span className="text-muted-foreground">—</span>}
+            {cert.auditor ? (
+              <AddressPill address={cert.auditor} showRole />
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
           </Field>
           <Field label="Expires">
             <span className="text-muted-foreground">

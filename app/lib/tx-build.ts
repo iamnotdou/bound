@@ -26,7 +26,10 @@ import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 import { Client as RegistryClient } from "../../bindings/registry/src";
 import { Client as AuditorStakingClient } from "../../bindings/auditor_staking/src";
 import { Client as FeeEscrowClient } from "../../bindings/fee_escrow/src";
-import { Client as ChallengeManagerClient, type ProofType } from "../../bindings/challenge_manager/src";
+import {
+  Client as ChallengeManagerClient,
+  type ProofType,
+} from "../../bindings/challenge_manager/src";
 import { Client as TokenClient } from "../../bindings/usdc/src";
 
 import { contracts, network, usdc } from "./config";
@@ -67,7 +70,8 @@ function requireG(value: string | undefined, name: string): string {
 }
 
 function requirePositive(amountUsd: number | undefined, name: string): number {
-  if (typeof amountUsd !== "number" || !(amountUsd > 0)) throw new Error(`${name} must be a positive amount`);
+  if (typeof amountUsd !== "number" || !(amountUsd > 0))
+    throw new Error(`${name} must be a positive amount`);
   return amountUsd;
 }
 
@@ -82,7 +86,10 @@ export async function buildActionXdr(
   switch (action) {
     case "stake": {
       const c = new AuditorStakingClient(buildOpts(contracts.auditorStaking, address));
-      const at = await c.stake({ auditor: address, amount: usdc(requirePositive(p.amountUsd, "stake")) });
+      const at = await c.stake({
+        auditor: address,
+        amount: usdc(requirePositive(p.amountUsd, "stake")),
+      });
       return at.toXDR();
     }
     case "attest": {

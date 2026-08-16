@@ -6,7 +6,7 @@ import { Nav } from "@/app/components/Nav";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
-const outfit = Outfit({subsets:['latin'],variable:'--font-sans'});
+const outfit = Outfit({ subsets: ["latin"], variable: "--font-sans" });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,9 +24,7 @@ export const metadata: Metadata = {
     "Know your worst-case loss before you transact. An auditor stakes their own capital that an agent's loss is bounded — and the chain slashes them if it's a lie.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={cn("font-sans", outfit.variable)}>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>

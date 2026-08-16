@@ -20,7 +20,7 @@ AI agents now hold wallets, sign transactions, and make payments autonomously. B
 
 ## The Solution
 
-Bound Protocol issues **Bound Certificates** — on-chain attestations that an AI agent's worst-case economic loss is *bounded*: a known, pre-funded number that an independent auditor has staked their own capital to guarantee.
+Bound Protocol issues **Bound Certificates** — on-chain attestations that an AI agent's worst-case economic loss is _bounded_: a known, pre-funded number that an independent auditor has staked their own capital to guarantee.
 
 We don't pretend to control the agent. We make its worst-case loss a number the counterparty can read before transacting — backed by a locked reserve, vouched by an auditor who loses their own money if the claim is false.
 
@@ -30,24 +30,24 @@ This is a surety bond for AI agents, on-chain. The reserve covers losses. The au
 
 ## Actors
 
-| Actor | Role |
-|---|---|
-| Operator | Deploys the agent, sets up containment, locks reserve + fee |
-| Agent | The AI making payments (probabilistic, untrusted) |
-| Auditor | Independent reviewer who stakes own capital on honest attestation |
-| Counterparty | Entity deciding whether to accept payment / transact with agent |
-| Challenger | Anyone watching the system — earns reward for catching fraud |
+| Actor        | Role                                                              |
+| ------------ | ----------------------------------------------------------------- |
+| Operator     | Deploys the agent, sets up containment, locks reserve + fee       |
+| Agent        | The AI making payments (probabilistic, untrusted)                 |
+| Auditor      | Independent reviewer who stakes own capital on honest attestation |
+| Counterparty | Entity deciding whether to accept payment / transact with agent   |
+| Challenger   | Anyone watching the system — earns reward for catching fraud      |
 
 ---
 
 ## Smart Contracts
 
-| Contract | Purpose |
-|---|---|
-| `Registry` | Store, publish, read, verify Bound Certificates |
-| `ReserveVault` | Locked USDC reserve — absorbs worst-case loss |
-| `AuditorStaking` | Auditor's own stake — slashable on fraud |
-| `FeeEscrow` | Conditional audit fee — released after attestation |
+| Contract           | Purpose                                                |
+| ------------------ | ------------------------------------------------------ |
+| `Registry`         | Store, publish, read, verify Bound Certificates        |
+| `ReserveVault`     | Locked USDC reserve — absorbs worst-case loss          |
+| `AuditorStaking`   | Auditor's own stake — slashable on fraud               |
+| `FeeEscrow`        | Conditional audit fee — released after attestation     |
 | `ChallengeManager` | Dispute resolution — slash auditor + compensate victim |
 
 5 contracts, all written in Rust (Soroban). Deployed to Stellar Testnet.
@@ -151,7 +151,7 @@ pub fn resolve_by_arbiter(env, challenge_id, fraud_proven)
 ```
 
 **Why InsufficientReserve is the demo's trustless climax:** payments are direct
-USDC transfers, so there is no on-chain record of what the agent *spent* —
+USDC transfers, so there is no on-chain record of what the agent _spent_ —
 "BoundExceeded" needs an oracle. But "the reserve is smaller than the auditor
 attested" is pure arithmetic the contract checks itself. That's the scenario the
 demo runs end-to-end with zero trusted parties.
@@ -185,15 +185,16 @@ stellar contract bindings typescript --network testnet --contract-id $ADDRESS --
 
 **Tools the agent has:**
 
-| Tool | What it does |
-|---|---|
-| `verify_agent_certificate` | Check an agent's Bound Certificate — bound, reserve, auditor stake, status |
-| `execute_payment` | Send USDC directly to a recipient |
-| `fetch_paid_service` | HTTP request with automatic x402 payment |
-| `get_balance` | Current USDC balance of the agent |
-| `challenge_certificate` | Prove a false attestation on-chain (`resolve()`) — slashes auditor, compensates victim |
+| Tool                       | What it does                                                                           |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| `verify_agent_certificate` | Check an agent's Bound Certificate — bound, reserve, auditor stake, status             |
+| `execute_payment`          | Send USDC directly to a recipient                                                      |
+| `fetch_paid_service`       | HTTP request with automatic x402 payment                                               |
+| `get_balance`              | Current USDC balance of the agent                                                      |
+| `challenge_certificate`    | Prove a false attestation on-chain (`resolve()`) — slashes auditor, compensates victim |
 
 **Counterparty runner pattern (the core interaction):**
+
 ```typescript
 async function counterpartyDecides(agent: Address, amount: i128) {
   // before accepting payment, counterparty reads the certificate
@@ -234,17 +235,20 @@ atomic transaction **slashes the auditor's $1,500 stake** (80% → counterparty,
 **Landing** — hero, 4-panel how-it-works, why Stellar, CTA
 
 **Dashboard** — search by agent address → CertificateCard showing:
+
 - Status badge: VALID / EXPIRED / CHALLENGED / SLASHED
 - Bound (attested coverage limit), Reserve, Auditor stake
 - Issued/expires timestamps
 
 **Chat page** (`/chat`) — operator (human) ↔ agent conversation. Main demo interface.
+
 - `useChat` hook (Vercel AI SDK) handles streaming + tool call state
 - Tool calls rendered as `ToolCallCard` (green = executed, amber = challenged, red = slashed)
 - Quick prompt buttons: "Verify this agent's certificate", "Pay $500 for API service", "Access premium service (x402)", "Challenge a bad attestation"
 - All contract calls server-side in `/api/chat/route.ts` — secret keys never touch browser
 
 **Auditor page** (`/auditor`) — separate simple page where auditor reviews setup and signs.
+
 - Shows pending certificate data (operator address, limits, reserve amount)
 - "Sign & Publish" button → calls Registry.publish(operatorSig, auditorSig)
 - In demo: hardcoded auditor keypair signs automatically (simulated auditor)
@@ -348,6 +352,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 Judge opens `/chat`. Certificate is already published (pre-seeded on page load).
 
 **Quick prompt — "Verify this agent's certificate":**
+
 ```
 👤 Counterparty: "Before I transact, what's this agent's Bound Certificate?"
 
@@ -368,6 +373,7 @@ Judge opens `/chat`. Certificate is already published (pre-seeded on page load).
 ```
 
 **Quick prompt — "Pay $500 for API service":**
+
 ```
 👤 Operator: "Pay $500 for the data API service"
 
@@ -381,6 +387,7 @@ Judge opens `/chat`. Certificate is already published (pre-seeded on page load).
 ```
 
 **Quick prompt — "Challenge this certificate" (the climax):**
+
 ```
 👤 Challenger: "The cert claims a $10k reserve. Prove it's actually there."
 
@@ -410,28 +417,30 @@ human — caught it and made the victim whole. The cage was economic, and it hel
 
 ## Nash Equilibrium
 
-| Actor | Defection | Why It Fails |
-|---|---|---|
-| Operator | Under-fund the reserve | Any challenger proves it on-chain (`actual < claimed`) → auditor slashed, victim compensated |
-| Operator | Withdraw reserve early | `release_to_operator` is time-locked until cert expiry — reverts |
-| Auditor | Attest a reserve that isn't there | Trustless challenge wins by arithmetic → their stake is slashed |
-| Auditor | Sign without reviewing | Same — if any claim is false, their stake pays for it |
-| Auditor | Withdraw stake after attesting | `attest()` bonds the stake to the cert; `release()` reverts (`stake_locked`) until expiry |
-| Challenger | False challenge | `resolve()` finds `actual >= claimed` → challenger forfeits bond |
+| Actor      | Defection                         | Why It Fails                                                                                 |
+| ---------- | --------------------------------- | -------------------------------------------------------------------------------------------- |
+| Operator   | Under-fund the reserve            | Any challenger proves it on-chain (`actual < claimed`) → auditor slashed, victim compensated |
+| Operator   | Withdraw reserve early            | `release_to_operator` is time-locked until cert expiry — reverts                             |
+| Auditor    | Attest a reserve that isn't there | Trustless challenge wins by arithmetic → their stake is slashed                              |
+| Auditor    | Sign without reviewing            | Same — if any claim is false, their stake pays for it                                        |
+| Auditor    | Withdraw stake after attesting    | `attest()` bonds the stake to the cert; `release()` reverts (`stake_locked`) until expiry    |
+| Challenger | False challenge                   | `resolve()` finds `actual >= claimed` → challenger forfeits bond                             |
 
 ---
 
 ## Trust Model & Known Limitations
 
-Being precise about what is *trustless* vs. what rests on an *economic* or *scope* assumption:
+Being precise about what is _trustless_ vs. what rests on an _economic_ or _scope_ assumption:
 
 **Trustless (the contract proves it itself):**
+
 - `InsufficientReserve`: `resolve()` reads the cert's claimed reserve and the live vault balance and slashes on `actual < claimed`. No oracle, no human.
 - Reserve lock: the operator cannot reclaim the reserve until cert expiry (`reserve_still_locked`).
-- **Stake bond: once an auditor attests, their stake is locked to the cert until expiry — they cannot vouch and then walk their capital out (`stake_locked`).** *(Fixed: `AuditorStaking.lock`, set by `Registry.attest`.)*
+- **Stake bond: once an auditor attests, their stake is locked to the cert until expiry — they cannot vouch and then walk their capital out (`stake_locked`).** _(Fixed: `AuditorStaking.lock`, set by `Registry.attest`.)_
 
 **Economic / scope assumptions (honest about the edges):**
-- **Victim is named by the challenger, not verified on-chain.** Payments are direct USDC transfers with no on-chain record, so the contract can punish the auditor trustlessly but cannot *prove who was harmed*. Compensation routing trusts the challenger to name the true victim. (Same root cause as why `BoundExceeded` needs an arbiter.)
+
+- **Victim is named by the challenger, not verified on-chain.** Payments are direct USDC transfers with no on-chain record, so the contract can punish the auditor trustlessly but cannot _prove who was harmed_. Compensation routing trusts the challenger to name the true victim. (Same root cause as why `BoundExceeded` needs an arbiter.)
 - **One reserve vault = one operator, single balance.** Per-cert reserve segregation is out of MVP scope; a production build would isolate reserves per certificate.
 - **`bound` is an attested number, not an on-chain cap.** No contract reads it. With `reserve < bound`, only the reserve is pre-funded; the remainder is backed by the (now-locked) auditor stake and their reputation. The certificate's honest claim is "loss is pre-funded up to the reserve, and an auditor staked slashable capital on the attestation."
 - A forfeited challenge bond currently stays in the ChallengeManager (not redistributed).

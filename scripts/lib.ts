@@ -41,7 +41,8 @@ function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-const TRANSIENT = /connection reset|connect error|timed out|timeout|temporarily|503|502|429|reset by peer|broken pipe/i;
+const TRANSIENT =
+  /connection reset|connect error|timed out|timeout|temporarily|503|502|429|reset by peer|broken pipe/i;
 
 // `capture` is kept for call-site clarity; stdout is always returned.
 function stellar(args: string[], _capture: boolean): string {
@@ -76,7 +77,16 @@ function stellar(args: string[], _capture: boolean): string {
 /** Deploy a wasm file. Returns the new contract id (C...). */
 export function deploy(wasmPath: string, sourceSecret: string): string {
   const out = stellar(
-    ["contract", "deploy", "--wasm", wasmPath, "--source-account", sourceSecret, "--network", NETWORK],
+    [
+      "contract",
+      "deploy",
+      "--wasm",
+      wasmPath,
+      "--source-account",
+      sourceSecret,
+      "--network",
+      NETWORK,
+    ],
     true,
   );
   const m = out.match(/C[A-Z2-7]{55}/);
@@ -85,14 +95,25 @@ export function deploy(wasmPath: string, sourceSecret: string): string {
 }
 
 /** Invoke a contract function. Returns the CLI's stdout (JSON for reads). */
-export function invoke(contractId: string, sourceSecret: string, fn: string, args: string[]): string {
+export function invoke(
+  contractId: string,
+  sourceSecret: string,
+  fn: string,
+  args: string[],
+): string {
   return stellar(
     [
-      "contract", "invoke",
-      "--id", contractId,
-      "--source-account", sourceSecret,
-      "--network", NETWORK,
-      "--", fn, ...args,
+      "contract",
+      "invoke",
+      "--id",
+      contractId,
+      "--source-account",
+      sourceSecret,
+      "--network",
+      NETWORK,
+      "--",
+      fn,
+      ...args,
     ],
     false,
   ).trim();
@@ -112,7 +133,18 @@ export function deployAssetSac(asset: string, sourceSecret: string): string {
   // Probe: a read only succeeds if the contract is already deployed.
   try {
     stellar(
-      ["contract", "invoke", "--id", id, "--source-account", sourceSecret, "--network", NETWORK, "--", "decimals"],
+      [
+        "contract",
+        "invoke",
+        "--id",
+        id,
+        "--source-account",
+        sourceSecret,
+        "--network",
+        NETWORK,
+        "--",
+        "decimals",
+      ],
       true,
     );
     return id; // already deployed
@@ -120,7 +152,17 @@ export function deployAssetSac(asset: string, sourceSecret: string): string {
     // not deployed yet — deploy it
   }
   stellar(
-    ["contract", "asset", "deploy", "--asset", asset, "--source-account", sourceSecret, "--network", NETWORK],
+    [
+      "contract",
+      "asset",
+      "deploy",
+      "--asset",
+      asset,
+      "--source-account",
+      sourceSecret,
+      "--network",
+      NETWORK,
+    ],
     true,
   );
   return id;
@@ -128,7 +170,20 @@ export function deployAssetSac(asset: string, sourceSecret: string): string {
 
 /** Open a trustline so the source account can hold `line` (e.g. "USDC:G..."). */
 export function changeTrust(line: string, sourceSecret: string): void {
-  stellar(["tx", "new", "change-trust", "--line", line, "--source-account", sourceSecret, "--network", NETWORK], false);
+  stellar(
+    [
+      "tx",
+      "new",
+      "change-trust",
+      "--line",
+      line,
+      "--source-account",
+      sourceSecret,
+      "--network",
+      NETWORK,
+    ],
+    false,
+  );
 }
 
 /** Mint `amount` of the SAC asset to `to`. Must be signed by the issuer. */

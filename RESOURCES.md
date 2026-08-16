@@ -14,11 +14,11 @@ Everything you need to build. Do not guess URLs — use these exact links.
 
 ### Prize Pool
 
-| Track | 1st | 2nd | 3rd | Total |
-|---|---|---|---|---|
-| Main Track | $1,200 | $800 | $600 | $2,600 |
-| Hack Agentic | $700 | $500 | — | $1,200 |
-| Hack Privacy | $700 | $500 | — | $1,200 |
+| Track        | 1st    | 2nd  | 3rd  | Total  |
+| ------------ | ------ | ---- | ---- | ------ |
+| Main Track   | $1,200 | $800 | $600 | $2,600 |
+| Hack Agentic | $700   | $500 | —    | $1,200 |
+| Hack Privacy | $700   | $500 | —    | $1,200 |
 
 **Target: Main + Hack Agentic = $3,800 max**
 
@@ -27,10 +27,12 @@ Everything you need to build. Do not guess URLs — use these exact links.
 ## Stellar Core Infrastructure
 
 ### Getting Started
+
 - Smart contract setup: https://developers.stellar.org/docs/smart-contracts/getting-started/setup
 - Getting started guide: https://developers.stellar.org/docs/build/smart-contracts/getting-started/hello-world-frontend
 
 ### Network Access
+
 - Stellar RPC (real-time data): https://developers.stellar.org/docs/data/apis/rpc
 - Stellar Lab (interact + query): https://lab.stellar.org
 - Stellar.Expert (block explorer): https://stellar.expert
@@ -38,6 +40,7 @@ Everything you need to build. Do not guess URLs — use these exact links.
 - Testnet Soroban RPC: https://soroban-testnet.stellar.org
 
 ### Fund Testnet Accounts
+
 - Testnet faucet: https://lab.stellar.org/account/fund?$=network$id=testnet&label=Testnet&horizonUrl=https:////horizon-testnet.stellar.org&rpcUrl=https:////soroban-testnet.stellar.org&passphrase=Test%20SDF%20Network%20/;%20September%202015
 - Circle USDC + EURC testnet faucet: https://faucet.circle.com
 
@@ -46,25 +49,30 @@ Everything you need to build. Do not guess URLs — use these exact links.
 ## Smart Contract Development (Soroban / Rust)
 
 ### Documentation
+
 - Example contracts (DeFi, tokens, etc.): https://developers.stellar.org/docs/build/smart-contracts/example-contracts
 - Smart contract authorization: https://developers.stellar.org/docs/learn/encyclopedia/security/authorization
 - Developer tools list: https://developers.stellar.org/docs/tools/developer-tools
 
 ### SDK Library
+
 - All language SDKs: https://developers.stellar.org/docs/tools/sdks/library
 
 ### Install Stellar CLI
+
 ```bash
 cargo install --locked stellar-cli
 ```
 
 ### Init Soroban workspace
+
 ```bash
 stellar contract init ccp-stellar
 cd ccp-stellar
 ```
 
 ### Deploy a contract
+
 ```bash
 stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/contract_name.wasm \
@@ -73,6 +81,7 @@ stellar contract deploy \
 ```
 
 ### Call a contract
+
 ```bash
 stellar contract invoke \
   --id <contract-address> \
@@ -82,6 +91,7 @@ stellar contract invoke \
 ```
 
 ### Generate TypeScript bindings (auto-generated client)
+
 ```bash
 stellar contract bindings typescript \
   --network testnet \
@@ -96,12 +106,14 @@ stellar contract bindings typescript \
 This is the key Stellar technology for CCP. x402 is Stellar's native protocol for AI agent payments.
 
 ### Documentation
+
 - Agentic payments overview: https://developers.stellar.org/docs/build/agentic-payments
 - x402 protocol: https://developers.stellar.org/docs/build/agentic-payments/x402
 - x402 built on Stellar: https://developers.stellar.org/docs/build/agentic-payments/x402/built-on-stellar
 - x402 quickstart guide: https://developers.stellar.org/docs/build/agentic-payments/x402/quickstart-guide
 
 ### How x402 works with CCP
+
 ```
 Agent → HTTP GET /some-service
 Server → 402 Payment Required (x402 header with payment details)
@@ -116,14 +128,17 @@ Server → receives payment → serves response
 ## Smart Wallets & Passkeys
 
 ### Passkey-Kit (recommended for operator/auditor UX)
+
 - GitHub: https://github.com/kalepail/passkey-kit
 - Description: TypeScript SDK for creating and managing Stellar smart wallets
 - Use for: operator wallet, auditor wallet onboarding
 
 ### Smart Wallet Docs
+
 - https://developers.stellar.org/docs/build/apps/smart-wallets
 
 ### Demo Apps (reference implementations)
+
 - Svelte/Astro flavor: https://github.com/kalepail/smart-stellar-demo
 - React flavor: https://github.com/carstenjacobsen/smart-stellar-demo
 - Vanilla flavor: https://github.com/elliotfriend/snapchain-demo
@@ -133,13 +148,16 @@ Server → receives payment → serves response
 ## Frontend
 
 ### Templates (pick one and fork)
+
 - Scaffold Stellar Astro Template: https://github.com/AhaLabs/scaffold-stellar-frontend
 - SvelteKit + Passkey Kit Template: https://github.com/ElliotFriend/soroban-template-sveltekit-passkeys
 
 ### Stellar Design System (React components)
+
 - https://design-system.stellar.org
 
 ### Tutorial
+
 - Guestbook dapp with passkey wallets: https://developers.stellar.org/docs/build/apps/guestbook/overview
 - Build applications tutorials: https://developers.stellar.org/docs/building-apps/overview
 
@@ -191,12 +209,14 @@ Server → receives payment → serves response
 ## Monorepo Setup
 
 ### Recommended stack
+
 - Rust + Soroban for contracts
 - TypeScript + `@stellar/stellar-sdk` for SDK + scripts
 - Next.js for web app
 - pnpm workspaces + turborepo
 
 ### package.json (root)
+
 ```json
 {
   "name": "ccp-stellar",
@@ -210,6 +230,7 @@ Server → receives payment → serves response
 ```
 
 ### turbo.json
+
 ```json
 {
   "$schema": "https://turbo.build/schema.json",
@@ -221,6 +242,7 @@ Server → receives payment → serves response
 ```
 
 ### Install Stellar JS SDK
+
 ```bash
 pnpm add @stellar/stellar-sdk
 ```
@@ -297,13 +319,13 @@ pub struct VerifyResult {
 
 ## Demo Accounts (create fresh for hackathon)
 
-| Role | Purpose |
-|---|---|
-| `operator` | Deploys contracts, deposits reserve, locks fee |
-| `agent` | Makes payments via SpendingLimit |
-| `auditor` | Stakes own USDC, signs attestation |
-| `challenger` | Watches system, submits challenges |
-| `counterparty` | Receives payments, verifies certificates |
+| Role           | Purpose                                        |
+| -------------- | ---------------------------------------------- |
+| `operator`     | Deploys contracts, deposits reserve, locks fee |
+| `agent`        | Makes payments via SpendingLimit               |
+| `auditor`      | Stakes own USDC, signs attestation             |
+| `challenger`   | Watches system, submits challenges             |
+| `counterparty` | Receives payments, verifies certificates       |
 
 Create all via Stellar CLI or Lab, fund via testnet faucet.
 
@@ -352,9 +374,11 @@ apps/web/app/demo/page.tsx
 The judges explicitly require you to answer these three questions:
 
 1. **Which actions does the agent perform autonomously?**
+
    > The agent autonomously makes payments up to the hard limit via SpendingLimit.pay(). All transactions below the limit execute without human approval.
 
 2. **What safeguards are in place?**
+
    > Hard limit (code-enforced ceiling, cannot be exceeded), reserve vault (locked USDC covers losses), auditor staking (independent party staked capital on honest attestation), challenge mechanism (anyone can prove fraud and earn reward).
 
 3. **Why is Stellar the right chain for this use case?**

@@ -24,13 +24,14 @@ export default function ChatPage() {
   const { cert, loading: certLoading, refetch } = useCert(agent, { pollMs: 5000 });
   const certId = cert?.certId ?? null;
 
-  const { messages, input, handleInputChange, handleSubmit, append, status, stop, error } =
-    useChat({
+  const { messages, input, handleInputChange, handleSubmit, append, status, stop, error } = useChat(
+    {
       api: "/api/chat",
       // a tool call may have mutated chain state (a slash) — re-read the cert the
       // moment the agent finishes its turn so the panel flips without poll lag.
       onFinish: () => void refetch(),
-    });
+    },
+  );
 
   const busy = status === "submitted" || status === "streaming";
 
@@ -47,16 +48,16 @@ export default function ChatPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Talk to the agent</h1>
           <p className="text-sm text-muted-foreground">
-            An autonomous payment agent with no spending cap. What keeps you safe is its
-            certificate — read it, pay it, then prove a false vouch on-chain.
+            An autonomous payment agent with no spending cap. What keeps you safe is its certificate
+            — read it, pay it, then prove a false vouch on-chain.
           </p>
         </div>
 
         <div className="mt-4 flex-1 space-y-4 overflow-y-auto pr-1">
           {messages.length === 0 && (
             <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
-              Ask the agent to verify its certificate, make a payment, pay a service via x402,
-              or challenge a false attestation. Use a quick prompt below to start.
+              Ask the agent to verify its certificate, make a payment, pay a service via x402, or
+              challenge a false attestation. Use a quick prompt below to start.
             </div>
           )}
 
@@ -74,7 +75,12 @@ export default function ChatPage() {
                     <Bot className="size-4" />
                   </div>
                 )}
-                <div className={cn("min-w-0 max-w-[85%] space-y-2", isUser && "flex flex-col items-end")}>
+                <div
+                  className={cn(
+                    "min-w-0 max-w-[85%] space-y-2",
+                    isUser && "flex flex-col items-end",
+                  )}
+                >
                   {parts!.map((part, i) => {
                     if (part.type === "text") {
                       if (!part.text) return null;
@@ -167,7 +173,8 @@ export default function ChatPage() {
           <p className="text-xs text-muted-foreground">
             This panel reads the live testnet certificate for the demo agent. When a challenge
             proves the reserve is short, the auditor is slashed and the status flips to{" "}
-            <span className="font-medium text-red-600 dark:text-red-400">Invalid</span> — right here.
+            <span className="font-medium text-red-600 dark:text-red-400">Invalid</span> — right
+            here.
           </p>
         </div>
       </aside>

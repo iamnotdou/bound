@@ -72,7 +72,10 @@ export function LedgerBoard({ ledger, loading }: { ledger: Ledger | null; loadin
                 <AddressPill address={a.address} />
               </div>
               {a.isIssuer ? (
-                <span className="font-mono text-sm text-muted-foreground" title="USDC issuer — balance is unbounded">
+                <span
+                  className="font-mono text-sm text-muted-foreground"
+                  title="USDC issuer — balance is unbounded"
+                >
                   ∞ <span className="text-[11px]">(issuer)</span>
                 </span>
               ) : (
@@ -85,7 +88,12 @@ export function LedgerBoard({ ledger, loading }: { ledger: Ledger | null; loadin
         <Separator />
 
         <div className="grid grid-cols-3 gap-3">
-          <div className={cn("rounded-md p-2 transition-colors duration-700", flash.reserve && "bg-emerald-500/15")}>
+          <div
+            className={cn(
+              "rounded-md p-2 transition-colors duration-700",
+              flash.reserve && "bg-emerald-500/15",
+            )}
+          >
             <div className="text-xs text-muted-foreground">Reserve held</div>
             <UsdAmount
               value={ledger.contracts.reserveHeldUsd}
@@ -96,9 +104,17 @@ export function LedgerBoard({ ledger, loading }: { ledger: Ledger | null; loadin
               {short && <span className="text-red-600 dark:text-red-400"> · SHORT</span>}
             </div>
           </div>
-          <div className={cn("rounded-md p-2 transition-colors duration-700", flash.stake && "bg-emerald-500/15")}>
+          <div
+            className={cn(
+              "rounded-md p-2 transition-colors duration-700",
+              flash.stake && "bg-emerald-500/15",
+            )}
+          >
             <div className="text-xs text-muted-foreground">Auditor stake</div>
-            <UsdAmount value={ledger.contracts.auditorStakeUsd} className="text-base font-semibold" />
+            <UsdAmount
+              value={ledger.contracts.auditorStakeUsd}
+              className="text-base font-semibold"
+            />
             <div className="text-[11px] text-muted-foreground">slashable</div>
           </div>
           <div className="rounded-md p-2">

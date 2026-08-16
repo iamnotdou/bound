@@ -11,7 +11,10 @@ import { Client as RegistryClient, type VerifyResult } from "../../bindings/regi
 import { Client as ReserveVaultClient } from "../../bindings/reserve_vault/src";
 import { Client as AuditorStakingClient } from "../../bindings/auditor_staking/src";
 import { Client as FeeEscrowClient } from "../../bindings/fee_escrow/src";
-import { Client as ChallengeManagerClient, type ProofType } from "../../bindings/challenge_manager/src";
+import {
+  Client as ChallengeManagerClient,
+  type ProofType,
+} from "../../bindings/challenge_manager/src";
 import { Client as TokenClient } from "../../bindings/usdc/src";
 
 import { contracts, network, readSource } from "./config";
@@ -119,7 +122,9 @@ export class BoundClient {
 
   /** Operator escrows the audit fee, naming the auditor who can later collect it. */
   async depositFee(operator: Keypair, auditor: string, amount: bigint) {
-    return send(() => this.fees(operator).deposit({ operator: operator.publicKey(), auditor, amount }));
+    return send(() =>
+      this.fees(operator).deposit({ operator: operator.publicKey(), auditor, amount }),
+    );
   }
 
   /** Operator publishes a PENDING certificate. Returns the cert id. */
@@ -143,7 +148,9 @@ export class BoundClient {
 
   /** Registered auditor attests → certificate becomes VERIFIED. */
   async attestCertificate(auditor: Keypair, certId: bigint) {
-    return send(() => this.registry(auditor).attest({ auditor: auditor.publicKey(), cert_id: certId }));
+    return send(() =>
+      this.registry(auditor).attest({ auditor: auditor.publicKey(), cert_id: certId }),
+    );
   }
 
   /** Issuer (operator) mints test USDC to a recipient — used to fund a connected wallet. */
@@ -152,7 +159,11 @@ export class BoundClient {
   }
 
   /** Agent (or anyone) sends USDC directly to a recipient. Returns the tx hash. */
-  async executePayment(signer: Keypair, recipient: string, amount: bigint): Promise<string | undefined> {
+  async executePayment(
+    signer: Keypair,
+    recipient: string,
+    amount: bigint,
+  ): Promise<string | undefined> {
     const { hash } = await send(() =>
       this.token(signer).transfer({ from: signer.publicKey(), to: recipient, amount }),
     );

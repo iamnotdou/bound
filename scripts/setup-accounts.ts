@@ -77,7 +77,9 @@ async function main() {
   }
 
   console.log(`\n✓ Accounts funded and seeded with test USDC.`);
-  console.log(`\n⚠  USDC_ADDRESS changed — run \`pnpm deploy\` so contracts bind to the new token.`);
+  console.log(
+    `\n⚠  USDC_ADDRESS changed — run \`pnpm deploy\` so contracts bind to the new token.`,
+  );
 }
 
 main().catch((e) => {
