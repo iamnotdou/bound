@@ -38,6 +38,26 @@ describe("getDeployment()", () => {
     expect(() => new Date(d.deployedAt).toISOString()).not.toThrow();
   });
 
+  it("exposes five actor public keys and no secrets", () => {
+    const { accounts } = getDeployment();
+    expect(Object.keys(accounts).sort()).toEqual([
+      "agent",
+      "auditor",
+      "challenger",
+      "counterparty",
+      "operator",
+    ]);
+    for (const [role, address] of Object.entries(accounts)) {
+      // G... only. An S... here would be a leaked secret key in a public repo.
+      expect(address, role).toMatch(/^G[A-Z0-9]{55}$/);
+    }
+  });
+
+  it("contains no S... secret key anywhere in the committed file", () => {
+    // Cheap guard against a deploy script one day writing the wrong field.
+    expect(JSON.stringify(getDeployment())).not.toMatch(/"S[A-Z2-7]{55}"/);
+  });
+
   it("is JSON-serialisable (no surprises for the browser)", () => {
     expect(() => JSON.stringify(getDeployment())).not.toThrow();
   });
@@ -60,6 +80,13 @@ describe("serializeDeployment()", () => {
     deployedAt: "2026-01-02T03:04:05.000Z",
     deployCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     readSource: "G" + "A".repeat(55),
+    accounts: {
+      operator: "G" + "A".repeat(55),
+      agent: "G" + "G".repeat(55),
+      auditor: "G" + "H".repeat(55),
+      challenger: "G" + "I".repeat(55),
+      counterparty: "G" + "J".repeat(55),
+    },
     contracts: {
       registry: "C" + "A".repeat(55),
       reserveVault: "C" + "B".repeat(55),
@@ -80,6 +107,13 @@ describe("serializeDeployment()", () => {
   "deployedAt": "2026-01-02T03:04:05.000Z",
   "deployCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "readSource": "G${"A".repeat(55)}",
+  "accounts": {
+    "operator": "G${"A".repeat(55)}",
+    "agent": "G${"G".repeat(55)}",
+    "auditor": "G${"H".repeat(55)}",
+    "challenger": "G${"I".repeat(55)}",
+    "counterparty": "G${"J".repeat(55)}"
+  },
   "contracts": {
     "registry": "C${"A".repeat(55)}",
     "reserveVault": "C${"B".repeat(55)}",

@@ -1,34 +1,49 @@
-// Client-safe configuration. Reads ONLY the public values exposed to the browser
-// via next.config.ts `env` (addresses + network endpoints — never a secret key).
+// Client-safe configuration. Reads committed public data from the deployments
+// map — never a secret key, never process.env for addresses.
 //
-// This is deliberately separate from app/lib/config.ts, which is server-only
-// (it pulls in dotenv + secret keys). Never import config.ts from client code.
+// This is deliberately separate from app/lib/config.ts only in spirit (money
+// helpers live there); both now share getDeployment() as the address source.
+// Safe to import from Client Components.
+import { getDeployment, type NetworkName } from "./deployments";
 
-export const NETWORK = process.env.STELLAR_NETWORK ?? "testnet";
+const deployment = getDeployment(
+  (process.env.STELLAR_NETWORK as NetworkName | undefined) ?? "testnet",
+);
+
+export const NETWORK: NetworkName = deployment.network;
 
 export const network = {
-  rpcUrl: process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
-  horizonUrl: process.env.STELLAR_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
-  passphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
+  rpcUrl: deployment.rpcUrl,
+  horizonUrl: deployment.horizonUrl,
+  passphrase: deployment.networkPassphrase,
 };
+
+/**
+ * True when this deployment targets Stellar mainnet. Derived from the network
+ * passphrase rather than the network name, because the passphrase is what the
+ * chain itself uses to distinguish them — and it stays a runtime check even
+ * while NetworkName has only one member.
+ */
+export const IS_PUBLIC_NETWORK =
+  deployment.networkPassphrase === "Public Global Stellar Network ; September 2015";
 
 export type RoleKey = "operator" | "agent" | "auditor" | "counterparty" | "challenger";
 
 export const roles: Record<RoleKey, { label: string; address: string }> = {
-  operator: { label: "Operator", address: process.env.OPERATOR_ADDRESS ?? "" },
-  agent: { label: "Agent", address: process.env.AGENT_ADDRESS ?? "" },
-  auditor: { label: "Auditor", address: process.env.AUDITOR_ADDRESS ?? "" },
-  counterparty: { label: "Counterparty", address: process.env.COUNTERPARTY_ADDRESS ?? "" },
-  challenger: { label: "Challenger", address: process.env.CHALLENGER_ADDRESS ?? "" },
+  operator: { label: "Operator", address: deployment.accounts.operator },
+  agent: { label: "Agent", address: deployment.accounts.agent },
+  auditor: { label: "Auditor", address: deployment.accounts.auditor },
+  counterparty: { label: "Counterparty", address: deployment.accounts.counterparty },
+  challenger: { label: "Challenger", address: deployment.accounts.challenger },
 };
 
 export const contracts: Record<string, { label: string; id: string }> = {
-  registry: { label: "Registry", id: process.env.REGISTRY_ADDRESS ?? "" },
-  reserveVault: { label: "ReserveVault", id: process.env.RESERVE_VAULT_ADDRESS ?? "" },
-  auditorStaking: { label: "AuditorStaking", id: process.env.AUDITOR_STAKING_ADDRESS ?? "" },
-  feeEscrow: { label: "FeeEscrow", id: process.env.FEE_ESCROW_ADDRESS ?? "" },
-  challengeManager: { label: "ChallengeManager", id: process.env.CHALLENGE_MANAGER_ADDRESS ?? "" },
-  usdc: { label: "USDC (SAC)", id: process.env.USDC_ADDRESS ?? "" },
+  registry: { label: "Registry", id: deployment.contracts.registry },
+  reserveVault: { label: "ReserveVault", id: deployment.contracts.reserveVault },
+  auditorStaking: { label: "AuditorStaking", id: deployment.contracts.auditorStaking },
+  feeEscrow: { label: "FeeEscrow", id: deployment.contracts.feeEscrow },
+  challengeManager: { label: "ChallengeManager", id: deployment.contracts.challengeManager },
+  usdc: { label: "USDC (SAC)", id: deployment.contracts.usdc },
 };
 
 /** Truncate a Stellar address/contract id / tx hash for display: GABC…WXYZ */

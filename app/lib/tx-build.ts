@@ -32,10 +32,10 @@ import {
 } from "../../bindings/challenge_manager/src";
 import { Client as TokenClient } from "../../bindings/usdc/src";
 
-import { contracts, network, usdc } from "./config";
+import { contracts, network, accounts, usdc } from "./config";
 
 const G_ADDRESS = /^G[A-Z2-7]{55}$/;
-const HORIZON_URL = process.env.STELLAR_HORIZON_URL ?? "https://horizon-testnet.stellar.org";
+const HORIZON_URL = network.horizonUrl;
 
 export type WalletAction = "stake" | "attest" | "publish" | "deposit-fee" | "pay" | "challenge";
 
@@ -154,7 +154,7 @@ export async function buildActionXdr(
  */
 export async function buildTrustlineXdr(address: string): Promise<string> {
   requireG(address, "wallet address");
-  const issuer = requireG(process.env.OPERATOR_ADDRESS, "operator (issuer)");
+  const issuer = requireG(accounts.operator, "operator (issuer)");
   const usdcAsset = new Asset("USDC", issuer);
 
   const horizon = new Horizon.Server(HORIZON_URL);

@@ -4,7 +4,10 @@
 // Query ?price=120 lets the demo vary how much the service charges — the point
 // of Bound is that the agent pays whatever is asked, and the certificate (not
 // this server) bounds the counterparty's exposure.
-const RECIPIENT = process.env.COUNTERPARTY_ADDRESS ?? "";
+import { accounts } from "../../lib/config";
+
+// The counterparty is the party selling the service, so it collects the fee.
+const RECIPIENT = accounts.counterparty;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);

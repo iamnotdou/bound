@@ -1,8 +1,8 @@
-// stellar.expert URL builders. Client-safe. Defaults to the testnet explorer;
-// swap the segment if NETWORK ever becomes "public".
-import { NETWORK } from "./ui-config";
+// stellar.expert URL builders. Client-safe. Follows the deployment's network
+// passphrase, so it points at the mainnet explorer the day one exists.
+import { IS_PUBLIC_NETWORK } from "./ui-config";
 
-const net = NETWORK === "public" ? "public" : "testnet";
+const net = IS_PUBLIC_NETWORK ? "public" : "testnet";
 const BASE = `https://stellar.expert/explorer/${net}`;
 
 export const explorer = {

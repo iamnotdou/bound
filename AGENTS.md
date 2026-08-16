@@ -82,16 +82,18 @@ Each is a rule because the consequence is expensive or irreversible.
 
 ## Where contract addresses actually live
 
-Three places, of which **one is load-bearing for the server**:
+**`deployments/testnet.json`** — committed, and the single source of truth.
+Server (`app/lib/config.ts`) and browser (`app/lib/ui-config.ts`) both read it
+through `getDeployment()`. It holds network endpoints, the six contract ids,
+the five actor `G...` public keys, and the RPC read-source account.
 
-1. **`deployments/testnet.json`** — committed. `app/lib/config.ts` reads this
-   (via `getDeployment()`). This is the source of truth for network endpoints,
-   contract ids, and the RPC read-source account.
-2. `.env.testnet` — gitignored. **Secrets only** (`*_SECRET`, `ANTHROPIC_API_KEY`),
-   plus a legacy copy of the public addresses still used by `next.config.ts`
-   for the browser until step 3.4.
-3. `bindings/*/src/index.ts` — a `networks.testnet.contractId` field in each
-   package. Generated, committed, public. Not what the app reads.
+`.env.testnet` is **secrets only** (`*_SECRET`, `ANTHROPIC_API_KEY`) plus the
+optional `STELLAR_NETWORK` selector. `pnpm build` and `pnpm verify` run with no
+`.env.testnet` at all.
+
+`bindings/*/src/index.ts` still carries a `networks.testnet.contractId` per
+package — generated, committed, public, and **not** what the app reads. It is a
+duplicate to keep in mind when addresses change.
 
 There is deliberately **no `build:bindings` script yet.** The committed bindings
 were generated against a live deployment (`--contract-id`), which is what

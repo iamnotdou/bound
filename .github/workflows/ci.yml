@@ -45,45 +45,6 @@ jobs:
 
       - run: pnpm verify
 
-      # next build evaluates server modules that import app/lib/config.ts, which
-      # throws if the contract addresses are missing. Those addresses are public
-      # data already committed in bindings/*/src/index.ts — not secrets. Export
-      # them (plus the public actor G... addresses from the live deployment,
-      # also in README) so the build can run with zero credentials.
-      - name: Export public addresses for build
-        run: |
-          {
-            echo "STELLAR_NETWORK=testnet"
-            echo "STELLAR_RPC_URL=https://soroban-testnet.stellar.org"
-            echo "STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org"
-            echo "STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015"
-            echo "OPERATOR_ADDRESS=GBSDOSQUT5JMGAA4DMFOAPHZIINIQET7AUO7ABGMMZVWDG7Y3G2FLFUC"
-            echo "AGENT_ADDRESS=GCPOBMCWPO5A24KJJJRD27T4TKITHQI5MYY2FCQRR3HUXUFT4LO473ZT"
-            echo "AUDITOR_ADDRESS=GCBVHBXWW7CIFKZSGHOZIRYUYIS6S455EW64QK4FXZZ7WVW6R2FZN523"
-            echo "CHALLENGER_ADDRESS=GDLS74UPBPMXTFVAWHZXWDPQEIXQZGEPWN6PZSADL42UF5PBXGFMHWIP"
-            echo "COUNTERPARTY_ADDRESS=GDWIIDO6AYJ7KMQBZALWUEWA2TRUQUIV7R673LL536TSGCEBQ4BDYZSZ"
-            node <<'NODE'
-          const fs = require("fs");
-          const map = {
-            registry: "REGISTRY_ADDRESS",
-            reserve_vault: "RESERVE_VAULT_ADDRESS",
-            auditor_staking: "AUDITOR_STAKING_ADDRESS",
-            fee_escrow: "FEE_ESCROW_ADDRESS",
-            challenge_manager: "CHALLENGE_MANAGER_ADDRESS",
-            usdc: "USDC_ADDRESS",
-          };
-          for (const [pkg, env] of Object.entries(map)) {
-            const src = fs.readFileSync(`bindings/${pkg}/src/index.ts`, "utf8");
-            const m = src.match(/contractId:\s*"([^"]+)"/);
-            if (!m) {
-              console.error(`no contractId in bindings/${pkg}/src/index.ts`);
-              process.exit(1);
-            }
-            console.log(`${env}=${m[1]}`);
-          }
-          NODE
-          } >> "$GITHUB_ENV"
-
       - run: pnpm build
 
   # Rust-only path. Independent of Node so a contract failure is obvious and so

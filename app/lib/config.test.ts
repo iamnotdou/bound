@@ -14,6 +14,7 @@ describe("config reads the deployments file", () => {
 
   it("exposes the same network endpoints", () => {
     expect(network.rpcUrl).toBe(deployment.rpcUrl);
+    expect(network.horizonUrl).toBe(deployment.horizonUrl);
     expect(network.passphrase).toBe(deployment.networkPassphrase);
   });
 
