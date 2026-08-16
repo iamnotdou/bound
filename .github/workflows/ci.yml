@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # `edited` is required so a title rename re-runs pr-title. Without it the
+  # job only fires on open/push/reopen and a bad title can land uncaught.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -16,6 +19,8 @@ jobs:
   # as well as Node. The contracts job still exists beside it so a Rust-only
   # failure is attributed clearly and so the two can use independent caches.
   web:
+    # Title-only edits re-run pr-title; no need to rebuild the world for them.
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +89,7 @@ jobs:
   # Rust-only path. Independent of Node so a contract failure is obvious and so
   # the cache is not coupled to the pnpm store.
   contracts:
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
