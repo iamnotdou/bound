@@ -7,6 +7,6 @@ export default defineConfig({
     // reads .env.testnet. See test/setup-env.ts.
     setupFiles: ["./test/setup-env.ts"],
     include: ["**/*.test.ts"],
-    exclude: ["node_modules/**", ".next/**", "target/**", "bindings/**"],
+    exclude: ["**/node_modules/**", ".next/**", "apps/*/.next/**", "target/**", "bindings/**"],
   },
 });

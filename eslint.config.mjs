@@ -17,21 +17,23 @@ const eslintConfig = [
     // report — .next alone accounts for ~2900 errors in emitted artifacts.
     ignores: [
       ".next/**",
+      "apps/*/.next/**",
       "out/**",
-      "node_modules/**",
+      "apps/*/out/**",
+      "**/node_modules/**",
       "target/**",
       // Generated from the contract wasm by the Stellar CLI. Regenerated with
       // `build:bindings`, never edited by hand, so linting them reports on
       // code nobody can fix here.
       "bindings/**",
       // Written by Next on every build.
-      "next-env.d.ts",
+      "**/next-env.d.ts",
       "**/*.tsbuildinfo",
     ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    // The verified backend SDK (app/lib, scripts, mcp) uses deliberate `any` at
+    // The verified backend SDK (apps/dashboard/app/lib, scripts, mcp) uses deliberate `any` at
     // a few chain-boundary seams and a lazy `require("dotenv")` for non-Next
     // contexts. Keep these as warnings so they don't block `next build`.
     rules: {

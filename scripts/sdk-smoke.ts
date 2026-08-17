@@ -1,7 +1,7 @@
 // Read-only smoke test: prove the SDK + generated bindings talk to testnet.
-import { bound } from "../app/lib/bound-client";
-import { accounts } from "../app/lib/accounts";
-import { formatUsdc } from "../app/lib/config";
+import { bound } from "../apps/dashboard/app/lib/bound-client";
+import { accounts } from "../apps/dashboard/app/lib/accounts";
+import { formatUsdc } from "../apps/dashboard/app/lib/config";
 
 async function main() {
   const agent = accounts.agent.publicKey();

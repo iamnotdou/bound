@@ -7,14 +7,14 @@
 import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.testnet" });
 
-import { POST as auditorPost } from "../app/api/auditor/route";
-import { POST as operatorPost } from "../app/api/operator/route";
-import { POST as challengerPost } from "../app/api/challenger/route";
-import { POST as cheatPost } from "../app/api/cheat/route";
-import { GET as ledgerGet } from "../app/api/ledger/route";
-import { bound } from "../app/lib/bound-client";
-import { accounts } from "../app/lib/accounts";
-import { usdc } from "../app/lib/config";
+import { POST as auditorPost } from "../apps/dashboard/app/api/auditor/route";
+import { POST as operatorPost } from "../apps/dashboard/app/api/operator/route";
+import { POST as challengerPost } from "../apps/dashboard/app/api/challenger/route";
+import { POST as cheatPost } from "../apps/dashboard/app/api/cheat/route";
+import { GET as ledgerGet } from "../apps/dashboard/app/api/ledger/route";
+import { bound } from "../apps/dashboard/app/lib/bound-client";
+import { accounts } from "../apps/dashboard/app/lib/accounts";
+import { usdc } from "../apps/dashboard/app/lib/config";
 
 const j = (r: Response) => r.json();
 const post = (h: (req: Request) => Promise<Response>, body: unknown) =>

@@ -15,14 +15,14 @@
 import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.testnet" });
 
-import { GET as paidService } from "../app/api/paid-service/route";
-import { POST as verifyPost } from "../app/api/verify/route";
-import { GET as auditorGet, POST as auditorPost } from "../app/api/auditor/route";
-import { GET as ledgerGet } from "../app/api/ledger/route";
-import { POST as cheatPost } from "../app/api/cheat/route";
-import { POST as operatorPost } from "../app/api/operator/route";
-import { POST as challengerPost } from "../app/api/challenger/route";
-import { runBoundAgent } from "../app/lib/agent";
+import { GET as paidService } from "../apps/dashboard/app/api/paid-service/route";
+import { POST as verifyPost } from "../apps/dashboard/app/api/verify/route";
+import { GET as auditorGet, POST as auditorPost } from "../apps/dashboard/app/api/auditor/route";
+import { GET as ledgerGet } from "../apps/dashboard/app/api/ledger/route";
+import { POST as cheatPost } from "../apps/dashboard/app/api/cheat/route";
+import { POST as operatorPost } from "../apps/dashboard/app/api/operator/route";
+import { POST as challengerPost } from "../apps/dashboard/app/api/challenger/route";
+import { runBoundAgent } from "../apps/dashboard/app/lib/agent";
 
 const AGENT = process.env.AGENT_ADDRESS!;
 

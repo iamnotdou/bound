@@ -7,15 +7,15 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
 import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 
-import { Client as RegistryClient, type VerifyResult } from "../../bindings/registry/src";
-import { Client as ReserveVaultClient } from "../../bindings/reserve_vault/src";
-import { Client as AuditorStakingClient } from "../../bindings/auditor_staking/src";
-import { Client as FeeEscrowClient } from "../../bindings/fee_escrow/src";
+import { Client as RegistryClient, type VerifyResult } from "../../../../bindings/registry/src";
+import { Client as ReserveVaultClient } from "../../../../bindings/reserve_vault/src";
+import { Client as AuditorStakingClient } from "../../../../bindings/auditor_staking/src";
+import { Client as FeeEscrowClient } from "../../../../bindings/fee_escrow/src";
 import {
   Client as ChallengeManagerClient,
   type ProofType,
-} from "../../bindings/challenge_manager/src";
-import { Client as TokenClient } from "../../bindings/usdc/src";
+} from "../../../../bindings/challenge_manager/src";
+import { Client as TokenClient } from "../../../../bindings/usdc/src";
 
 import { contracts, network, readSource } from "./config";
 

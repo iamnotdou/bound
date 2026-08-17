@@ -6,7 +6,7 @@
 // Wire into Claude Desktop / Cursor by pointing the MCP config at this command.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { boundTools } from "../app/lib/agent-tools";
+import { boundTools } from "../apps/dashboard/app/lib/agent-tools";
 
 async function main() {
   const server = new McpServer({ name: "bound-protocol", version: "0.1.0" });
