@@ -14,8 +14,8 @@ attest, pay, challenge) for callers who hold a Stellar keypair.
 npm i @bound/sdk
 ```
 
-`@stellar/stellar-sdk` is a peer dependency of this package's contract calls — it's
-declared as a regular `dependency` here, so `npm i @bound/sdk` pulls it in automatically.
+`@stellar/stellar-sdk` is a regular dependency, so it is installed for you. The generated
+contract bindings are bundled into this package — there is nothing else to install.
 
 ## Status
 
