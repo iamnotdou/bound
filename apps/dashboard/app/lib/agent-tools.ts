@@ -8,10 +8,8 @@
 // is asked. Safety is economic — the certificate bounds the counterparty's loss,
 // and a false vouch is slashed via challenge_certificate.
 import { z } from "zod";
-import { bound, type ProofType } from "./bound-client";
-import { agentFetch } from "./payments";
+import { bound, type ProofType, agentFetch, usdc, formatUsdc } from "@bound/sdk";
 import { accounts } from "./accounts";
-import { usdc, formatUsdc } from "./config";
 
 export interface BoundTool {
   description: string;

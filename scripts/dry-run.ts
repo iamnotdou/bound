@@ -12,9 +12,8 @@ import { POST as operatorPost } from "../apps/dashboard/app/api/operator/route";
 import { POST as challengerPost } from "../apps/dashboard/app/api/challenger/route";
 import { POST as cheatPost } from "../apps/dashboard/app/api/cheat/route";
 import { GET as ledgerGet } from "../apps/dashboard/app/api/ledger/route";
-import { bound } from "../apps/dashboard/app/lib/bound-client";
+import { bound, usdc } from "@bound/sdk";
 import { accounts } from "../apps/dashboard/app/lib/accounts";
-import { usdc } from "../apps/dashboard/app/lib/config";
 
 const j = (r: Response) => r.json();
 const post = (h: (req: Request) => Promise<Response>, body: unknown) =>

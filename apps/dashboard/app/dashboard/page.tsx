@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CertificateCard } from "@/app/components/CertificateCard";
 import { roles } from "@/app/lib/ui-config";
-import type { CertView } from "@/app/lib/cert-view";
+import type { CertView } from "@bound/sdk";
 
 const G_ADDRESS = /^G[A-Z2-7]{55}$/;
 

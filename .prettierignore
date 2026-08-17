@@ -2,6 +2,7 @@
 .next/
 out/
 node_modules/
+packages/*/dist/
 target/
 *.tsbuildinfo
 

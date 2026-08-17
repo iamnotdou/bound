@@ -10,10 +10,8 @@
 //
 // All signing happens here, server-side. Secret keys never reach the browser.
 // Relative imports (not @ alias) so scripts/routes-smoke.ts can load it directly.
-import { bound } from "../../lib/bound-client";
-import { toCertView } from "../../lib/cert-view";
+import { bound, toCertView, usdc, formatUsdc } from "@bound/sdk";
 import { accounts } from "../../lib/accounts";
-import { usdc, formatUsdc } from "../../lib/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

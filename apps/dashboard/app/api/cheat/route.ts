@@ -8,7 +8,7 @@
 //
 // A reverted simulation is the SUCCESS case here: reverted=true + the reason.
 // Relative imports so scripts/routes-smoke.ts can load it directly.
-import { bound } from "../../lib/bound-client";
+import { bound } from "@bound/sdk";
 import { accounts } from "../../lib/accounts";
 
 export const runtime = "nodejs";

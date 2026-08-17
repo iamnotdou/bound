@@ -8,10 +8,8 @@
 //
 // All reads simulate — no signatures, safe to poll. Relative imports so
 // scripts/routes-smoke.ts can load it directly.
-import { bound } from "../../lib/bound-client";
-import { toCertView } from "../../lib/cert-view";
+import { bound, toCertView, formatUsdc } from "@bound/sdk";
 import { accounts } from "../../lib/accounts";
-import { formatUsdc } from "../../lib/config";
 
 export const runtime = "nodejs";
 

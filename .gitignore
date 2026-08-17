@@ -9,6 +9,7 @@
 node_modules/
 .next/
 out/
+packages/*/dist/
 next-env.d.ts
 *.tsbuildinfo
 

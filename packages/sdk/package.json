@@ -1,0 +1,70 @@
+{
+  "name": "@bound/sdk",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Typed TypeScript client for the Bound Protocol contracts on Stellar.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamnotdou/bound.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/iamnotdou/bound/tree/main/packages/sdk#readme",
+  "keywords": [
+    "bound-protocol",
+    "stellar",
+    "soroban",
+    "agent",
+    "x402"
+  ],
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./deployments": {
+      "import": {
+        "types": "./dist/deployments.d.mts",
+        "default": "./dist/deployments.mjs"
+      },
+      "require": {
+        "types": "./dist/deployments.d.ts",
+        "default": "./dist/deployments.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.6.1",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.1",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}

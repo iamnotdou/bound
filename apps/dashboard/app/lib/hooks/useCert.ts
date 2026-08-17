@@ -3,7 +3,7 @@
 // (manual), and by /chat + /control (polled, so the panel flips Verified→Invalid
 // the moment a slash settles). Pass pollMs to auto-refresh.
 import { useCallback, useEffect, useState } from "react";
-import type { CertView } from "../cert-view";
+import type { CertView } from "@bound/sdk";
 
 export function useCert(address: string | null, opts?: { pollMs?: number; enabled?: boolean }) {
   const [cert, setCert] = useState<CertView | null>(null);

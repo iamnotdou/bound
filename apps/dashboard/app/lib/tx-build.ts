@@ -32,7 +32,7 @@ import {
 } from "../../../../bindings/challenge_manager/src";
 import { Client as TokenClient } from "../../../../bindings/usdc/src";
 
-import { contracts, network, accounts, usdc } from "./config";
+import { contracts, network, accounts, usdc } from "@bound/sdk";
 
 const G_ADDRESS = /^G[A-Z2-7]{55}$/;
 const HORIZON_URL = network.horizonUrl;

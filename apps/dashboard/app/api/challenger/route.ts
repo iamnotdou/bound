@@ -9,10 +9,8 @@
 // certId defaults to the live agent's mapped cert; victim defaults to the demo
 // counterparty. Signs with the challenger key server-side — that secret never
 // reaches the browser. Relative imports so routes-smoke can load it directly.
-import { bound } from "../../lib/bound-client";
-import { toCertView } from "../../lib/cert-view";
+import { bound, toCertView, usdc, formatUsdc } from "@bound/sdk";
 import { accounts } from "../../lib/accounts";
-import { usdc, formatUsdc } from "../../lib/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

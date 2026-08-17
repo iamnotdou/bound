@@ -2,11 +2,11 @@
 //
 // Public configuration (network endpoints, contract addresses, the RPC
 // read-source account) comes from the committed deployments map. Credentials
-// (*_SECRET, ANTHROPIC_API_KEY) stay in the environment — see accounts.ts.
+// (*_SECRET, ANTHROPIC_API_KEY) stay in the environment and never enter this
+// package — see apps/dashboard/app/lib/accounts.ts.
 //
 // Never import this into browser code: it is the server half of the split.
-// Client components get addresses via next.config until step 3.4, then via
-// the deployments module directly.
+// Client code takes `@bound/sdk/deployments` instead.
 import { getDeployment, type NetworkName } from "./deployments";
 
 function resolveNetwork(): NetworkName {

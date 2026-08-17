@@ -7,8 +7,7 @@
 //
 // Uses relative imports (not the @ alias) so it is directly loadable by
 // scripts/routes-smoke.ts under plain ts-node.
-import { bound } from "../../lib/bound-client";
-import { toCertView } from "../../lib/cert-view";
+import { bound, toCertView } from "@bound/sdk";
 
 export const runtime = "nodejs";
 

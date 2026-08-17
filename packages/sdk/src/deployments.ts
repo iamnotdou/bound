@@ -6,9 +6,12 @@
 // Dynamic imports cannot be statically analysed, so bundlers omit the file and
 // the browser build breaks. One network today makes the map trivial.
 //
-// Moves into packages/sdk at plan step 4.3. Safe to import from client code —
-// there are no secrets here.
-import testnet from "../../../../deployments/testnet.json";
+// Safe to import from client code — there are no secrets here. Published as the
+// `@bound/sdk/deployments` subpath so browser bundles can take it without
+// pulling in the chain client. The JSON is inlined by the bundler at build time,
+// so the published package carries the addresses rather than reading them off
+// disk.
+import testnet from "../../../deployments/testnet.json";
 
 export type NetworkName = "testnet";
 
