@@ -4,7 +4,7 @@
 // challenger recorded on the challenge. The operator key just pays the fee.
 //
 //   POST /api/challenger/resolve  { challengeId }  → { resolved, challengeId } | 502
-import { bound } from "../../../lib/bound-client";
+import { bound } from "@bound/sdk";
 import { accounts } from "../../../lib/accounts";
 
 export const runtime = "nodejs";

@@ -10,9 +10,8 @@
 //
 // All signing happens here with the operator key, server-side. Relative imports
 // so scripts/routes-smoke.ts can load it directly.
-import { bound } from "../../lib/bound-client";
+import { bound, usdc, formatUsdc } from "@bound/sdk";
 import { accounts } from "../../lib/accounts";
-import { usdc, formatUsdc } from "../../lib/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

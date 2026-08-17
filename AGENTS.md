@@ -26,7 +26,8 @@ Run everything from the repo root.
 | ------------------------------ | ------------------------------------ | ------- | ------- |
 | `pnpm install`                 | get ready — also installs git hooks  | once    | no      |
 | `pnpm dev`                     | run the app locally                  | no      | no      |
-| `pnpm build`                   | production build                     | no      | no      |
+| `pnpm build`                   | production build (SDK, then the app) | no      | no      |
+| `pnpm build:sdk`               | just `@bound/sdk` (tsup)             | no      | no      |
 | `pnpm verify`                  | **everything CI runs**               | no      | no      |
 | `pnpm typecheck`               | types only                           | no      | no      |
 | `pnpm lint` / `lint:fix`       | eslint                               | no      | no      |
@@ -67,24 +68,27 @@ Each is a rule because the consequence is expensive or irreversible.
 
 ## Map
 
-| Path                                                | What lives there                                                          |
-| --------------------------------------------------- | ------------------------------------------------------------------------- |
-| `contracts/`                                        | 5 Soroban contracts (Rust workspace) + their tests                        |
-| `bindings/`                                         | **Generated** TypeScript clients — do not hand-edit                       |
-| `apps/dashboard/app/lib/`                           | `bound-client.ts` (the facade over all 6 bindings), config, money helpers |
-| `apps/dashboard/app/api/`                           | 12 route handlers                                                         |
-| `apps/dashboard/app/`                               | Next.js app: chat, dashboard, control, auditor views                      |
-| `apps/dashboard/components/`, `apps/dashboard/lib/` | shadcn UI primitives and the `cn` helper                                  |
-| `mcp/`                                              | MCP server exposing the agent tools                                       |
-| `scripts/`                                          | setup, deploy, demo, dry-run, and the 5 `*-smoke.ts` suites               |
-| `test/`                                             | vitest setup; the tests themselves sit next to their source               |
-| `docs/`                                             | PROJECT (trust model + limitations), WRITEUP, VERIFY, RESOURCES           |
+| Path                                                | What lives there                                                                                                              |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `contracts/`                                        | 5 Soroban contracts (Rust workspace) + their tests                                                                            |
+| `bindings/`                                         | **Generated** TypeScript clients — do not hand-edit                                                                           |
+| `packages/sdk/`                                     | `@bound/sdk` — the publishable client: `bound-client.ts` (the facade over all 6 bindings), config, deployments, money helpers |
+| `apps/dashboard/app/lib/`                           | App-only server code: secrets (`accounts.ts`), agent tools, tx building, UI config                                            |
+| `apps/dashboard/app/api/`                           | 12 route handlers                                                                                                             |
+| `apps/dashboard/app/`                               | Next.js app: chat, dashboard, control, auditor views                                                                          |
+| `apps/dashboard/components/`, `apps/dashboard/lib/` | shadcn UI primitives and the `cn` helper                                                                                      |
+| `mcp/`                                              | MCP server exposing the agent tools                                                                                           |
+| `scripts/`                                          | setup, deploy, demo, dry-run, and the 5 `*-smoke.ts` suites                                                                   |
+| `test/`                                             | vitest setup; the tests themselves sit next to their source                                                                   |
+| `docs/`                                             | PROJECT (trust model + limitations), WRITEUP, VERIFY, RESOURCES                                                               |
 
 ## Where contract addresses actually live
 
 **`deployments/testnet.json`** — committed, and the single source of truth.
-Server (`apps/dashboard/app/lib/config.ts`) and browser
-(`apps/dashboard/app/lib/ui-config.ts`) both read it through `getDeployment()`.
+Server (`packages/sdk/src/config.ts`) and browser
+(`apps/dashboard/app/lib/ui-config.ts`) both read it through `getDeployment()`,
+which the SDK publishes at `@bound/sdk/deployments`. tsup inlines the JSON, so
+the published tarball carries the addresses rather than reading them off disk.
 It holds network endpoints, the six contract ids, the five actor `G...` public
 keys, and the RPC read-source account.
 
@@ -99,16 +103,28 @@ duplicate to keep in mind when addresses change.
 ## Workspace layout
 
 `pnpm-workspace.yaml` globs `packages/*`, `apps/*`, and `bindings/*`. `apps/`
-now holds the Next.js app (`apps/dashboard`); `packages/` is still empty today
-and exists so later steps land without re-plumbing.
+holds the Next.js app (`apps/dashboard`); `packages/` holds `@bound/sdk`, which
+the app and the root `scripts/` both consume as `workspace:*`.
+
+`@bound/sdk` is built by **tsup, not tsc**, and this is load-bearing. It reaches
+the bindings by relative path (below) and nothing ever builds `bindings/*/dist`,
+so a plain `tsc` would emit those same relative specifiers into `dist/` and
+publish a package whose every import points outside its own tarball. tsup inlines
+all six binding packages (`noExternal`) and leaves only real npm packages
+(`@stellar/stellar-sdk`, `buffer`) external. Before touching that build, read
+`packages/sdk/tsup.config.ts`.
+
+Because the dashboard consumes the SDK's **built** output, `pnpm build` and
+`pnpm typecheck` both run `pnpm build:sdk` first. `pnpm test` does not: vitest
+aliases `@bound/sdk` to source, so the unit suite needs no build.
 
 The six `bindings/*` packages are workspace members but are **imported by
 relative path** (`../../bindings/registry/src`), never by package name. That is
 deliberate: the Stellar CLI names them `registry`, `usdc`, `fee_escrow` and so
 on, and `registry` and `usdc` are **real, unrelated packages on npm**. Adding
 either as a named dependency would be ambiguous at best and fetch a stranger's
-code at worst. Keep the path imports until the bindings are bundled into the
-SDK.
+code at worst. `packages/sdk` keeps those path imports and bundles the bindings
+into its own output, so a consumer of `@bound/sdk` never has to resolve them.
 
 There is deliberately **no `build:bindings` script yet.** The committed bindings
 were generated against a live deployment (`--contract-id`), which is what

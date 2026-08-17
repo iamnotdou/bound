@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { roles, contracts, network, NETWORK, truncate, roleForAddress } from "./ui-config";
-import { getDeployment } from "./deployments";
+import { getDeployment } from "@bound/sdk/deployments";
 
 const deployment = getDeployment();
 

@@ -9,9 +9,8 @@
 //
 // Only the mint is signed server-side (operator is the USDC issuer). XLM is
 // permissionless via friendbot; the trustline is wallet-signed.
-import { bound } from "../../lib/bound-client";
+import { bound, usdc, formatUsdc } from "@bound/sdk";
 import { accounts } from "../../lib/accounts";
-import { usdc, formatUsdc } from "../../lib/config";
 import { buildTrustlineXdr } from "../../lib/tx-build";
 
 export const runtime = "nodejs";

@@ -4,7 +4,7 @@
 // Query ?price=120 lets the demo vary how much the service charges — the point
 // of Bound is that the agent pays whatever is asked, and the certificate (not
 // this server) bounds the counterparty's exposure.
-import { accounts } from "../../lib/config";
+import { accounts } from "@bound/sdk";
 
 // The counterparty is the party selling the service, so it collects the fee.
 const RECIPIENT = accounts.counterparty;

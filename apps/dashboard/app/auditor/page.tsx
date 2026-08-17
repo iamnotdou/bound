@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CertificateCard } from "@/app/components/CertificateCard";
 import { AddressPill } from "@/app/components/AddressPill";
 import { UsdAmount } from "@/app/components/UsdAmount";
-import type { CertView } from "@/app/lib/cert-view";
+import type { CertView } from "@bound/sdk";
 
 interface Pending {
   operator: string;

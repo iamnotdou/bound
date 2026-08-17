@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { existsSync, writeFileSync } from "node:fs";
 import { readEnv, writeEnvValues, deploy, initialize, usdc, NETWORK } from "./lib";
-import { serializeDeployment } from "../apps/dashboard/app/lib/deployments";
+import { serializeDeployment } from "@bound/sdk";
 
 const ROOT = resolve(__dirname, "..");
 const WASM_DIR = resolve(ROOT, "target", "wasm32-unknown-unknown", "release");

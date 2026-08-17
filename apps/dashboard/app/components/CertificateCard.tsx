@@ -2,7 +2,7 @@
 // /dashboard, the /chat side-panel, and /control. Takes a CertView (the JSON-safe
 // projection the API returns) and shows the numbers a counterparty reads before
 // transacting: bound (worst-case), locked reserve, slashable auditor stake.
-import type { CertView } from "@/app/lib/cert-view";
+import type { CertView } from "@bound/sdk";
 import {
   Card,
   CardContent,

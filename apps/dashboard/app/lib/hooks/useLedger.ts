@@ -4,7 +4,7 @@
 // cert). Each actor action refetches, so every click produces a visible state
 // diff — the diff is the proof.
 import { useCallback, useEffect, useState } from "react";
-import type { CertView } from "../cert-view";
+import type { CertView } from "@bound/sdk";
 
 export interface LedgerAccount {
   role: string;

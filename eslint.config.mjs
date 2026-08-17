@@ -20,6 +20,8 @@ const eslintConfig = [
       "apps/*/.next/**",
       "out/**",
       "apps/*/out/**",
+      // tsup output for packages/sdk — bundled, minified-ish, not authored here.
+      "packages/*/dist/**",
       "**/node_modules/**",
       "target/**",
       // Generated from the contract wasm by the Stellar CLI. Regenerated with

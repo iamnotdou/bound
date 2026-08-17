@@ -4,7 +4,7 @@
 // This is deliberately separate from app/lib/config.ts only in spirit (money
 // helpers live there); both now share getDeployment() as the address source.
 // Safe to import from Client Components.
-import { getDeployment, type NetworkName } from "./deployments";
+import { getDeployment, type NetworkName } from "@bound/sdk/deployments";
 
 const deployment = getDeployment(
   (process.env.STELLAR_NETWORK as NetworkName | undefined) ?? "testnet",
