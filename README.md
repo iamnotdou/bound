@@ -56,7 +56,7 @@ contracts/
 ├── fee-escrow/           # Conditional audit fee — released after attestation
 └── challenge-manager/    # Dispute resolution — slash auditor + compensate victim
 
-app/                      # Next.js app + API routes + BoundClient SDK
+apps/dashboard/           # Next.js app + API routes + BoundClient SDK
 bindings/                 # Generated TypeScript contract bindings
 mcp/server.ts             # MCP server exposing the 5 agent tools
 scripts/                  # setup-accounts, deploy-all, demo (8-step E2E), smoke suites
