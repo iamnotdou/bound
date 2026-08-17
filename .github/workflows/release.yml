@@ -1,0 +1,63 @@
+name: Release
+
+# Publish @bound/sdk to npm. Only fires on version tags — never on push/PR — so
+# publishing stays a deliberate, tag-triggered act by the maintainer.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least privilege: read the repo, and mint an OIDC token for npm provenance.
+# No other job in this workflow needs write access to anything.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # Reads packageManager from package.json (pnpm@10.27.0).
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      # Pin matches rust-toolchain.toml, same as ci.yml — `pnpm verify` runs the
+      # contract fmt/clippy/test steps too, so this job needs Rust as well as Node.
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      # The tag is the release contract: fail loudly rather than publish a
+      # version that doesn't match what was tagged.
+      - name: Check tag matches packages/sdk/package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./packages/sdk/package.json').version")"
+          if [ "$TAG" != "$PKG_VERSION" ]; then
+            echo "::error::tag v$TAG does not match packages/sdk/package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      # Never publish something that hasn't passed the same gate CI runs.
+      - run: pnpm verify
+
+      - run: pnpm build
+
+      # NPM_TOKEN must be added under repo Settings → Secrets and variables →
+      # Actions by the maintainer before this workflow can publish.
+      - name: Publish @bound/sdk
+        working-directory: packages/sdk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
