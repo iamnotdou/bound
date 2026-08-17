@@ -1,8 +1,8 @@
 // Exercise the agent tools' execute() directly — no Claude, no API key needed.
 // Proves the tool layer is wired to BoundClient against live testnet.
 // Read-only tools only (verify, balance) so we don't mutate state here.
-import { boundTools } from "../app/lib/agent-tools";
-import { accounts } from "../app/lib/accounts";
+import { boundTools } from "../apps/dashboard/app/lib/agent-tools";
+import { accounts } from "../apps/dashboard/app/lib/accounts";
 
 async function main() {
   const agent = accounts.agent.publicKey();

@@ -67,25 +67,26 @@ Each is a rule because the consequence is expensive or irreversible.
 
 ## Map
 
-| Path                  | What lives there                                                          |
-| --------------------- | ------------------------------------------------------------------------- |
-| `contracts/`          | 5 Soroban contracts (Rust workspace) + their tests                        |
-| `bindings/`           | **Generated** TypeScript clients — do not hand-edit                       |
-| `app/lib/`            | `bound-client.ts` (the facade over all 6 bindings), config, money helpers |
-| `app/api/`            | 12 route handlers                                                         |
-| `app/`                | Next.js app: chat, dashboard, control, auditor views                      |
-| `components/`, `lib/` | shadcn UI primitives and the `cn` helper                                  |
-| `mcp/`                | MCP server exposing the agent tools                                       |
-| `scripts/`            | setup, deploy, demo, dry-run, and the 5 `*-smoke.ts` suites               |
-| `test/`               | vitest setup; the tests themselves sit next to their source               |
-| `docs/`               | PROJECT (trust model + limitations), WRITEUP, VERIFY, RESOURCES           |
+| Path                                                | What lives there                                                          |
+| --------------------------------------------------- | ------------------------------------------------------------------------- |
+| `contracts/`                                        | 5 Soroban contracts (Rust workspace) + their tests                        |
+| `bindings/`                                         | **Generated** TypeScript clients — do not hand-edit                       |
+| `apps/dashboard/app/lib/`                           | `bound-client.ts` (the facade over all 6 bindings), config, money helpers |
+| `apps/dashboard/app/api/`                           | 12 route handlers                                                         |
+| `apps/dashboard/app/`                               | Next.js app: chat, dashboard, control, auditor views                      |
+| `apps/dashboard/components/`, `apps/dashboard/lib/` | shadcn UI primitives and the `cn` helper                                  |
+| `mcp/`                                              | MCP server exposing the agent tools                                       |
+| `scripts/`                                          | setup, deploy, demo, dry-run, and the 5 `*-smoke.ts` suites               |
+| `test/`                                             | vitest setup; the tests themselves sit next to their source               |
+| `docs/`                                             | PROJECT (trust model + limitations), WRITEUP, VERIFY, RESOURCES           |
 
 ## Where contract addresses actually live
 
 **`deployments/testnet.json`** — committed, and the single source of truth.
-Server (`app/lib/config.ts`) and browser (`app/lib/ui-config.ts`) both read it
-through `getDeployment()`. It holds network endpoints, the six contract ids,
-the five actor `G...` public keys, and the RPC read-source account.
+Server (`apps/dashboard/app/lib/config.ts`) and browser
+(`apps/dashboard/app/lib/ui-config.ts`) both read it through `getDeployment()`.
+It holds network endpoints, the six contract ids, the five actor `G...` public
+keys, and the RPC read-source account.
 
 `.env.testnet` is **secrets only** (`*_SECRET`, `ANTHROPIC_API_KEY`) plus the
 optional `STELLAR_NETWORK` selector. `pnpm build` and `pnpm verify` run with no
@@ -97,8 +98,9 @@ duplicate to keep in mind when addresses change.
 
 ## Workspace layout
 
-`pnpm-workspace.yaml` globs `packages/*`, `apps/*`, and `bindings/*`. The first
-two are empty today and exist so later steps land without re-plumbing.
+`pnpm-workspace.yaml` globs `packages/*`, `apps/*`, and `bindings/*`. `apps/`
+now holds the Next.js app (`apps/dashboard`); `packages/` is still empty today
+and exists so later steps land without re-plumbing.
 
 The six `bindings/*` packages are workspace members but are **imported by
 relative path** (`../../bindings/registry/src`), never by package name. That is

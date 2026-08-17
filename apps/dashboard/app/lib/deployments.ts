@@ -8,7 +8,7 @@
 //
 // Moves into packages/sdk at plan step 4.3. Safe to import from client code —
 // there are no secrets here.
-import testnet from "../../deployments/testnet.json";
+import testnet from "../../../../deployments/testnet.json";
 
 export type NetworkName = "testnet";
 

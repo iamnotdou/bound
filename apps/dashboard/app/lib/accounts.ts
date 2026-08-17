@@ -1,14 +1,31 @@
 // Demo keypairs, loaded server-side from the environment. SERVER ONLY — these
 // hold secret keys and must never be bundled into the browser.
 //
-// Outside Next.js (scripts, smoke tests, MCP) the secrets live in .env.testnet.
-// Next loads that file via next.config.ts until step 3.4; scripts need the
-// dotenv bootstrap here because config.ts no longer touches the environment.
+// The secrets live in .env.testnet at the repo root. Next.js runs with cwd
+// set to apps/dashboard/, and root-run scripts/mcp run with cwd at the repo
+// root, so we walk upward from process.cwd() to find it rather than assuming
+// a fixed relative path.
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 
+function findEnvTestnet(startDir: string): string | undefined {
+  let dir = startDir;
+  for (;;) {
+    const candidate = join(dir, ".env.testnet");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
 if (typeof window === "undefined" && !process.env.OPERATOR_SECRET) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require("dotenv").config({ path: ".env.testnet" });
+  const envPath = findEnvTestnet(process.cwd());
+  if (envPath) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("dotenv").config({ path: envPath });
+  }
 }
 
 function kp(secretKey: string): Keypair {

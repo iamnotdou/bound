@@ -23,14 +23,14 @@ import {
 } from "@stellar/stellar-sdk";
 import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 
-import { Client as RegistryClient } from "../../bindings/registry/src";
-import { Client as AuditorStakingClient } from "../../bindings/auditor_staking/src";
-import { Client as FeeEscrowClient } from "../../bindings/fee_escrow/src";
+import { Client as RegistryClient } from "../../../../bindings/registry/src";
+import { Client as AuditorStakingClient } from "../../../../bindings/auditor_staking/src";
+import { Client as FeeEscrowClient } from "../../../../bindings/fee_escrow/src";
 import {
   Client as ChallengeManagerClient,
   type ProofType,
-} from "../../bindings/challenge_manager/src";
-import { Client as TokenClient } from "../../bindings/usdc/src";
+} from "../../../../bindings/challenge_manager/src";
+import { Client as TokenClient } from "../../../../bindings/usdc/src";
 
 import { contracts, network, accounts, usdc } from "./config";
 

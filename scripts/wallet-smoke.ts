@@ -4,7 +4,7 @@
 // browser wallet will sign. Pure reads/simulation; no funds move.
 //
 //   pnpm wallet-smoke
-import { buildActionXdr, buildTrustlineXdr } from "../app/lib/tx-build";
+import { buildActionXdr, buildTrustlineXdr } from "../apps/dashboard/app/lib/tx-build";
 
 const AGENT = process.env.AGENT_ADDRESS!;
 const COUNTERPARTY = process.env.COUNTERPARTY_ADDRESS!;
