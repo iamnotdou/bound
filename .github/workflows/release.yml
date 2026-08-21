@@ -1,7 +1,13 @@
 name: Release
 
-# Publish @bound/sdk to npm. Only fires on version tags — never on push/PR — so
-# publishing stays a deliberate, tag-triggered act by the maintainer.
+# Publish @bound/sdk and @bound/mcp to npm. Only fires on version tags — never
+# on push/PR — so publishing stays a deliberate, tag-triggered act by the
+# maintainer.
+#
+# The tag names the SDK's version. @bound/mcp carries its own, and rides along:
+# it depends on the SDK, so shipping the two from one tag is the only way to
+# guarantee a published connector cannot reference an SDK version that does not
+# exist yet.
 on:
   push:
     tags:
@@ -70,3 +76,30 @@ jobs:
       - name: Publish @bound/sdk
         working-directory: packages/sdk
         run: npm publish --provenance --access public
+
+      # @bound/mcp depends on @bound/sdk as `workspace:*`, which npm cannot
+      # resolve and would happily publish verbatim — an installable package that
+      # is impossible to install. `pnpm pack` rewrites the protocol to the
+      # SDK version in this checkout, which is the version the step above just
+      # published, so the tarball is self-consistent by construction.
+      #
+      # Then `npm publish <tarball>`, not `pnpm publish`: the upload has to go
+      # through the npm CLI pinned above, because that is what Trusted
+      # Publishing authenticates. Packing and publishing are deliberately two
+      # different tools here, each doing the one thing it is trusted for.
+      - name: Pack @bound/mcp
+        run: pnpm --filter @bound/mcp pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Check the packed connector pins a real SDK version
+        run: |
+          TARBALL="$(ls "$RUNNER_TEMP"/bound-mcp-*.tgz)"
+          DEP="$(tar -xzOf "$TARBALL" package/package.json | node -p \
+            "JSON.parse(require('fs').readFileSync(0,'utf8')).dependencies['@bound/sdk']")"
+          SDK_VERSION="$(node -p "require('./packages/sdk/package.json').version")"
+          if [ "$DEP" != "$SDK_VERSION" ]; then
+            echo "::error::@bound/mcp pins @bound/sdk@$DEP, but this release publishes $SDK_VERSION"
+            exit 1
+          fi
+
+      - name: Publish @bound/mcp
+        run: npm publish "$(ls "$RUNNER_TEMP"/bound-mcp-*.tgz)" --provenance --access public
