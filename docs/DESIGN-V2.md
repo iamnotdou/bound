@@ -916,15 +916,45 @@ a way for an operator to escape a real reserve shortfall.
   credit. The obvious next step — a per-certificate cure counter with a fee or a
   forced re-attestation on repeat — is not built, because pricing it without a
   loss history would be inventing a number.
-- **An arbiter-gated claim freezes a certificate for 72 hours on a minimum
-  bond.** A `FakeSignature` claim has no on-chain predicate, so it cannot be
-  rejected at filing the way a false `InsufficientReserve` claim is; it opens a
-  window and waits for the arbiter. That is a griefing surface: the certificate
-  is frozen, and the reserve and allocation are locked, for the price of the
-  minimum bond and however long the arbiter takes. The arbiter ruling it false
-  does **not** shorten the window. Mitigations exist and none is chosen — a
-  higher bond for arbiter-gated proof types, an early close once every claim is
-  adjudicated false, or arbiter-gated claims not freezing at all.
+- **An arbiter-gated claim freezes a certificate on a minimum bond — now for as
+  long as the arbiter takes, not a fixed 72 hours.** A `FakeSignature` claim has
+  no on-chain predicate, so it cannot be rejected at filing the way a false
+  `InsufficientReserve` claim is; it opens a window and waits for the arbiter.
+  That was a griefing surface priced at one minimum bond for three days of
+  frozen reserve and allocation, and an arbiter ruling the claim false did
+  nothing to shorten it.
+
+  **Chosen fix: `close_window_early(challenge_id)`.** An arbiter rejection ends
+  the window on the spot. Arbiter-only, and only against a claim the arbiter
+  themselves ruled false (`arbitrated && adjudicated && !proven`) — a claim a
+  _predicate_ found false is not a key to this door, because nobody exercised
+  judgement on it.
+
+  **The rail: it refuses while any other live claim remains.** A live claim is
+  any other claim in the window that could still be admitted at close — one the
+  arbiter has **not yet ruled on** (they may still uphold it), or one that is
+  **proven**, whether an arbiter stated it or a predicate computed it. A proven
+  claim counts as live _even if the operator has since cured the underlying
+  condition_: the cure check belongs at close and only at close, or an operator
+  could cure mid-window, have a throwaway claim rejected, and cut the window out
+  from under a genuine victim who had not yet been paid. The conservative
+  reading is the correct one, and it costs nothing — the only claims that fail
+  to hold a window open are the ones already known to be wrong at filing, which
+  would be rejected and paid nothing anyway. So the early close can only fire
+  when settling right now is _guaranteed_ to admit nothing, which makes it
+  indistinguishable in outcome from the close that was coming anyway.
+
+  **Getting rejected faster is not cheaper.** The early path runs through the
+  same internal `settle_window` a natural close uses, so the griefer's bond is
+  forfeited exactly as it would have been at `closes_at`. No discount.
+
+  Residue, and it is the reason the heading no longer says "72 hours": the
+  freeze now lasts **as long as the arbiter takes to rule**, which is an
+  off-chain latency with no on-chain bound. That is strictly better than a fixed
+  72 hours only if the arbiter is responsive. The two mitigations not chosen
+  remain available and are not built — a higher bond for arbiter-gated proof
+  types, and arbiter-gated claims not freezing at all.
+
 - **Nobody is paid to close a window.** `close_window` is permissionless and
   unrewarded. The claimants' own money is the incentive, which is sound but is
   not a guarantee: a window with only a hygiene claim in it has almost nothing

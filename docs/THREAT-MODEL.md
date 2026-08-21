@@ -152,9 +152,16 @@ The intended sequence, and why it is ordered this way:
    step: it requires no challenge, no proof, no counterparty, and no auditor. Any
    response that depended on the challenge system would be too slow to matter and
    would put a compromise on the same clock as a dispute.
-2. **Operator withdraws remaining float** — the wrapped balance is unwrappable by
-   its holder, so whatever the thief has not taken is recoverable only if the
-   operator moves before they do. Halting first is what buys that time.
+2. **Operator claws the remaining float back.** `clawback(cert_id, agent)` is
+   operator-only, works **only while the certificate is halted**, and sweeps the
+   named agent's whole router balance to the operator's address. It performs no
+   resume, so the thief is never re-enabled — recovering the money and re-opening
+   the certificate stay two separate acts. The destination is not a parameter:
+   it is the certificate's registered operator and nothing else. It is a purely
+   internal balance move, so `total_supply()` still equals the router's USDC
+   balance; the operator withdraws from their own balance afterwards on their
+   own authority. Whatever the thief has already taken is gone, so halting first
+   is still what buys the time.
 3. **The certificate remains valid.** A compromise is not a covenant breach, and
    invalidating on compromise would give an attacker a way to destroy a
    certificate by stealing a key.
@@ -177,15 +184,31 @@ Stated rather than hidden:
 - **A stolen key can pay a counterparty legitimately.** Nothing distinguishes a
   thief's honest payment from the agent's, which is correct — but it means the
   spend counter cannot be used to date a compromise.
-- **A halted certificate's float is stuck.** Halt gates `transfer`,
-  `transfer_from`, `withdraw` and `burn` — `withdraw` included, because otherwise
-  a thief simply withdraws the float to their own wallet and the kill switch is
-  decorative. The consequence is that there is **no operator clawback path**: the
-  honest operator cannot recover their own float while halted, and resuming to
-  recover it also re-enables the thief. This needs a deliberate decision —
-  a clawback that pays only to the certificate's registered operator is the
-  obvious candidate, possibly timelocked — and it is not designed yet. It is the
-  most important open item on this page.
+- **An operator can sweep their own agent's float at will.** This is the residue
+  of `clawback`, and it is stated rather than hidden. Outside a compromise,
+  nothing stops an operator halting their own certificate and clawing the float
+  back the same second. **It is acceptable**, for one reason: it grants no
+  authority over anyone else's money. The agent's routed balance is capital the
+  operator deposited under a cap the operator set, and the operator could already
+  reach all of it by halting and then withdrawing after a resume. Clawback
+  removes the requirement to re-arm the thief on the way out; it does not widen
+  who can be reached. What it does change is the _cost_ of the sweep to the
+  operator — it is now one call with no window. **An agent is not a custodian and
+  must never be treated as one.** Anyone extending the router so that a _third
+  party_ can hold a balance under an enrolled agent's certificate must revisit
+  `clawback` first, because that person's money would be inside the sweep.
+- **Clawback is not timelocked, on purpose.** A timelock would be a delay handed
+  to the attacker: the halt/clawback pair only works if response is faster than
+  the thief, and a 24-hour delay gives an attacker who already holds the agent
+  key 24 hours to find any exit the halt did not close. The usual reason to
+  timelock a privileged sweep — giving depositors time to exit ahead of an
+  abusive admin — does not apply, because there are no third-party depositors on
+  that balance. If that ever stops being true, the previous bullet is where the
+  decision has to be reopened.
+- **Clawback sweeps one named agent per call.** A certificate may have several
+  enrolled agents and the router keeps no certificate → agents index, so a
+  compromise of two keys is two calls. An operator who has lost track of which
+  addresses they enrolled will not be rescued by this function.
 - **Inbound transfers are not cap-checked.** The float cap is enforced on
   `deposit` only. A tracked agent being _paid_ can exceed its cap, because
   refusing inbound payment would make an honest agent unable to be paid, and
