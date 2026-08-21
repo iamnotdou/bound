@@ -197,6 +197,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bound-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "auditor-staking",
+ "challenge-manager",
+ "fee-escrow",
+ "registry",
+ "reserve-vault",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

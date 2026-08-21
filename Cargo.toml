@@ -6,6 +6,7 @@ members = [
     "contracts/challenge-manager",
     "contracts/registry",
     "contracts/spend-probe",
+    "contracts/integration-tests",
 ]
 resolver = "2"
 
