@@ -4,9 +4,18 @@
 // own transport.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { boundTools, type BoundTool } from "./tools";
+import { version } from "../package.json";
 
-/** Kept in step with package.json by hand; it is reported over the wire. */
-export const VERSION = "0.1.0";
+/**
+ * Reported over the wire, so a client can tell which connector it is talking
+ * to. Read from package.json and inlined at build time rather than typed out
+ * here: the literal it replaced carried a comment promising it was "kept in
+ * step with package.json by hand", and it fell out of step on the very first
+ * version bump. A constant that has to be remembered will eventually be
+ * forgotten, and a connector reporting the wrong version of itself is worse
+ * than one reporting none.
+ */
+export const VERSION: string = version;
 
 /**
  * Build a server exposing every Bound tool.
