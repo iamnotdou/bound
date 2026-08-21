@@ -14,6 +14,12 @@ pub enum DataKey {
     // never draw down B.
     Balance(u64),
     Locked(u64),
+    /// Ledger time at which this certificate's reserve may be reclaimed by its
+    /// operator: the certificate's *settlement deadline*
+    /// (`expires_at + CHALLENGE_WINDOW`), not its expiry. A proof about
+    /// post-expiry activity only becomes provable after expiry; unlocking at
+    /// `expires_at` would let the operator withdraw the reserve before the
+    /// proof could ever be filed against it.
     UnlockAt(u64),
 }
 
@@ -59,13 +65,13 @@ impl ReserveVault {
             .expect("reserve_overflow");
         Self::set_balance(&env, cert_id, balance);
 
-        // Reserve stays locked to the operator until the certificate expires.
+        // Reserve stays locked until the certificate's challenge window closes.
         env.storage()
             .persistent()
             .set(&DataKey::Locked(cert_id), &true);
         env.storage().persistent().set(
             &DataKey::UnlockAt(cert_id),
-            &Self::cert_expires_at(&env, cert_id),
+            &Self::cert_settlement_deadline(&env, cert_id),
         );
     }
 
@@ -87,9 +93,15 @@ impl ReserveVault {
             .unwrap_or(0)
     }
 
-    // Only ChallengeManager can call this — compensates a harmed counterparty
-    // out of the reserve of the certificate under challenge, and no other.
-    pub fn release_to_victim(env: Env, cert_id: u64, victim: Address, amount: i128) {
+    /// Only the ChallengeManager can call this — it pays out of the reserve of
+    /// the certificate under challenge, and no other.
+    ///
+    /// Both settlement payments run through here: the victim's compensation and
+    /// the challenger's fee. Both are drawn from **the operator's own reserve
+    /// for this certificate**, which is what makes self-dealing a wash — a
+    /// colluding operator paying its own colluding "victim" is moving money
+    /// from its left pocket to its right.
+    pub fn pay_from_reserve(env: Env, cert_id: u64, to: Address, amount: i128) {
         let cm: Address = env
             .storage()
             .instance()
@@ -109,14 +121,15 @@ impl ReserveVault {
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         token::Client::new(&env, &token_addr).transfer(
             &env.current_contract_address(),
-            &victim,
+            &to,
             &amount,
         );
 
         Self::set_balance(&env, cert_id, balance - amount);
     }
 
-    // Operator reclaims this certificate's reserve only after its expiry.
+    /// Operator reclaims this certificate's reserve only after its challenge
+    /// window has closed — `expires_at + CHALLENGE_WINDOW`, not `expires_at`.
     pub fn release_to_operator(env: Env, cert_id: u64) {
         let operator = Self::cert_operator(&env, cert_id);
         operator.require_auth();
@@ -125,7 +138,7 @@ impl ReserveVault {
             .storage()
             .persistent()
             .get(&DataKey::UnlockAt(cert_id))
-            .unwrap_or_else(|| Self::cert_expires_at(&env, cert_id));
+            .unwrap_or_else(|| Self::cert_settlement_deadline(&env, cert_id));
         if env.ledger().timestamp() < unlock_at {
             panic!("reserve_still_locked");
         }
@@ -175,10 +188,12 @@ impl ReserveVault {
         )
     }
 
-    fn cert_expires_at(env: &Env, cert_id: u64) -> u64 {
+    /// The Registry owns the challenge window, so both the reserve here and the
+    /// auditor's allocation in AuditorStaking unlock at exactly the same instant.
+    fn cert_settlement_deadline(env: &Env, cert_id: u64) -> u64 {
         env.invoke_contract(
             &Self::registry(env),
-            &Symbol::new(env, "get_cert_expires_at"),
+            &Symbol::new(env, "get_cert_settlement_deadline"),
             Vec::from_array(env, [cert_id.into_val(env)]),
         )
     }
@@ -215,7 +230,7 @@ mod mock_registry {
                 .expect("certificate_not_found")
         }
 
-        pub fn get_cert_expires_at(env: Env, cert_id: u64) -> u64 {
+        pub fn get_cert_settlement_deadline(env: Env, cert_id: u64) -> u64 {
             env.storage()
                 .persistent()
                 .get(&MockKey::ExpiresAt(cert_id))

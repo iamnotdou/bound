@@ -6,6 +6,10 @@
 // block, because #[contractimpl] re-emits the signature as sibling items that an
 // item-level allow does not cover.
 #![allow(clippy::too_many_arguments)]
+// USDC amounts are written as <dollars>_<7 decimals>, e.g. 10_0000000 is $10.
+// Clippy reads that as inconsistent grouping; the grouping is deliberate so the
+// dollar figure stays legible.
+#![allow(clippy::inconsistent_digit_grouping)]
 use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
 };
@@ -48,10 +52,31 @@ pub enum DataKey {
     FeeEscrow,
     Token,
     Arbiter,
+    /// Where slashed stake goes, and the only place it may go.
+    Treasury,
     MinStake,
     Challenge(u64),
     ChallengeCount,
+    /// Sum of challenger bonds currently held and still owed back. Anything the
+    /// contract holds above this is forfeited-bond surplus, which is what funds
+    /// the hygiene bounty.
+    BondsHeld,
 }
+
+/// The challenger's fee, in basis points of **proven harm**.
+///
+/// Deliberately a share of harm and not of the auditor's stake. v1 paid 20% of
+/// the live stake, which made hunting *auditors* profitable rather than hunting
+/// *fraud*: the payout scaled with how much collateral the auditor happened to
+/// have, not with what anyone lost. Anchoring it to harm means a challenge is
+/// worth filing exactly in proportion to the damage it surfaces.
+const CHALLENGER_FEE_BPS: i128 = 1_000; // 10%
+
+/// Flat bounty for a proof that is true but that nobody can evidence harm for
+/// (see `settle_hygiene`). Fixed, small, and never scaled by the auditor's
+/// stake — its job is to pay for the gas of killing a dead certificate, not to
+/// fund a hunting expedition.
+const HYGIENE_BOUNTY: i128 = 10_0000000; // $10
 
 #[contract]
 pub struct ChallengeManager;
@@ -66,6 +91,7 @@ impl ChallengeManager {
         fee_escrow: Address,
         token: Address,
         arbiter: Address,
+        treasury: Address,
         min_stake: i128,
     ) {
         if env.storage().instance().has(&DataKey::Registry) {
@@ -83,7 +109,12 @@ impl ChallengeManager {
             .set(&DataKey::FeeEscrow, &fee_escrow);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Arbiter, &arbiter);
+        // Named once, at initialize. No admin and no upgrade path: making the
+        // treasury mutable would reopen the prize this whole waterfall exists to
+        // remove.
+        env.storage().instance().set(&DataKey::Treasury, &treasury);
         env.storage().instance().set(&DataKey::MinStake, &min_stake);
+        env.storage().instance().set(&DataKey::BondsHeld, &0i128);
         env.storage()
             .instance()
             .set(&DataKey::ChallengeCount, &0u64);
@@ -135,6 +166,9 @@ impl ChallengeManager {
         env.storage()
             .instance()
             .set(&DataKey::ChallengeCount, &challenge_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::BondsHeld, &(Self::bonds_held(&env) + stake));
 
         challenge_id
     }
@@ -152,23 +186,58 @@ impl ChallengeManager {
         };
 
         if fraud {
-            Self::settle_fraud(&env, challenge_id, &ch);
+            // Harm is arithmetic here: the contract computes it from state.
+            let harm = Self::raw_harm(&env, &ch);
+            Self::settle_fraud(&env, challenge_id, &ch, harm);
         } else {
             Self::settle_no_fraud(&env, challenge_id);
         }
     }
 
-    // Arbiter-gated resolution for subjective proof types (BoundExceeded,
-    // FakeSignature) that no contract can verify on-chain. This is an explicit
-    // trust assumption: the arbiter is named at initialize().
-    pub fn resolve_by_arbiter(env: Env, challenge_id: u64, fraud_proven: bool) {
+    /// Arbiter-gated resolution for subjective proof types (BoundExceeded,
+    /// FakeSignature) that no contract can verify on-chain. This is an explicit
+    /// trust assumption: the arbiter is named at initialize().
+    ///
+    /// The arbiter states the **quantity** as well as the verdict, and that
+    /// `harm` feeds the same waterfall every other proof type uses.
+    ///
+    /// WHY THAT IS SAFE. The arbiter is already a fully trusted party for these
+    /// proof types — they are the ones deciding whether fraud occurred at all,
+    /// so letting them also state the amount grants no new trust. And their
+    /// number is bounded by exactly the same rails as an arithmetic one:
+    /// `payable = min(harm, reserve + allocation)` caps the total outflow,
+    /// victim compensation still comes only from the operator's own reserve for
+    /// this certificate, and the slash still goes only to the treasury. An
+    /// arbiter who overstates harm therefore cannot direct money to anyone who
+    /// could have bribed them — the self-dealing property is preserved by the
+    /// waterfall, not by the predicate.
+    ///
+    /// The alternative — a verdict with no quantity — is worse, and was the
+    /// behaviour this replaced: every arbiter proof settled in hygiene mode, so
+    /// an auditor who genuinely vouched for a certificate whose agent blew
+    /// through its bound walked away whole purely because the proof happened to
+    /// be arbiter-gated rather than arithmetic.
+    pub fn resolve_by_arbiter(env: Env, challenge_id: u64, fraud_proven: bool, harm: i128) {
         let arbiter: Address = env.storage().instance().get(&DataKey::Arbiter).unwrap();
         arbiter.require_auth();
+
+        if harm < 0 {
+            panic!("invalid_harm");
+        }
+        // A rejected challenge has no harm to quantify. Requiring the zero
+        // explicitly, rather than silently ignoring the argument, means a
+        // mis-typed call fails loudly instead of recording a verdict that
+        // contradicts its own number.
+        if !fraud_proven && harm != 0 {
+            panic!("harm_without_verdict");
+        }
 
         let ch = Self::load_pending(&env, challenge_id);
 
         if fraud_proven {
-            Self::settle_fraud(&env, challenge_id, &ch);
+            // harm == 0 is legitimate and lands in hygiene mode: a real breach
+            // that nobody can evidence a loss for.
+            Self::settle_fraud(&env, challenge_id, &ch, harm);
         } else {
             Self::settle_no_fraud(&env, challenge_id);
         }
@@ -179,6 +248,20 @@ impl ChallengeManager {
             .persistent()
             .get(&DataKey::Challenge(challenge_id))
             .expect("challenge_not_found")
+    }
+
+    pub fn get_treasury(env: Env) -> Address {
+        env.storage().instance().get(&DataKey::Treasury).unwrap()
+    }
+
+    /// Forfeited bonds the contract holds beyond what it still owes back. This
+    /// is the only pot the hygiene bounty is paid from.
+    pub fn get_bounty_pool(env: Env) -> i128 {
+        Self::bounty_pool(&env)
+    }
+
+    pub fn get_bonds_held(env: Env) -> i128 {
+        Self::bonds_held(&env)
     }
 
     pub fn get_challenge_count(env: Env) -> u64 {
@@ -228,10 +311,72 @@ impl ChallengeManager {
         actual < claimed
     }
 
-    // Fraud proven: slash the auditor's stake, compensate the victim from the
-    // slashed stake + the reserve, reward the challenger, invalidate the cert,
-    // and return the challenger's bond. All on-chain, one transaction.
-    fn settle_fraud(env: &Env, challenge_id: u64, ch: &Challenge) {
+    // ----- the settlement waterfall -------------------------------------
+    //
+    // ONE rule, applied identically to every proof type:
+    //
+    //     harm    = raw harm from the predicate, or stated by the arbiter
+    //     payable = min(harm, reserve_for_this_cert + allocation_for_this_cert)
+    //
+    //     1. victim compensation  <- the operator's OWN reserve for THIS cert
+    //     2. challenger fee       <- the same reserve, % of PROVEN HARM
+    //     3. auditor slash        -> the TREASURY, never victim or challenger
+    //     4. (premium step — not built; see the gap note in `settle_fraud`)
+    //     5. allocation retires; unslashed remainder returns to free stake
+    //     6. certificate invalidated; challenger's bond returned
+    //
+    // Every line closes a specific attack. Before "simplifying" any of them,
+    // read the reason attached to it — v1 had none of these and paid a
+    // colluding operator the auditor's entire bond for the price of one lie.
+
+    /// Raw harm an **on-chain** predicate proves, in stroops. Zero means "the
+    /// covenant was broken but no harm is evidenced on-chain" — see
+    /// `settle_hygiene`. Arbiter-gated proof types never reach this function:
+    /// their harm is stated by the arbiter and passed straight to
+    /// `settle_fraud`.
+    ///
+    /// `InsufficientReserve`: the shortfall, claimed reserve minus actual. The
+    /// named victim is deliberately NOT part of this number. A named victim is a
+    /// filter, not a proof: receiving a payment is evidence of being paid, not
+    /// of being harmed. The waterfall neutralises a self-named victim rather
+    /// than the predicate trying to authenticate one.
+    fn raw_harm(env: &Env, ch: &Challenge) -> i128 {
+        match ch.proof_type {
+            ProofType::InsufficientReserve => {
+                let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
+                let vault: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ReserveVault)
+                    .unwrap();
+                let claimed: i128 = env.invoke_contract(
+                    &registry,
+                    &Symbol::new(env, "get_cert_reserve"),
+                    Vec::from_array(env, [ch.cert_id.into_val(env)]),
+                );
+                let actual: i128 = env.invoke_contract(
+                    &vault,
+                    &Symbol::new(env, "get_balance"),
+                    Vec::from_array(env, [ch.cert_id.into_val(env)]),
+                );
+                if claimed > actual {
+                    claimed - actual
+                } else {
+                    0
+                }
+            }
+            // Unreachable in practice: `resolve` refuses every other proof type
+            // with `needs_arbiter`, and the arbiter path supplies its own
+            // quantity. Zero is the safe answer if that ever stops being true —
+            // it settles in hygiene mode rather than inventing a payout.
+            _ => 0,
+        }
+    }
+
+    /// `harm` is supplied by the caller: computed from chain state by
+    /// `resolve`, stated by the trusted arbiter in `resolve_by_arbiter`. From
+    /// here down the two are indistinguishable and travel identical rails.
+    fn settle_fraud(env: &Env, challenge_id: u64, ch: &Challenge, harm: i128) {
         let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
         let staking: Address = env
             .storage()
@@ -243,97 +388,175 @@ impl ChallengeManager {
             .instance()
             .get(&DataKey::ReserveVault)
             .unwrap();
-        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
 
-        // Who vouched for this certificate?
-        let auditor: Address = env.invoke_contract(
-            &registry,
-            &Symbol::new(env, "get_cert_auditor"),
-            Vec::from_array(env, [ch.cert_id.into_val(env)]),
-        );
-
-        // Slash the auditor's full live stake: bulk to the victim, a cut to the challenger.
-        let stake: i128 = env.invoke_contract(
-            &staking,
-            &Symbol::new(env, "get_stake"),
-            Vec::from_array(env, [auditor.clone().into_val(env)]),
-        );
-        let reward = stake / 5; // 20% finder's fee to the challenger
-        let victim_share = stake - reward;
-
-        if victim_share > 0 {
-            env.invoke_contract::<()>(
-                &staking,
-                &Symbol::new(env, "slash"),
-                Vec::from_array(
-                    env,
-                    [
-                        auditor.clone().into_val(env),
-                        ch.victim.clone().into_val(env),
-                        victim_share.into_val(env),
-                    ],
-                ),
-            );
-        }
-        if reward > 0 {
-            env.invoke_contract::<()>(
-                &staking,
-                &Symbol::new(env, "slash"),
-                Vec::from_array(
-                    env,
-                    [
-                        auditor.into_val(env),
-                        ch.challenger.clone().into_val(env),
-                        reward.into_val(env),
-                    ],
-                ),
-            );
-        }
-
-        // Drain whatever reserve remains *for this certificate* to the victim.
-        // Every other certificate's reserve in the same vault is untouched.
-        let reserve_bal: i128 = env.invoke_contract(
+        // The two pots this certificate can be settled against, and nothing
+        // else. Both are keyed by cert_id: no other certificate's reserve and no
+        // other certificate's allocation is reachable from here.
+        let reserve: i128 = env.invoke_contract(
             &vault,
             &Symbol::new(env, "get_balance"),
             Vec::from_array(env, [ch.cert_id.into_val(env)]),
         );
-        if reserve_bal > 0 {
+        let allocation: i128 = env.invoke_contract(
+            &staking,
+            &Symbol::new(env, "get_allocation"),
+            Vec::from_array(env, [ch.cert_id.into_val(env)]),
+        );
+
+        // Nothing provable to pay for: kill the certificate, pay the flat
+        // bounty, leave the money where it is.
+        if harm <= 0 {
+            Self::settle_hygiene(env, challenge_id, ch, &registry, &staking);
+            return;
+        }
+
+        // The ceiling on everything below. Total outflow can never exceed the
+        // harm actually proven, nor the collateral this certificate carries.
+        let payable = if harm < reserve + allocation {
+            harm
+        } else {
+            reserve + allocation
+        };
+
+        // 1. Victim compensation — from the OPERATOR'S OWN RESERVE for THIS
+        //    certificate only.
+        //
+        //    ATTACK CLOSED: self-dealing. A colluding operator that names an
+        //    address it controls as "victim" is moving money from its left
+        //    pocket to its right. Manufacturing a proof against yourself
+        //    extracts nothing, so the permissiveness of victim naming stops
+        //    mattering.
+        let victim_amount = if payable < reserve { payable } else { reserve };
+        if victim_amount > 0 {
+            Self::pay_from_reserve(env, &vault, ch.cert_id, &ch.victim, victim_amount);
+        }
+        let reserve_left = reserve - victim_amount;
+
+        // 2. Challenger fee — a percentage of PROVEN HARM, out of the same
+        //    reserve, never out of the stake.
+        //
+        //    ATTACK CLOSED: bounty-hunting auditors. v1 paid 20% of the auditor's
+        //    live stake, so the most profitable target was whoever had posted the
+        //    most collateral, regardless of how small the fraud was.
+        let mut fee = harm * CHALLENGER_FEE_BPS / 10_000;
+        if fee > reserve_left {
+            fee = reserve_left;
+        }
+        if fee > 0 {
+            Self::pay_from_reserve(env, &vault, ch.cert_id, &ch.challenger, fee);
+        }
+
+        // 3. Auditor slash — to the TREASURY, and only the treasury.
+        //
+        //    ATTACK CLOSED: the prize. Nobody who can trigger a proof can
+        //    receive the auditor's money, so manufacturing a true proof pays
+        //    nothing however true it is.
+        //
+        //    The draw is the harm the operator's own reserve could not cover,
+        //    capped by this certificate's allocation.
+        //
+        //    ATTACK CLOSED: disproportion. A manufactured $10 breach cannot cost
+        //    an auditor a $50,000 bond — it is capped by harm — and one bad
+        //    certificate cannot destroy an auditor's whole book, because it is
+        //    capped by that certificate's allocation.
+        let residual = payable - victim_amount;
+        let slash = if residual < allocation {
+            residual
+        } else {
+            allocation
+        };
+        if slash > 0 {
             env.invoke_contract::<()>(
-                &vault,
-                &Symbol::new(env, "release_to_victim"),
+                &staking,
+                &Symbol::new(env, "slash_allocation"),
                 Vec::from_array(
                     env,
                     [
                         ch.cert_id.into_val(env),
-                        ch.victim.clone().into_val(env),
-                        reserve_bal.into_val(env),
+                        treasury.into_val(env),
+                        slash.into_val(env),
                     ],
                 ),
             );
         }
 
-        // Mark the certificate dead.
+        // 4. GAP — premium step. DESIGN-V2's premium economy would take a cut
+        //    here, before the allocation retires, and route it to whoever
+        //    underwrote the coverage. No PremiumVault exists yet, so nothing is
+        //    taken and nothing is escrowed for one. When it lands it goes here,
+        //    between the slash and the retirement, so that the amounts above are
+        //    unaffected by its arrival.
+
+        // 5. Retire the allocation: the unslashed remainder goes back to the
+        //    auditor's FREE stake.
+        //
+        //    ATTACK CLOSED (against the auditor, by omission): stranded capital.
+        //    Without this the remainder would stay allocated to a dead
+        //    certificate forever — which is exactly the defect the
+        //    per-certificate refactor exists to remove, quietly reintroduced.
         env.invoke_contract::<()>(
-            &registry,
-            &Symbol::new(env, "invalidate"),
+            &staking,
+            &Symbol::new(env, "retire_allocation"),
             Vec::from_array(env, [ch.cert_id.into_val(env)]),
         );
 
-        // Return the challenger's bond.
-        token::Client::new(env, &token_addr).transfer(
-            &env.current_contract_address(),
-            &ch.challenger,
-            &ch.stake,
-        );
+        // 6. Kill the certificate and return the challenger's bond.
+        Self::invalidate(env, &registry, ch.cert_id);
+        Self::return_bond(env, ch);
 
-        let mut resolved = ch.clone();
-        resolved.verdict = Verdict::ChallengeWins;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Challenge(challenge_id), &resolved);
+        Self::record(env, challenge_id, ch, Verdict::ChallengeWins);
     }
 
-    // Challenge failed: the challenger forfeits their bond (it stays in the contract).
+    /// Hygiene mode: the proof is real, but nobody can evidence harm.
+    ///
+    /// The certificate is invalidated, the allocation retires in full, the
+    /// challenger is paid a FIXED bounty out of forfeited bonds, and the
+    /// operator's reserve is not touched at all. A dead certificate dies without
+    /// a payout being invented for it.
+    fn settle_hygiene(
+        env: &Env,
+        challenge_id: u64,
+        ch: &Challenge,
+        registry: &Address,
+        staking: &Address,
+    ) {
+        env.invoke_contract::<()>(
+            staking,
+            &Symbol::new(env, "retire_allocation"),
+            Vec::from_array(env, [ch.cert_id.into_val(env)]),
+        );
+
+        Self::invalidate(env, registry, ch.cert_id);
+        Self::return_bond(env, ch);
+
+        // Paid from forfeited bonds only — failed challengers fund successful
+        // hygiene challenges. There is no other pot it could come from: the
+        // reserve is off limits by definition here, and paying it out of the
+        // stake would hand a challenger a slice of the auditor's money, which is
+        // the thing rule 3 exists to forbid. If the pool is short, the bounty is
+        // whatever the pool holds, including nothing.
+        let pool = Self::bounty_pool(env);
+        let bounty = if HYGIENE_BOUNTY < pool {
+            HYGIENE_BOUNTY
+        } else {
+            pool
+        };
+        if bounty > 0 {
+            let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+            token::Client::new(env, &token_addr).transfer(
+                &env.current_contract_address(),
+                &ch.challenger,
+                &bounty,
+            );
+        }
+
+        Self::record(env, challenge_id, ch, Verdict::ChallengeWins);
+    }
+
+    // Challenge failed: the challenger forfeits their bond. It stays in the
+    // contract and stops being owed back, which is what makes it available as
+    // hygiene bounty for a future, genuine challenge.
     fn settle_no_fraud(env: &Env, challenge_id: u64) {
         let mut ch: Challenge = env
             .storage()
@@ -344,6 +567,75 @@ impl ChallengeManager {
         env.storage()
             .persistent()
             .set(&DataKey::Challenge(challenge_id), &ch);
+        Self::release_bond_liability(env, ch.stake);
+    }
+
+    // ----- small helpers -------------------------------------------------
+
+    fn pay_from_reserve(env: &Env, vault: &Address, cert_id: u64, to: &Address, amount: i128) {
+        env.invoke_contract::<()>(
+            vault,
+            &Symbol::new(env, "pay_from_reserve"),
+            Vec::from_array(
+                env,
+                [
+                    cert_id.into_val(env),
+                    to.clone().into_val(env),
+                    amount.into_val(env),
+                ],
+            ),
+        );
+    }
+
+    fn invalidate(env: &Env, registry: &Address, cert_id: u64) {
+        env.invoke_contract::<()>(
+            registry,
+            &Symbol::new(env, "invalidate"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        );
+    }
+
+    fn return_bond(env: &Env, ch: &Challenge) {
+        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        token::Client::new(env, &token_addr).transfer(
+            &env.current_contract_address(),
+            &ch.challenger,
+            &ch.stake,
+        );
+        Self::release_bond_liability(env, ch.stake);
+    }
+
+    fn release_bond_liability(env: &Env, amount: i128) {
+        let held = Self::bonds_held(env) - amount;
+        env.storage()
+            .instance()
+            .set(&DataKey::BondsHeld, &if held > 0 { held } else { 0 });
+    }
+
+    fn bonds_held(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::BondsHeld)
+            .unwrap_or(0)
+    }
+
+    fn bounty_pool(env: &Env) -> i128 {
+        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let held = token::Client::new(env, &token_addr).balance(&env.current_contract_address());
+        let owed = Self::bonds_held(env);
+        if held > owed {
+            held - owed
+        } else {
+            0
+        }
+    }
+
+    fn record(env: &Env, challenge_id: u64, ch: &Challenge, verdict: Verdict) {
+        let mut resolved = ch.clone();
+        resolved.verdict = verdict;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Challenge(challenge_id), &resolved);
     }
 }
 
@@ -359,6 +651,7 @@ mod tests {
         let fee_escrow = Address::generate(env);
         let token = Address::generate(env);
         let arbiter = Address::generate(env);
+        let treasury = Address::generate(env);
 
         let contract_id = env.register(ChallengeManager, ());
         let client = ChallengeManagerClient::new(env, &contract_id);
@@ -369,6 +662,7 @@ mod tests {
             &fee_escrow,
             &token,
             &arbiter,
+            &treasury,
             &100_0000000i128, // min stake $100
         );
         (client, contract_id)
@@ -393,19 +687,13 @@ mod tests {
         );
     }
 
-    #[test]
-    #[should_panic(expected = "already_resolved")]
-    fn test_double_resolve_panics() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, contract_id) = init_client(&env);
-
-        let challenger = Address::generate(&env);
-        let victim = Address::generate(&env);
-
-        // Seed a pending challenge directly (bypasses token transfer in challenge()).
-        // Use an arbiter-path proof type so settle_no_fraud touches no other contract.
-        env.as_contract(&contract_id, || {
+    /// Seed a pending challenge directly, bypassing the token transfer in
+    /// `challenge()`. `BoundExceeded` keeps `settle_no_fraud` from touching any
+    /// other contract.
+    fn seed_pending(env: &Env, contract_id: &Address) {
+        let challenger = Address::generate(env);
+        let victim = Address::generate(env);
+        env.as_contract(contract_id, || {
             env.storage().persistent().set(
                 &DataKey::Challenge(1u64),
                 &Challenge {
@@ -418,9 +706,43 @@ mod tests {
                 },
             );
         });
+    }
+
+    /// The arbiter states the quantity, but it must be a quantity: a negative
+    /// harm is rejected before the verdict is even loaded.
+    #[test]
+    #[should_panic(expected = "invalid_harm")]
+    fn test_arbiter_negative_harm_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id) = init_client(&env);
+        seed_pending(&env, &contract_id);
+        client.resolve_by_arbiter(&1u64, &true, &-1i128);
+    }
+
+    /// A rejected challenge has no harm to quantify. Stating one anyway is a
+    /// contradiction, and fails loudly rather than being silently ignored.
+    #[test]
+    #[should_panic(expected = "harm_without_verdict")]
+    fn test_arbiter_harm_without_a_fraud_verdict_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id) = init_client(&env);
+        seed_pending(&env, &contract_id);
+        client.resolve_by_arbiter(&1u64, &false, &100_0000000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "already_resolved")]
+    fn test_double_resolve_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id) = init_client(&env);
+
+        seed_pending(&env, &contract_id);
 
         // Arbiter rules "no fraud" → resolved. Second call must panic.
-        client.resolve_by_arbiter(&1u64, &false);
-        client.resolve_by_arbiter(&1u64, &false);
+        client.resolve_by_arbiter(&1u64, &false, &0i128);
+        client.resolve_by_arbiter(&1u64, &false, &0i128);
     }
 }

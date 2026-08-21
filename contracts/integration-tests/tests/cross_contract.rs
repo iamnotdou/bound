@@ -38,6 +38,14 @@ const MIN_CHALLENGE_STAKE: i128 = 100_0000000;
 /// Starting USDC balance minted to every actor: $10,000. Kept deliberately
 /// small — every host operation lands in `test_snapshots/`.
 const FUNDING: i128 = 10_000_0000000;
+/// The challenge window the Registry publishes: 7 days. The reserve and the
+/// auditor's allocation both stay locked until `expires_at + CHALLENGE_WINDOW`.
+const CHALLENGE_WINDOW: u64 = 7 * 24 * 60 * 60;
+/// The challenger's fee, in basis points of proven harm (10%).
+const CHALLENGER_FEE_BPS: i128 = 1_000;
+/// The flat hygiene bounty the ChallengeManager pays when a proof is true but
+/// no harm is evidenced.
+const HYGIENE_BOUNTY: i128 = 10_0000000;
 
 // ---------------------------------------------------------------------------
 // The harness
@@ -72,6 +80,8 @@ struct BoundWorld {
     challenger: Address,
     victim: Address,
     arbiter: Address,
+    /// Where every slashed stroop goes, and the only place it may go.
+    treasury: Address,
 }
 
 impl BoundWorld {
@@ -93,6 +103,7 @@ impl BoundWorld {
         let challenger = Address::generate(&env);
         let victim = Address::generate(&env);
         let arbiter = Address::generate(&env);
+        let treasury = Address::generate(&env);
 
         // Test USDC. A Stellar Asset Contract registered in-memory needs no
         // network and no trustlines: `mint` credits an address directly.
@@ -126,6 +137,7 @@ impl BoundWorld {
             &escrow,
             &token,
             &arbiter,
+            &treasury,
             &MIN_CHALLENGE_STAKE,
         );
 
@@ -147,6 +159,7 @@ impl BoundWorld {
             challenger,
             victim,
             arbiter,
+            treasury,
         };
 
         for who in [
@@ -229,8 +242,23 @@ impl BoundWorld {
         )
     }
 
+    /// Attest, allocating the whole standard stake to this certificate.
     fn attest(&self, cert_id: u64) {
-        self.registry().attest(&self.auditor, &cert_id);
+        self.attest_with(cert_id, ALLOCATION);
+    }
+
+    /// Attest, naming exactly how much of the auditor's free stake stands
+    /// behind this certificate.
+    fn attest_with(&self, cert_id: u64, allocation: i128) {
+        self.registry().attest(&self.auditor, &cert_id, &allocation);
+    }
+
+    fn allocation_of(&self, cert_id: u64) -> i128 {
+        self.staking().get_allocation(&cert_id)
+    }
+
+    fn free_stake(&self) -> i128 {
+        self.staking().get_free_stake(&self.auditor)
     }
 
     fn deposit_reserve(&self, cert_id: u64, amount: i128) {
@@ -272,8 +300,13 @@ impl BoundWorld {
 /// published with a $5,000 bound claiming a $1,000 reserve, expiring at t=10_000.
 const EXPIRES_AT: u64 = 10_000;
 const AUDITOR_STAKE: i128 = 600_0000000;
+/// How much of that stake the standard attestation allocates to the certificate:
+/// all of it, so most tests read as they did before per-certificate allocation.
+const ALLOCATION: i128 = AUDITOR_STAKE;
 const BOUND: i128 = 5_000_0000000;
 const RESERVE_CLAIM: i128 = 1_000_0000000;
+/// The instant the standard certificate's collateral may finally unwind.
+const SETTLEMENT_DEADLINE: u64 = EXPIRES_AT + CHALLENGE_WINDOW;
 
 fn staked_and_attested() -> (BoundWorld, u64) {
     let w = BoundWorld::new();
@@ -329,10 +362,24 @@ fn happy_path_publishes_funds_attests_and_verifies() {
     assert_eq!(result.auditor, Some(w.auditor.clone()));
     assert_eq!(result.expires_at, EXPIRES_AT);
 
-    // The attestation bonded the auditor's capital until the cert expires.
-    assert_eq!(w.staking().locked_until(&w.auditor), EXPIRES_AT);
-    assert!(w.staking().try_release(&w.auditor).is_err());
+    // The attestation allocated the auditor's capital to this certificate, and
+    // locked it until the challenge window closes — not until expiry.
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(
+        w.staking().allocation_unlock_at(&cert_id),
+        SETTLEMENT_DEADLINE
+    );
+    assert_eq!(w.staking().locked_until(&w.auditor), SETTLEMENT_DEADLINE);
+    assert_eq!(w.free_stake(), 0);
+
+    // `release` withdraws free stake only, so it moves nothing at all here.
+    // Allocated capital is locked because a live certificate stands on it.
+    w.staking().release(&w.auditor);
     assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    // And the allocation cannot be freed early either.
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
 }
 
 /// Once the certificate has expired the bond unwinds cleanly: the auditor can
@@ -347,7 +394,13 @@ fn clean_expiry_returns_stake_and_reserve() {
     w.deposit_reserve(cert_id, RESERVE_CLAIM);
     w.attest(cert_id);
 
+    // Expiry alone is not enough: the challenge window has to close first.
     w.set_time(EXPIRES_AT + 1);
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+
+    w.set_time(SETTLEMENT_DEADLINE);
+    w.staking().release_allocation(&cert_id);
     w.staking().release(&w.auditor);
     w.vault().release_to_operator(&cert_id);
 
@@ -361,33 +414,116 @@ fn clean_expiry_returns_stake_and_reserve() {
 // 2. InsufficientReserve — fraud branch
 // ---------------------------------------------------------------------------
 
-/// A certificate claiming a $1,000 reserve while the vault only holds $400.
-/// The proof verifies on-chain, and settlement moves real money.
+/// The waterfall, with a reserve big enough to cover the harm in full.
 ///
-/// The arithmetic `settle_fraud` commits to, with a live stake S = $600 and a
-/// remaining reserve R = $400:
-///   reward       = S / 5   = $120  → challenger (20% finder's fee)
-///   victim_share = S - S/5 = $480  → victim
-///   reserve      = R       = $400  → victim (drained)
-///   bond                          → returned to the challenger in full
+/// Claim $1,000, deposit $900 → proven harm is the $100 shortfall.
+///   victim      = min(harm, reserve)        = $100  <- the operator's reserve
+///   fee         = 10% of proven harm        = $10   <- the same reserve
+///   slash       = harm not covered, capped  = $0    <- nothing left to slash
+///   allocation retires in full: $600 back to the auditor's free stake
 #[test]
-fn insufficient_reserve_fraud_slashes_auditor_and_pays_victim() {
+fn insufficient_reserve_fraud_pays_victim_and_fee_from_the_operators_own_reserve() {
     let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
 
-    // The lie: the certificate claims $1,000 of reserve, only $400 is deposited.
-    let actually_deposited = 400_0000000i128;
-    w.deposit_reserve(cert_id, actually_deposited);
+    let deposited = 900_0000000i128;
+    w.deposit_reserve(cert_id, deposited);
     w.attest(cert_id);
-    assert!(w.registry().verify(&w.agent).valid);
+
+    let harm = RESERVE_CLAIM - deposited;
+    assert_eq!(harm, 100_0000000);
+    let fee = harm * CHALLENGER_FEE_BPS / 10_000;
+    assert_eq!(fee, 10_0000000);
 
     let bond = MIN_CHALLENGE_STAKE;
-    let challenger_before = w.balance(&w.challenger);
-    let victim_before = w.balance(&w.victim);
-    assert_eq!(victim_before, 0);
+    let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, bond);
+    w.resolve(challenge_id);
 
+    // 1. The victim is compensated out of the operator's own reserve.
+    assert_eq!(w.balance(&w.victim), harm);
+    // 2. The challenger's fee is a share of proven harm, from the same reserve.
+    assert_eq!(w.balance(&w.challenger), FUNDING + fee);
+    // 3. Nothing was slashed: the operator's reserve covered the whole harm.
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    // 5. The allocation retired, so every stroop is free stake again.
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    // 6. Certificate dead, bond returned.
+    assert_eq!(w.reserve_of(cert_id), deposited - harm - fee);
+    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+}
+
+/// The most extreme fraud: a certificate claiming a reserve that was never
+/// funded at all.
+///
+/// There is no operator reserve, so **the victim is paid nothing** — victim
+/// compensation comes only from the operator's own money, never from the
+/// auditor's. The auditor is still slashed, capped by their allocation, and
+/// every slashed stroop lands in the treasury.
+///
+/// This is the test that proves the prize is gone: the party who filed the
+/// proof and the party named as victim between them receive none of the
+/// auditor's $600.
+#[test]
+fn insufficient_reserve_slash_goes_to_the_treasury_and_never_to_victim_or_challenger() {
+    let (w, cert_id) = staked_and_attested();
+    assert_eq!(w.reserve_of(cert_id), 0);
+
+    let bond = MIN_CHALLENGE_STAKE;
+    let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, bond);
+    w.resolve(challenge_id);
+
+    // harm = $1,000 claimed - $0 actual; payable is capped by the collateral,
+    // which here is the $600 allocation alone.
+    let slash = ALLOCATION;
+
+    // The treasury received the slash, in full and to the stroop.
+    assert_eq!(w.balance(&w.treasury), slash);
+
+    // The victim received no part of it. They received nothing at all, because
+    // the operator posted nothing to compensate them with.
+    assert_eq!(w.balance(&w.victim), 0);
+    // The challenger got their bond back and not one stroop more: the fee is a
+    // share of harm paid from the reserve, and the reserve is empty.
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+
+    // The auditor's allocation is spent and the certificate is dead.
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE - slash);
+    assert_eq!(w.free_stake(), 0);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE - slash);
+    assert!(!w.registry().verify(&w.agent).valid);
+}
+
+/// The mixed case, and the clearest statement of the ordering: the operator's
+/// reserve is drawn first, and only the harm it could not cover reaches the
+/// auditor's allocation.
+///
+/// Claim $1,000, deposit $400, allocation $600 → harm $600.
+///   victim = min(600, 400) = $400   <- reserve, exhausted
+///   fee    = min(60, 0)    = $0     <- nothing left in the reserve
+///   slash  = 600 - 400     = $200   <- treasury, capped by the $600 allocation
+///   remainder $400 returns to the auditor's free stake
+#[test]
+fn insufficient_reserve_fraud_draws_the_reserve_first_then_the_allocation() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+
+    let deposited = 400_0000000i128;
+    w.deposit_reserve(cert_id, deposited);
+    w.attest(cert_id);
+
+    let challenger_before = w.balance(&w.challenger);
+    let bond = MIN_CHALLENGE_STAKE;
     let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, bond);
 
     // The bond is genuinely at risk: it has left the challenger's account.
@@ -396,64 +532,399 @@ fn insufficient_reserve_fraud_slashes_auditor_and_pays_victim() {
 
     w.resolve(challenge_id);
 
-    // --- exact balance movements ---
-    let reward = AUDITOR_STAKE / 5; // 120_0000000
-    let victim_share = AUDITOR_STAKE - reward; // 480_0000000
-    assert_eq!(reward, 120_0000000);
-    assert_eq!(victim_share, 480_0000000);
+    let harm = RESERVE_CLAIM - deposited; // $600
+    let slash = harm - deposited; // $200
+    assert_eq!(harm, 600_0000000);
+    assert_eq!(slash, 200_0000000);
 
-    // Auditor's stake is wiped out — the whole live stake was slashed.
-    assert_eq!(w.staking().get_stake(&w.auditor), 0);
-    assert_eq!(w.balance(&w.staking), 0);
-    // The auditor never gets the slashed capital back.
-    assert_eq!(w.balance(&w.auditor), FUNDING - AUDITOR_STAKE);
-
-    // Victim is compensated from the slashed stake *and* the drained reserve.
-    assert_eq!(w.balance(&w.victim), victim_share + actually_deposited);
-    assert_eq!(w.balance(&w.victim), 880_0000000);
-
-    // Vault is empty and reports it.
-    assert_eq!(w.vault().get_balance(&cert_id), 0);
+    assert_eq!(w.balance(&w.victim), deposited);
+    assert_eq!(w.balance(&w.treasury), slash);
+    assert_eq!(w.balance(&w.challenger), challenger_before); // bond back, fee $0
+    assert_eq!(w.reserve_of(cert_id), 0);
     assert_eq!(w.balance(&w.vault), 0);
 
-    // Challenger: bond returned in full, plus the 20% finder's fee.
-    assert_eq!(w.balance(&w.challenger), challenger_before + reward);
-    assert_eq!(w.balance(&w.challenge_manager), 0);
+    // The unslashed remainder is free stake again — not stranded on a dead cert.
+    assert_eq!(w.free_stake(), ALLOCATION - slash);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE - slash);
+    assert_eq!(w.allocation_of(cert_id), 0);
 
-    // Certificate is dead and the verdict recorded.
     let ch = w.cm().get_challenge(&challenge_id);
     assert!(ch.verdict == CmVerdict::ChallengeWins);
     assert_eq!(
         w.registry().get_certificate(&cert_id).status,
         CertStatus::Invalid
     );
-    assert!(!w.registry().verify(&w.agent).valid);
 
-    // Conservation: nothing was minted or burned by settlement.
+    // Conservation: nothing was minted or burned by settlement — treasury included.
     let total = w.balance(&w.operator)
         + w.balance(&w.auditor)
         + w.balance(&w.challenger)
         + w.balance(&w.victim)
+        + w.balance(&w.treasury)
         + w.balance(&w.vault)
         + w.balance(&w.staking)
         + w.balance(&w.challenge_manager);
     assert_eq!(total, FUNDING * 3);
 }
 
-/// The most extreme fraud: a certificate claiming a reserve that was never
-/// funded at all. The victim is then paid only out of the auditor's stake.
+// ---------------------------------------------------------------------------
+// 2b. The headline: self-dealing is a wash
+// ---------------------------------------------------------------------------
+
+/// **An operator manufactures a true proof against itself and extracts nothing.**
+///
+/// The operator under-funds its own certificate on purpose, then files the
+/// challenge itself and names a second address it controls as the victim. Every
+/// step is legitimate: the proof is real, the challenge is real, the settlement
+/// is real. The question this test answers is not "can the proof be forged" —
+/// it cannot — but "does manufacturing a true proof pay?"
+///
+/// The colluding set is {operator, sink}. Its net position must not improve.
 #[test]
-fn insufficient_reserve_fraud_with_empty_vault_pays_from_stake_only() {
-    let (w, cert_id) = staked_and_attested();
-    assert_eq!(w.vault().get_balance(&cert_id), 0);
+fn self_dealing_operator_extracts_nothing_from_a_manufactured_proof() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
 
-    let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    // `sink` is the operator's second address: the "victim" it will name, and
+    // the account it will file the challenge from.
+    let sink = w.operator2.clone();
+
+    let deposited = 900_0000000i128;
+    w.deposit_reserve(cert_id, deposited);
+    w.attest(cert_id);
+
+    // --- before ---
+    let operator_before = w.balance(&w.operator);
+    let sink_before = w.balance(&sink);
+    let reserve_before = w.reserve_of(cert_id);
+    let colluders_before = operator_before + sink_before + reserve_before;
+    assert_eq!(operator_before, FUNDING - deposited);
+    assert_eq!(sink_before, FUNDING);
+    assert_eq!(reserve_before, deposited);
+    assert_eq!(colluders_before, FUNDING * 2);
+
+    let auditor_stake_before = w.staking().get_stake(&w.auditor);
+    let treasury_before = w.balance(&w.treasury);
+    assert_eq!(auditor_stake_before, AUDITOR_STAKE);
+    assert_eq!(treasury_before, 0);
+
+    // The operator's own address files the challenge, naming its own sink as
+    // the harmed counterparty. Victim naming is exactly as permissive as it
+    // always was — the waterfall, not the predicate, is what neutralises it.
+    let bond = MIN_CHALLENGE_STAKE;
+    let challenge_id = w.cm().challenge(
+        &sink,
+        &cert_id,
+        &ProofType::InsufficientReserve,
+        &sink,
+        &bond,
+    );
     w.resolve(challenge_id);
+    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
 
-    assert_eq!(w.balance(&w.victim), AUDITOR_STAKE - AUDITOR_STAKE / 5);
-    assert_eq!(w.balance(&w.challenger), FUNDING + AUDITOR_STAKE / 5);
-    assert_eq!(w.staking().get_stake(&w.auditor), 0);
+    // --- after ---
+    let operator_after = w.balance(&w.operator);
+    let sink_after = w.balance(&sink);
+    let reserve_after = w.reserve_of(cert_id);
+    let colluders_after = operator_after + sink_after + reserve_after;
+
+    // THE ASSERTION. The colluding pair's total position is exactly what it was.
+    // Every stroop that reached the "victim" and every stroop of "fee" came out
+    // of the operator's own reserve: left pocket to right pocket.
+    assert_eq!(colluders_after, colluders_before);
+    assert_eq!(colluders_after, FUNDING * 2);
+
+    // And, itemised, so a future reader can see nothing was smuggled in:
+    let harm = RESERVE_CLAIM - deposited; // $100
+    let fee = harm * CHALLENGER_FEE_BPS / 10_000; // $10
+    assert_eq!(operator_after, operator_before); // untouched
+    assert_eq!(sink_after, sink_before + harm + fee); // paid, from its own reserve
+    assert_eq!(reserve_after, reserve_before - harm - fee); // by exactly that much
+
+    // The auditor's capital was not touched at all: the operator's reserve
+    // covered the harm it manufactured, so there was nothing left to slash.
+    assert_eq!(w.staking().get_stake(&w.auditor), auditor_stake_before);
+    assert_eq!(w.balance(&w.staking), auditor_stake_before);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.treasury), treasury_before);
+
+    // Nobody outside the colluding pair gained or lost anything.
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    assert_eq!(w.balance(&w.auditor), FUNDING - AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.challenge_manager), 0);
+
+    // All the attack achieved was destroying the operator's own certificate.
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+}
+
+/// The same manufactured proof with **no reserve at all** — the version that
+/// paid best under v1, where it handed the colluding pair the auditor's entire
+/// live stake minus the finder's fee they also collected.
+///
+/// Now the pair receives nothing and the auditor's slashed capital goes to the
+/// treasury, an address none of them controls.
+#[test]
+fn self_dealing_against_an_empty_reserve_hands_the_colluders_nothing() {
+    let (w, cert_id) = staked_and_attested();
+    let sink = w.operator2.clone();
+
+    let colluders_before = w.balance(&w.operator) + w.balance(&sink);
+    assert_eq!(colluders_before, FUNDING * 2);
+
+    let id = w.cm().challenge(
+        &sink,
+        &cert_id,
+        &ProofType::InsufficientReserve,
+        &sink,
+        &MIN_CHALLENGE_STAKE,
+    );
+    w.resolve(id);
+
+    // Not one stroop better off, and the whole allocation is in the treasury.
+    assert_eq!(w.balance(&w.operator) + w.balance(&sink), colluders_before);
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    assert_eq!(w.balance(&w.victim), 0);
+    // Under v1 this line read `sink_before + 480_0000000`.
+    assert_eq!(w.balance(&sink), FUNDING);
+}
+
+// ---------------------------------------------------------------------------
+// 2c. The two caps on the slash
+// ---------------------------------------------------------------------------
+
+/// **Capped by allocation.** A huge harm against a huge stake still only draws
+/// the slice the auditor put behind *this* certificate — and the rest of the
+/// stake, which was never allocated, is untouched free capital afterwards.
+#[test]
+fn slash_is_capped_by_the_certificates_allocation() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+
+    // A well-capitalised auditor: $9,000 staked, but only $600 behind this cert.
+    let big_stake = 9_000_0000000i128;
+    w.staking().stake(&w.auditor, &big_stake);
+
+    // A $5,000 claim with nothing deposited: harm is $5,000, far above the
+    // allocation.
+    let claim = 5_000_0000000i128;
+    let cert_id = w.publish_cert(BOUND, claim, EXPIRES_AT);
+    w.attest_with(cert_id, ALLOCATION);
+    assert_eq!(w.free_stake(), big_stake - ALLOCATION);
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    // Only the allocation was slashed, not the book.
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    assert_eq!(w.staking().get_stake(&w.auditor), big_stake - ALLOCATION);
+    // Nothing is stranded: the remaining stake is free and usable immediately.
+    assert_eq!(w.free_stake(), big_stake - ALLOCATION);
+    assert_eq!(w.staking().get_allocated(&w.auditor), 0);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert!(w.staking().is_registered(&w.auditor));
+}
+
+/// **Capped by harm.** A $10 shortfall against a $5,000 allocation costs the
+/// auditor $10 — and the $4,990 remainder returns to free stake.
+///
+/// This is the line that stops a manufactured trivial breach from costing an
+/// auditor their whole bond.
+#[test]
+fn slash_is_capped_by_proven_harm() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+
+    let big_stake = 9_000_0000000i128;
+    let big_allocation = 5_000_0000000i128;
+    w.staking().stake(&w.auditor, &big_stake);
+
+    // Claim $1,000, deposit $990: a $10 harm.
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    let deposited = 990_0000000i128;
+    w.deposit_reserve(cert_id, deposited);
+    w.attest_with(cert_id, big_allocation);
+    assert_eq!(w.allocation_of(cert_id), big_allocation);
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    let harm = RESERVE_CLAIM - deposited;
+    assert_eq!(harm, 10_0000000);
+
+    // The reserve covered the whole $10, so the slash is $0 — bounded by harm
+    // long before the $5,000 allocation ever came into play.
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.balance(&w.victim), harm);
+    assert_eq!(w.staking().get_stake(&w.auditor), big_stake);
+    assert_eq!(w.free_stake(), big_stake);
+}
+
+/// The same cap where the reserve is empty, so the slash is non-zero and the
+/// binding constraint is unambiguously *harm*: a $10 harm, a $5,000 allocation,
+/// a $10 slash.
+#[test]
+fn slash_is_capped_by_harm_even_with_no_reserve_to_draw_on() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+
+    let big_stake = 9_000_0000000i128;
+    let big_allocation = 5_000_0000000i128;
+    w.staking().stake(&w.auditor, &big_stake);
+
+    // A certificate claiming only $10 of reserve, and funded with nothing.
+    let tiny_claim = 10_0000000i128;
+    let cert_id = w.publish_cert(BOUND, tiny_claim, EXPIRES_AT);
+    w.attest_with(cert_id, big_allocation);
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert_eq!(w.balance(&w.treasury), tiny_claim);
+    assert_eq!(w.staking().get_stake(&w.auditor), big_stake - tiny_claim);
+    assert_eq!(w.free_stake(), big_stake - tiny_claim);
+    // Victim and challenger got none of it.
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+}
+
+/// **Allocation isolation.** Slashing certificate A must not touch the
+/// allocation behind certificate B, held by the same auditor in the same
+/// contract.
+#[test]
+fn slashing_one_certificate_leaves_the_other_certificates_allocation_untouched() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+
+    let big_stake = 3_000_0000000i128;
+    w.staking().stake(&w.auditor, &big_stake);
+
+    let alloc_a = 600_0000000i128;
+    let alloc_b = 800_0000000i128;
+
+    let cert_a = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    let cert_b = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.attest_with(cert_a, alloc_a);
+    w.attest_with(cert_b, alloc_b);
+
+    assert_eq!(w.allocation_of(cert_a), alloc_a);
+    assert_eq!(w.allocation_of(cert_b), alloc_b);
+    assert_eq!(w.staking().get_allocated(&w.auditor), alloc_a + alloc_b);
+    assert_eq!(w.free_stake(), big_stake - alloc_a - alloc_b);
+
+    // A is unfunded: harm $1,000, so A's whole $600 allocation is slashed.
+    let id = w.challenge(cert_a, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert_eq!(w.balance(&w.treasury), alloc_a);
+    assert_eq!(w.allocation_of(cert_a), 0);
+
+    // B's allocation is unchanged to the stroop, and so is B itself.
+    assert_eq!(w.allocation_of(cert_b), alloc_b);
+    assert_eq!(w.staking().get_allocated(&w.auditor), alloc_b);
+    assert_eq!(w.staking().get_stake(&w.auditor), big_stake - alloc_a);
+    assert_eq!(w.free_stake(), big_stake - alloc_a - alloc_b);
+    assert_eq!(
+        w.registry().get_certificate(&cert_b).status,
+        CertStatus::Verified
+    );
+    assert_eq!(
+        w.registry().get_certificate(&cert_a).status,
+        CertStatus::Invalid
+    );
+
+    // B's collateral still unwinds normally once its own window closes.
+    w.set_time(SETTLEMENT_DEADLINE);
+    w.staking().release_allocation(&cert_b);
+    assert_eq!(w.free_stake(), big_stake - alloc_a);
+}
+
+// ---------------------------------------------------------------------------
+// 2d. Hygiene mode
+// ---------------------------------------------------------------------------
+
+/// A proof that is true but that nobody can evidence harm for.
+///
+/// The arbiter path is the live example: it carries a verdict, not a quantity,
+/// so `raw_harm` is zero for every proof type it rules on. The certificate is
+/// invalidated, the challenger is paid the flat bounty, and the operator's
+/// reserve is not touched at all — no payout is invented from a number nobody
+/// proved.
+#[test]
+fn hygiene_mode_kills_the_certificate_and_pays_a_flat_bounty_without_touching_the_reserve() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM); // honestly funded
+    w.attest(cert_id);
+
+    // Seed the bounty pool: the bounty is paid out of forfeited bonds and
+    // nothing else, so a failed challenge has to have happened first.
+    let dud = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(dud);
+    assert!(w.cm().get_challenge(&dud).verdict == CmVerdict::ChallengeFails);
+    assert_eq!(w.cm().get_bounty_pool(), MIN_CHALLENGE_STAKE);
+
+    let operator_before = w.balance(&w.operator);
+    let challenger_before = w.balance(&w.challenger);
+
+    // A real covenant breach the arbiter confirms, but with no harm anybody
+    // could evidence — the arbiter states zero. Hygiene mode stays reachable
+    // through the arbiter path precisely because the quantity is theirs to set.
+    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&id, &true, &0i128);
+
+    // Certificate invalidated.
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
     assert!(!w.registry().verify(&w.agent).valid);
+
+    // Challenger: bond back plus the flat bounty, and nothing proportional to
+    // anybody's stake.
+    assert_eq!(w.balance(&w.challenger), challenger_before + HYGIENE_BOUNTY);
+
+    // Reserve untouched, operator untouched, victim paid nothing.
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.operator), operator_before);
+    assert_eq!(w.balance(&w.victim), 0);
+
+    // Auditor: not slashed, and the allocation retires so nothing is stranded
+    // on the dead certificate.
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), 0);
+}
+
+/// The bounty can never exceed the forfeited-bond pool, and an empty pool pays
+/// nothing rather than reaching for the reserve or the stake.
+#[test]
+fn hygiene_bounty_is_limited_to_the_forfeited_bond_pool() {
+    let (w, cert_id) = staked_and_attested();
+    assert_eq!(w.cm().get_bounty_pool(), 0);
+
+    let challenger_before = w.balance(&w.challenger);
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&id, &true, &0i128);
+
+    // Bond back, bounty zero — nothing was invented out of the auditor's stake.
+    assert_eq!(w.balance(&w.challenger), challenger_before);
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +1042,69 @@ fn certificate_becomes_invalid_after_expiry() {
     );
 }
 
+/// **The post-expiry lock.**
+///
+/// A proof about activity *after* a certificate expires only becomes provable
+/// after expiry. If the reserve unlocked at `expires_at` and the auditor's
+/// allocation unlocked at the same instant, such a proof would settle against
+/// an empty pot every single time: the operator would already have withdrawn
+/// the reserve and the auditor would already have freed the stake.
+///
+/// So both stay locked until `expires_at + CHALLENGE_WINDOW`, and this test
+/// walks the boundary from both sides.
+#[test]
+fn reserve_and_allocation_stay_locked_through_the_post_expiry_challenge_window() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+
+    // Both pots agree on the deadline, because both read it from the Registry.
+    assert_eq!(w.vault().get_unlock_at(&cert_id), SETTLEMENT_DEADLINE);
+    assert_eq!(
+        w.staking().allocation_unlock_at(&cert_id),
+        SETTLEMENT_DEADLINE
+    );
+    assert_eq!(SETTLEMENT_DEADLINE, EXPIRES_AT + CHALLENGE_WINDOW);
+
+    // Immediately after expiry — the moment a post-expiry proof first becomes
+    // possible — neither side can walk away.
+    for t in [EXPIRES_AT + 1, EXPIRES_AT + CHALLENGE_WINDOW / 2] {
+        w.set_time(t);
+        assert!(!w.registry().verify(&w.agent).valid); // expired...
+        assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+        assert!(w.staking().try_release_allocation(&cert_id).is_err());
+    }
+
+    // The last locked second.
+    w.set_time(SETTLEMENT_DEADLINE - 1);
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+
+    // The money is all still exactly where it was, so a proof filed at this
+    // instant would settle against a full pot.
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.free_stake(), 0);
+    assert_eq!(w.balance(&w.operator), FUNDING - RESERVE_CLAIM);
+
+    // At the deadline itself the lock lifts, and both unwind cleanly.
+    w.set_time(SETTLEMENT_DEADLINE);
+    w.vault().release_to_operator(&cert_id);
+    w.staking().release_allocation(&cert_id);
+    w.staking().release(&w.auditor);
+
+    assert_eq!(w.balance(&w.operator), FUNDING);
+    assert_eq!(w.balance(&w.auditor), FUNDING);
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), 0);
+    assert_eq!(w.balance(&w.vault), 0);
+    assert_eq!(w.balance(&w.staking), 0);
+}
+
 // ---------------------------------------------------------------------------
 // 5. Authorization
 // ---------------------------------------------------------------------------
@@ -586,20 +1120,27 @@ fn privileged_entry_points_reject_unauthorized_callers() {
     // Drop every mocked signature: from here on, require_auth actually bites.
     w.env.set_auths(&[]);
 
-    // Only the ChallengeManager may slash an auditor.
+    // Only the ChallengeManager may slash a certificate's allocation.
     assert!(w
         .staking()
-        .try_slash(&w.auditor, &w.challenger, &AUDITOR_STAKE)
+        .try_slash_allocation(&cert_id, &w.challenger, &ALLOCATION)
         .is_err());
-    // Only the ChallengeManager may pay a victim out of the reserve.
+    // Only the ChallengeManager may retire an allocation early.
+    assert!(w.staking().try_retire_allocation(&cert_id).is_err());
+    // Only the ChallengeManager may pay out of a certificate's reserve — and
+    // there is no entry point at all that pays the auditor's stake to a
+    // caller-named address.
     assert!(w
         .vault()
-        .try_release_to_victim(&cert_id, &w.challenger, &RESERVE_CLAIM)
+        .try_pay_from_reserve(&cert_id, &w.challenger, &RESERVE_CLAIM)
         .is_err());
     // Only the ChallengeManager may kill a certificate.
     assert!(w.registry().try_invalidate(&cert_id).is_err());
-    // Only the Registry may bond an auditor's stake.
-    assert!(w.staking().try_lock(&w.auditor, &99_999u64).is_err());
+    // Only the Registry may allocate an auditor's stake.
+    assert!(w
+        .staking()
+        .try_allocate(&w.auditor, &cert_id, &ALLOCATION, &99_999u64)
+        .is_err());
     // Only the operator may deposit into (or reclaim from) the vault.
     assert!(w.vault().try_deposit(&cert_id, &1_0000000i128).is_err());
     assert!(w.vault().try_release_to_operator(&cert_id).is_err());
@@ -617,6 +1158,8 @@ fn privileged_entry_points_reject_unauthorized_callers() {
 
     // Nothing moved.
     assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.balance(&w.treasury), 0);
     assert_eq!(w.vault().get_balance(&cert_id), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.victim), 0);
     assert_eq!(
@@ -641,12 +1184,15 @@ fn attest_rejects_a_signature_from_the_wrong_address() {
         invoke: &MockAuthInvoke {
             contract: &w.registry,
             fn_name: "attest",
-            args: (w.auditor.clone(), cert_id).into_val(&w.env),
+            args: (w.auditor.clone(), cert_id, ALLOCATION).into_val(&w.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(w.registry().try_attest(&w.auditor, &cert_id).is_err());
+    assert!(w
+        .registry()
+        .try_attest(&w.auditor, &cert_id, &ALLOCATION)
+        .is_err());
     assert_eq!(
         w.registry().get_certificate(&cert_id).status,
         CertStatus::Pending
@@ -663,7 +1209,10 @@ fn under_staked_auditor_cannot_attest() {
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
 
     assert!(!w.staking().is_registered(&w.auditor));
-    assert!(w.registry().try_attest(&w.auditor, &cert_id).is_err());
+    assert!(w
+        .registry()
+        .try_attest(&w.auditor, &cert_id, &ALLOCATION)
+        .is_err());
     assert!(!w.registry().verify(&w.agent).valid);
 }
 
@@ -818,15 +1367,16 @@ fn unrelated_deposit_does_not_rescue_an_unfunded_certificate() {
     let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
     w.resolve(challenge_id);
 
-    // The fraud proof UPHOLDS, and the auditor is slashed to zero.
+    // The fraud proof UPHOLDS, and this certificate's whole allocation is
+    // slashed — to the treasury, which is the only place it may go.
     assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
     assert_eq!(w.staking().get_stake(&w.auditor), 0);
     assert_eq!(w.balance(&w.staking), 0);
-    assert_eq!(
-        w.balance(&w.victim),
-        victim_before + AUDITOR_STAKE - AUDITOR_STAKE / 5
-    );
-    assert_eq!(w.balance(&w.challenger), FUNDING + AUDITOR_STAKE / 5);
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    // The named victim received nothing: this operator posted no reserve to
+    // compensate anyone with, and the auditor's money is not theirs to receive.
+    assert_eq!(w.balance(&w.victim), victim_before);
+    assert_eq!(w.balance(&w.challenger), FUNDING);
     assert_eq!(
         w.registry().get_certificate(&cert_id).status,
         CertStatus::Invalid
@@ -873,7 +1423,8 @@ fn funding_one_certificate_does_not_back_another_in_the_same_vault() {
     // Each certificate's reserve unlocks at its own certificate's expiry.
     assert!(w.vault().is_locked(&cert_a));
     assert!(w.vault().is_locked(&cert_b));
-    assert_eq!(w.vault().get_unlock_at(&cert_a), EXPIRES_AT);
+    // ...and that unlock is the settlement deadline, not the expiry.
+    assert_eq!(w.vault().get_unlock_at(&cert_a), SETTLEMENT_DEADLINE);
 }
 
 /// Settlement isolation: proving fraud against certificate A drains A's reserve
@@ -900,11 +1451,13 @@ fn fraud_settlement_against_one_certificate_leaves_the_others_reserve_untouched(
     w.resolve(challenge_id);
     assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
 
-    // A's reserve is drained to the victim, alongside the slashed stake.
+    // A's reserve pays the victim ($400, all of it) and the residual $200 of
+    // harm is slashed from A's allocation to the treasury.
     assert_eq!(w.reserve_of(cert_a), 0);
+    assert_eq!(w.balance(&w.victim), a_funding);
     assert_eq!(
-        w.balance(&w.victim),
-        AUDITOR_STAKE - AUDITOR_STAKE / 5 + a_funding
+        w.balance(&w.treasury),
+        RESERVE_CLAIM - a_funding - a_funding
     );
 
     // B's reserve did not move by a single stroop, and neither did operator2.
@@ -925,13 +1478,14 @@ fn fraud_settlement_against_one_certificate_leaves_the_others_reserve_untouched(
         + w.balance(&w.auditor)
         + w.balance(&w.challenger)
         + w.balance(&w.victim)
+        + w.balance(&w.treasury)
         + w.balance(&w.vault)
         + w.balance(&w.staking)
         + w.balance(&w.challenge_manager);
     assert_eq!(total, FUNDING * 4);
 
-    // B's operator can still reclaim it in full once B expires.
-    w.set_time(EXPIRES_AT + 1);
+    // B's operator can still reclaim it in full once B's challenge window shuts.
+    w.set_time(SETTLEMENT_DEADLINE);
     w.vault().release_to_operator(&cert_b);
     assert_eq!(w.balance(&w.operator2), FUNDING);
     assert_eq!(w.reserve_of(cert_b), 0);
@@ -993,7 +1547,7 @@ fn an_arbitrary_operator_can_fund_only_their_own_certificate() {
 
     // Nor may a stranger reclaim another operator's reserve after expiry.
     w.mock_all_auths();
-    w.set_time(EXPIRES_AT + 1);
+    w.set_time(SETTLEMENT_DEADLINE);
     w.env.mock_auths(&[MockAuth {
         address: &w.operator,
         invoke: &MockAuthInvoke {
@@ -1011,31 +1565,173 @@ fn an_arbitrary_operator_can_fund_only_their_own_certificate() {
 // Flows that cannot be driven offline
 // ---------------------------------------------------------------------------
 
-/// The arbiter path is fully drivable offline (see below), but the *subjective*
-/// proof types it exists for — BoundExceeded, FakeSignature — have no on-chain
-/// evidence in these contracts at all: `resolve` panics with `needs_arbiter`
-/// and `resolve_by_arbiter` takes the verdict as a boolean parameter. There is
-/// nothing left to test beyond the plumbing, which this covers.
+/// The arbiter path drives the **same waterfall** as the trustless one. The
+/// only difference is where `harm` comes from: `resolve` computes it from chain
+/// state, the arbiter states it.
+///
+/// That is not a new trust assumption. For these proof types the arbiter
+/// already decides whether fraud occurred at all, so letting them also name the
+/// amount grants them nothing they did not have — and their number travels the
+/// identical rails: capped by `reserve + allocation`, victim paid only from the
+/// operator's own reserve, slash only to the treasury.
 #[test]
 fn arbiter_resolves_subjective_proof_types_both_ways() {
-    // Fraud found by the arbiter → the same settlement as the trustless path.
-    let (w, cert_id) = staked_and_attested();
+    // Fraud found by the arbiter, with a stated harm → a real settlement.
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    let deposited = 100_0000000i128; // $100 of reserve, honestly declared or not
+    w.deposit_reserve(cert_id, deposited);
+    w.attest(cert_id);
+
     let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
     // The trustless resolver refuses: this proof type is not on-chain provable.
     assert!(w.cm().try_resolve(&id).is_err());
-    w.cm().resolve_by_arbiter(&id, &true);
+
+    // The arbiter rules that the agent blew through its bound, at a cost of $300.
+    let stated_harm = 300_0000000i128;
+    w.cm().resolve_by_arbiter(&id, &true, &stated_harm);
     assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
-    assert_eq!(w.staking().get_stake(&w.auditor), 0);
-    assert_eq!(w.balance(&w.victim), AUDITOR_STAKE - AUDITOR_STAKE / 5);
+
+    //   victim = min(300, 100) = $100  <- the operator's own reserve, drained
+    //   fee    = min(30, 0)    = $0    <- nothing left in that reserve
+    //   slash  = 300 - 100     = $200  <- the treasury, capped by the $600 alloc
+    let slash = stated_harm - deposited;
+    assert_eq!(slash, 200_0000000);
+    assert_eq!(w.balance(&w.victim), deposited);
+    assert_eq!(w.balance(&w.treasury), slash);
+    assert_eq!(w.reserve_of(cert_id), 0);
+
+    // The auditor is slashed by exactly that, and the remainder comes back as
+    // free stake rather than being stranded on the dead certificate.
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE - slash);
+    assert_eq!(w.free_stake(), ALLOCATION - slash);
+    assert_eq!(w.free_stake(), 400_0000000);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE - slash);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
 
     // No fraud found → the challenger forfeits the bond, nothing else moves.
     let (w2, cert_id2) = staked_and_attested();
     let id2 = w2.challenge(cert_id2, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
-    w2.cm().resolve_by_arbiter(&id2, &false);
+    w2.cm().resolve_by_arbiter(&id2, &false, &0i128);
     assert!(w2.cm().get_challenge(&id2).verdict == CmVerdict::ChallengeFails);
     assert_eq!(w2.staking().get_stake(&w2.auditor), AUDITOR_STAKE);
     assert_eq!(w2.balance(&w2.victim), 0);
+    assert_eq!(w2.balance(&w2.treasury), 0);
     assert_eq!(w2.balance(&w2.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+
+    // A rejected challenge carrying a non-zero harm is a contradiction, and is
+    // refused rather than silently ignored.
+    let (w3, cert_id3) = staked_and_attested();
+    let id3 = w3.challenge(cert_id3, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    assert!(w3
+        .cm()
+        .try_resolve_by_arbiter(&id3, &false, &100_0000000i128)
+        .is_err());
+    // ...as is a negative one.
+    assert!(w3
+        .cm()
+        .try_resolve_by_arbiter(&id3, &true, &-1i128)
+        .is_err());
+    assert!(w3.cm().get_challenge(&id3).verdict == CmVerdict::Pending);
+    assert_eq!(w3.balance(&w3.treasury), 0);
+}
+
+/// **An arbiter cannot conjure money by overstating harm.**
+///
+/// The arbiter names a harm far larger than everything backing the certificate.
+/// `payable = min(harm, reserve + allocation)` still binds: the victim gets the
+/// whole reserve, the treasury gets the whole allocation, and the $98,900 of
+/// "harm" beyond that is simply not paid — not borrowed from another
+/// certificate, not taken from the auditor's unallocated stake, not minted.
+#[test]
+fn arbiter_stated_harm_beyond_the_collateral_is_still_capped_by_payable() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+
+    // A rich auditor, so there is plenty of unallocated stake to wrongly reach.
+    let big_stake = 9_000_0000000i128;
+    w.staking().stake(&w.auditor, &big_stake);
+
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    let deposited = 400_0000000i128;
+    w.deposit_reserve(cert_id, deposited);
+    w.attest_with(cert_id, ALLOCATION); // $600 behind this certificate
+    let unrelated = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(unrelated, RESERVE_CLAIM);
+
+    let outrageous = 100_000_0000000i128; // $100,000
+    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&id, &true, &outrageous);
+
+    // payable = reserve + allocation = $400 + $600 = $1,000, and no more.
+    assert_eq!(w.balance(&w.victim), deposited); // the whole reserve
+    assert_eq!(w.balance(&w.treasury), ALLOCATION); // the whole allocation
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.allocation_of(cert_id), 0);
+
+    // The excess came from nowhere, because there is nowhere for it to come
+    // from: the auditor's unallocated stake is untouched...
+    assert_eq!(w.staking().get_stake(&w.auditor), big_stake - ALLOCATION);
+    assert_eq!(w.free_stake(), big_stake - ALLOCATION);
+    // ...and so is an unrelated certificate's reserve in the same vault.
+    assert_eq!(w.reserve_of(unrelated), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+
+    // Conservation holds with a $100,000 claim against $1,000 of collateral.
+    let total = w.balance(&w.operator)
+        + w.balance(&w.operator2)
+        + w.balance(&w.auditor)
+        + w.balance(&w.challenger)
+        + w.balance(&w.victim)
+        + w.balance(&w.treasury)
+        + w.balance(&w.vault)
+        + w.balance(&w.staking)
+        + w.balance(&w.challenge_manager);
+    assert_eq!(total, FUNDING * 4);
+}
+
+/// **The arbiter cannot aim the slash.** Whatever verdict and quantity they
+/// pass, slashed stake reaches the treasury and only the treasury — the
+/// destination is not a parameter of any call the arbiter can make.
+///
+/// This is what keeps the self-dealing property intact on the arbiter path: an
+/// arbiter who is bribed to overstate harm still cannot route the auditor's
+/// money to whoever bribed them.
+#[test]
+fn arbiter_cannot_direct_the_slash_to_a_victim_or_a_challenger() {
+    let (w, cert_id) = staked_and_attested(); // no reserve at all
+    assert_eq!(w.reserve_of(cert_id), 0);
+
+    // The challenger names themselves as the victim and the arbiter states a
+    // harm far above the allocation — the most favourable possible setup for
+    // the two parties who can actually influence the outcome.
+    let id = w.cm().challenge(
+        &w.challenger,
+        &cert_id,
+        &ProofType::BoundExceeded,
+        &w.challenger,
+        &MIN_CHALLENGE_STAKE,
+    );
+    w.cm().resolve_by_arbiter(&id, &true, &50_000_0000000i128);
+
+    // Every slashed stroop is in the treasury.
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    // The challenger-cum-victim is exactly where they started: bond returned,
+    // and no part of the auditor's stake. There was no reserve to compensate
+    // them from, and the stake is not theirs to receive.
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.arbiter), 0);
+    assert_eq!(
+        w.staking().get_stake(&w.auditor),
+        AUDITOR_STAKE - ALLOCATION
+    );
 }
 
 /// Only the named arbiter may rule on a subjective challenge.
@@ -1045,7 +1741,7 @@ fn arbiter_resolution_rejects_non_arbiter() {
     let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
 
     w.env.set_auths(&[]);
-    assert!(w.cm().try_resolve_by_arbiter(&id, &true).is_err());
+    assert!(w.cm().try_resolve_by_arbiter(&id, &true, &0i128).is_err());
     assert!(w.cm().get_challenge(&id).verdict == CmVerdict::Pending);
     // Sanity: the arbiter is who we wired in.
     assert!(w.arbiter != w.challenger);
@@ -1061,7 +1757,7 @@ fn double_resolve_is_rejected_after_a_real_settlement() {
     let victim_after_first = w.balance(&w.victim);
 
     assert!(w.cm().try_resolve(&id).is_err());
-    assert!(w.cm().try_resolve_by_arbiter(&id, &true).is_err());
+    assert!(w.cm().try_resolve_by_arbiter(&id, &true, &0i128).is_err());
     assert_eq!(w.balance(&w.victim), victim_after_first);
 }
 

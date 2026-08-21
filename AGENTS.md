@@ -22,25 +22,25 @@ run `pnpm build` yourself before pushing anything that touches the app shell.
 
 Run everything from the repo root.
 
-| Command                        | Meaning                                                                   | Network | Secrets |
-| ------------------------------ | ------------------------------------------------------------------------- | ------- | ------- |
-| `pnpm install`                 | get ready — also installs git hooks                                       | once    | no      |
-| `pnpm dev`                     | run the app locally                                                       | no      | no      |
-| `pnpm build`                   | production build (SDK, then the app)                                      | no      | no      |
-| `pnpm build:sdk`               | just `@bound/sdk` (tsup)                                                  | no      | no      |
-| `pnpm verify`                  | **everything CI runs**                                                    | no      | no      |
-| `pnpm typecheck`               | types only                                                                | no      | no      |
-| `pnpm lint` / `lint:fix`       | eslint                                                                    | no      | no      |
-| `pnpm format` / `format:check` | prettier                                                                  | no      | no      |
-| `pnpm test` / `test:watch`     | unit tests                                                                | no      | no      |
-| `pnpm test:contracts`          | `cargo test` — 81 tests, 6 contracts + the offline cross-contract harness | no      | no      |
-| `pnpm lint:contracts`          | `cargo clippy -D warnings`                                                | no      | no      |
-| `pnpm format:contracts`        | `cargo fmt --check`                                                       | no      | no      |
-| `pnpm build:contracts`         | 7 wasm artifacts                                                          | no      | no      |
-| `pnpm test:e2e`                | 5 live smoke suites                                                       | **yes** | **yes** |
-| `pnpm demo`                    | 8-step end-to-end demo                                                    | **yes** | **yes** |
-| `pnpm deploy`                  | deploy contracts                                                          | **yes** | **yes** |
-| `pnpm setup`                   | create + fund testnet accounts                                            | **yes** | **yes** |
+| Command                        | Meaning                                                                    | Network | Secrets |
+| ------------------------------ | -------------------------------------------------------------------------- | ------- | ------- |
+| `pnpm install`                 | get ready — also installs git hooks                                        | once    | no      |
+| `pnpm dev`                     | run the app locally                                                        | no      | no      |
+| `pnpm build`                   | production build (SDK, then the app)                                       | no      | no      |
+| `pnpm build:sdk`               | just `@bound/sdk` (tsup)                                                   | no      | no      |
+| `pnpm verify`                  | **everything CI runs**                                                     | no      | no      |
+| `pnpm typecheck`               | types only                                                                 | no      | no      |
+| `pnpm lint` / `lint:fix`       | eslint                                                                     | no      | no      |
+| `pnpm format` / `format:check` | prettier                                                                   | no      | no      |
+| `pnpm test` / `test:watch`     | unit tests                                                                 | no      | no      |
+| `pnpm test:contracts`          | `cargo test` — 102 tests, 7 contracts + the offline cross-contract harness | no      | no      |
+| `pnpm lint:contracts`          | `cargo clippy -D warnings`                                                 | no      | no      |
+| `pnpm format:contracts`        | `cargo fmt --check`                                                        | no      | no      |
+| `pnpm build:contracts`         | 7 wasm artifacts                                                           | no      | no      |
+| `pnpm test:e2e`                | 5 live smoke suites                                                        | **yes** | **yes** |
+| `pnpm demo`                    | 8-step end-to-end demo                                                     | **yes** | **yes** |
+| `pnpm deploy`                  | deploy contracts                                                           | **yes** | **yes** |
+| `pnpm setup`                   | create + fund testnet accounts                                             | **yes** | **yes** |
 
 `pnpm build:contracts` must target `wasm32-unknown-unknown`. Do not switch it to
 `stellar contract build`: the 27.x CLI defaults to `wasm32v1-none`, which fails
