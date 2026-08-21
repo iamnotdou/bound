@@ -276,11 +276,8 @@ All contract calls happen server-side in Next.js API routes. Secret keys never t
 
 Each `lib.rs` has `#[cfg(test)]` module using `soroban_sdk::testutils`.
 
-`ChallengeManager` unit tests cover what can be tested without deployed
-dependencies (bond minimum, double-resolve guard). The full cross-contract
-slash + compensate path uses live `invoke_contract` calls into Registry /
-AuditorStaking / ReserveVault, so it is exercised in Layer 2 against real
-deployed contracts — not in unit tests.
+`ChallengeManager` unit tests cover what one contract can be tested for in
+isolation (bond minimum, double-resolve guard).
 
 ```rust
 #[test] #[should_panic(expected = "stake_below_minimum")]
@@ -291,6 +288,33 @@ fn test_double_resolve_panics() { ... }
 ```
 
 Run: `cargo test -p challenge-manager`
+
+### Layer 1b: Cross-Contract Integration Tests (Rust, offline)
+
+The full cross-contract slash + compensate path **is** unit testable. It was
+previously claimed here that it could only be exercised against real deployed
+contracts; that is not so. `contracts/integration-tests` registers all five
+contracts plus a Stellar Asset Contract in a single `soroban_sdk::Env` and
+drives the real `invoke_contract` flows with no network and no credentials.
+
+`BoundWorld` is the harness: it wires the contracts to each other, funds
+operator / agent / auditor / challenger / victim with test USDC, and exposes
+`stake_auditor`, `publish_cert`, `attest`, `deposit_reserve`, `deposit_fee`,
+`challenge`, `resolve` and `set_time`.
+
+Covered: the happy path; the `InsufficientReserve` proof in **both** its fraud
+and no-fraud branches, asserting the exact balance movements (stake slashed
+80/20 victim/challenger, reserve drained to the victim, bond returned or
+forfeited); clean expiry unwinding stake and reserve; expiry making `verify`
+report invalid; and authorization rejection on every privileged entry point.
+
+Four known defects are pinned by tests named `defect_*`, which assert the
+**current** behaviour so that a v2 redeploy has to change them deliberately:
+`publish` overwriting `AgentCert(agent)` without the agent's consent,
+`initialize()` requiring no authorization, `FeeEscrow` never being slashed and
+paying out only once ever, and the single shared `ReserveVault` balance.
+
+Run: `cargo test -p bound-integration-tests`
 
 ### Layer 2: SDK Integration Tests (TypeScript, real testnet)
 
