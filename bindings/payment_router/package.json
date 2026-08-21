@@ -1,6 +1,6 @@
 {
   "version": "0.0.0",
-  "name": "auditor_staking",
+  "name": "payment_router",
   "type": "module",
   "exports": "./dist/index.js",
   "typings": "dist/index.d.ts",

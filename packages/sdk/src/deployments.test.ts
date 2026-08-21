@@ -11,7 +11,7 @@ describe("getDeployment()", () => {
     expect(getDeployment("testnet")).toBe(getDeployment());
   });
 
-  it("exposes six contract addresses as non-empty C... strings", () => {
+  it("exposes every contract address as non-empty C... strings", () => {
     const { contracts } = getDeployment();
     for (const [name, id] of Object.entries(contracts)) {
       expect(id, name).toMatch(/^C[A-Z0-9]{55}$/);
@@ -21,6 +21,8 @@ describe("getDeployment()", () => {
         "auditorStaking",
         "challengeManager",
         "feeEscrow",
+        "paymentRouter",
+        "premiumVault",
         "registry",
         "reserveVault",
         "usdc",

@@ -22,6 +22,10 @@ export const maxDuration = 60;
 const BOUND = usdc(50_000);
 const RESERVE_CLAIMED = usdc(10_000);
 const AUDITOR_STAKE = usdc(1_500); // capital the auditor locks if not yet registered
+// v2: the slice of that stake bonded to THIS certificate, and the ceiling on
+// what a slash against it can take. Per-certificate allocation is what stops one
+// bad certificate destroying an auditor's whole book.
+const AUDITOR_ALLOCATION = usdc(1_500);
 const EXPIRY_DAYS = 30;
 
 function expiresAt(): bigint {
@@ -90,7 +94,9 @@ export async function POST(req: Request) {
     });
 
     // 2 — auditor attests with their own staked capital → VERIFIED
-    await bound.attestCertificate(accounts.auditor, certId);
+    // v2: the auditor bonds an explicit slice of their free stake to this
+    // certificate. It is the most a slash can ever take from them.
+    await bound.attestCertificate(accounts.auditor, certId, AUDITOR_ALLOCATION);
 
     const cert = await bound.verifyCertificate(agent);
     return Response.json({ certId: Number(certId), cert: toCertView(agent, cert, Number(certId)) });

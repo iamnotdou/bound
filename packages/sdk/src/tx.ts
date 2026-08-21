@@ -53,6 +53,8 @@ export interface BuildParams {
   reserveUsd?: number;
   expiryDays?: number;
   bondUsd?: number;
+  /** Slice of the auditor's free stake bonded to this certificate. */
+  allocationUsd?: number;
   proofType?: string;
 }
 
@@ -98,7 +100,11 @@ export async function buildActionXdr(
     case "attest": {
       if (p.certId == null) throw new Error("certId required");
       const c = new RegistryClient(buildOpts(contracts.registry, address));
-      const at = await c.attest({ auditor: address, cert_id: BigInt(p.certId) });
+      const at = await c.attest({
+        auditor: address,
+        cert_id: BigInt(p.certId),
+        allocation: usdc(p.allocationUsd ?? 500),
+      });
       return at.toXDR();
     }
     case "publish": {

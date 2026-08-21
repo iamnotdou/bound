@@ -28,7 +28,9 @@ export async function GET() {
         bound.usdcBalance(auditor),
         bound.usdcBalance(counterparty),
         bound.usdcBalance(challenger),
-        bound.reserveBalance(),
+        bound
+          .certIdForAgent(agent)
+          .then((id) => (id === null ? 0n : bound.reserveBalance(BigInt(id)))),
         bound.auditorStake(auditor),
         bound.verifyCertificate(agent),
         bound.certIdForAgent(agent),

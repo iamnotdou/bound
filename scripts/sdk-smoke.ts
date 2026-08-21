@@ -12,7 +12,12 @@ async function main() {
 
   const cp = accounts.counterparty.publicKey();
   console.log(`usdcBalance(counterparty): ${formatUsdc(await bound.usdcBalance(cp))}`);
-  console.log(`reserveBalance(): ${formatUsdc(await bound.reserveBalance())}`);
+  const certId = await bound.certIdForAgent(accounts.agent.publicKey());
+  console.log(
+    `reserveBalance(cert ${certId}): ${
+      certId === null ? "no certificate" : formatUsdc(await bound.reserveBalance(BigInt(certId)))
+    }`,
+  );
   console.log("\n✓ SDK reads live testnet through the generated bindings.");
 }
 

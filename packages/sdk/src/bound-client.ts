@@ -90,8 +90,10 @@ export class BoundClient {
     return (await this.token().balance({ id: address })).result;
   }
 
-  async reserveBalance(): Promise<bigint> {
-    return (await this.reserve().get_balance()).result;
+  /** Reserve held for one certificate. v2 keys reserves by certificate id — a
+   * pooled balance was defect L5, and the single trustless proof read it. */
+  async reserveBalance(certId: bigint): Promise<bigint> {
+    return (await this.reserve().get_balance({ cert_id: certId })).result;
   }
 
   async auditorStake(auditor: string): Promise<bigint> {
@@ -116,8 +118,8 @@ export class BoundClient {
   }
 
   /** Operator funds the reserve. */
-  async depositReserve(operator: Keypair, amount: bigint) {
-    return send(() => this.reserve(operator).deposit({ amount }));
+  async depositReserve(operator: Keypair, certId: bigint, amount: bigint) {
+    return send(() => this.reserve(operator).deposit({ cert_id: certId, amount }));
   }
 
   /** Operator escrows the audit fee, naming the auditor who can later collect it. */
@@ -147,9 +149,15 @@ export class BoundClient {
   }
 
   /** Registered auditor attests → certificate becomes VERIFIED. */
-  async attestCertificate(auditor: Keypair, certId: bigint) {
+  /** The auditor prices their own risk: `allocation` is the slice of their free
+   * stake bonded to this certificate, and the most a slash can ever take. */
+  async attestCertificate(auditor: Keypair, certId: bigint, allocation: bigint) {
     return send(() =>
-      this.registry(auditor).attest({ auditor: auditor.publicKey(), cert_id: certId }),
+      this.registry(auditor).attest({
+        auditor: auditor.publicKey(),
+        cert_id: certId,
+        allocation,
+      }),
     );
   }
 
@@ -189,18 +197,21 @@ export class BoundClient {
         stake: params.bond,
       }),
     );
-    await send(() => cm.resolve({ challenge_id: challengeId }));
+    // v2 does not settle on filing. The challenge opens (or joins) a 72-hour
+    // claim window; settlement happens once, over every admitted claim, when
+    // `close_window` is called after it lapses.
     return challengeId;
   }
 
   /**
-   * Resolve a challenge that was already opened (e.g. by a connected wallet that
-   * signed `challenge` itself). `resolve` is permissionless — any funded signer
-   * can trigger the on-chain proof; the finder's fee still routes to the
-   * challenger recorded on the challenge. Used by the wallet challenger flow.
+   * Close a certificate's claim window once it has lapsed, settling every
+   * admitted claim at once. Permissionless — any funded signer may call it, and
+   * nobody is paid for doing so; the incentive is that no claimant is paid until
+   * someone does. Replaces v1's per-challenge `resolve`, which settled the first
+   * claim and foreclosed every honest one behind it.
    */
-  async resolveChallenge(signer: Keypair, challengeId: bigint) {
-    return send(() => this.challenges(signer).resolve({ challenge_id: challengeId }));
+  async closeClaimWindow(signer: Keypair, certId: bigint) {
+    return send(() => this.challenges(signer).close_window({ cert_id: certId }));
   }
 
   // ---- cheat simulations (read-only) ----------------------------------------
@@ -210,8 +221,8 @@ export class BoundClient {
   // /control adversarial lane to show "the cage holds" on screen.
 
   /** Operator tries to reclaim the reserve before expiry → expect `reserve_still_locked`. */
-  async simulateReleaseReserve(operator: Keypair): Promise<void> {
-    const tx = await this.reserve(operator).release_to_operator();
+  async simulateReleaseReserve(operator: Keypair, certId: bigint): Promise<void> {
+    const tx = await this.reserve(operator).release_to_operator({ cert_id: certId });
     // With a signer configured the client won't reject on a failed simulation;
     // reading `.result` forces the verdict so a trapped lock surfaces as a throw.
     void (tx as { result: unknown }).result;

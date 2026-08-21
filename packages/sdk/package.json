@@ -1,6 +1,6 @@
 {
   "name": "@bound/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": false,
   "description": "Typed TypeScript client for the Bound Protocol contracts on Stellar.",
   "license": "MIT",
@@ -59,7 +59,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^16.0.1",
     "buffer": "^6.0.3"
   },
   "devDependencies": {
