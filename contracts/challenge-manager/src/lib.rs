@@ -578,7 +578,109 @@ impl ChallengeManager {
         if env.ledger().timestamp() < w.closes_at {
             panic!("claim_window_open");
         }
+        Self::settle_window(&env, cert_id, &w);
+    }
 
+    /// DESIGN-V2 §10. Close a window early, on the arbiter's rejection of the
+    /// only thing keeping it open.
+    ///
+    /// ## The abuse this closes
+    ///
+    /// `FakeSignature` has **no predicate**. A claim carrying it cannot be
+    /// evaluated at filing the way a false `InsufficientReserve` claim is, so
+    /// it cannot be rejected on the spot — it opens a window and freezes the
+    /// certificate for 72 hours: no attestation, no reserve withdrawal, no
+    /// allocation release. Anyone could buy that freeze against any
+    /// certificate for the price of the minimum bond, and an arbiter ruling
+    /// the claim false did nothing to shorten it. The griefer's cost was one
+    /// bond; the target's cost was three days of frozen collateral.
+    ///
+    /// The fix is to make the arbiter's rejection *end* the window rather than
+    /// merely annotate it. The freeze lifts, the certificate survives, and the
+    /// window settles through **exactly the same code path** as a natural
+    /// close (`settle_window`) — so the bond is forfeited precisely as it
+    /// would have been at `closes_at`. **Getting rejected faster is not
+    /// cheaper.** That is the property that stops this from becoming a way to
+    /// buy a discount on griefing.
+    ///
+    /// ## The rail that matters: a live claim always runs the full window
+    ///
+    /// This may only fire when **no other live claim remains**. A live claim
+    /// is any other claim in the window that could still be admitted at close:
+    ///
+    ///   * one the arbiter has **not yet ruled on** (`!adjudicated`) — the
+    ///     arbiter may still uphold it, so it is live by definition; and
+    ///   * one that is **proven** — whether an arbiter stated it or a
+    ///     predicate computed it.
+    ///
+    /// A proven claim counts as live even if the operator has since cured the
+    /// underlying condition. The cure check belongs at close and only ever at
+    /// close: reading it here would let an operator cure mid-window, have a
+    /// throwaway claim rejected, and cut the window out from under a genuine
+    /// victim who had not yet been paid. The conservative reading is the
+    /// correct one — the only claims that do not hold a window open are the
+    /// ones already known to be **wrong at filing**, which are precisely the
+    /// claims that would be rejected and paid nothing anyway.
+    ///
+    /// So the arithmetic is: this call closes the window only when settling it
+    /// right now is *guaranteed* to admit nothing, which makes the early close
+    /// indistinguishable in outcome from the close that was coming anyway. A
+    /// cheap arbiter-rejected claim can never cut short a window a genuine
+    /// claimant is standing in.
+    ///
+    /// ## Authority
+    ///
+    /// Arbiter-only, and only against a claim the arbiter actually ruled on
+    /// and ruled **false** (`arbitrated && adjudicated && !proven`). A claim a
+    /// *predicate* found false at filing is not a key to this door: nobody
+    /// exercised judgement on it, and it was already free to file.
+    ///
+    /// Kept as its own entry point rather than folded into
+    /// `resolve_by_arbiter` so that adjudicating and ending a window stay two
+    /// deliberate acts — an arbiter can rule on several claims in a window and
+    /// only then decide the window is finished.
+    pub fn close_window_early(env: Env, challenge_id: u64) {
+        let arbiter: Address = env.storage().instance().get(&DataKey::Arbiter).unwrap();
+        arbiter.require_auth();
+
+        let ch = Self::get(&env, challenge_id);
+        if !(ch.arbitrated && ch.adjudicated) {
+            panic!("not_arbitrated");
+        }
+        if ch.proven {
+            panic!("claim_not_rejected");
+        }
+
+        let w: ClaimWindow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Window(ch.cert_id))
+            .expect("no_open_window");
+        if env.ledger().timestamp() >= w.closes_at {
+            // Already closable on its own schedule; `close_window` is the call.
+            panic!("claim_window_closed");
+        }
+
+        for other_id in w.claims.iter() {
+            if other_id == challenge_id {
+                continue;
+            }
+            let other = Self::get(&env, other_id);
+            if !other.adjudicated || other.proven {
+                panic!("live_claim_remains");
+            }
+        }
+
+        Self::settle_window(&env, ch.cert_id, &w);
+    }
+
+    /// Everything a close does once it has been decided that it may happen.
+    /// Shared by `close_window` and `close_window_early` so the two cannot
+    /// drift: an early close forfeits and returns exactly the same bonds, in
+    /// exactly the same way, as the close that was coming anyway.
+    fn settle_window(env: &Env, cert_id: u64, w: &ClaimWindow) {
+        let env = env.clone();
+        let w = w.clone();
         // Pass 1 — classify, and settle everything that is not a payout.
         // Rejections run before the admitted set is priced so that the hygiene
         // bounty sees a pool that does not depend on filing order.
