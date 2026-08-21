@@ -32,7 +32,12 @@ export async function POST(req: Request) {
 
   try {
     if (action === "withdraw-reserve") {
-      await bound.simulateReleaseReserve(accounts.operator);
+      // v2 locks reserves per certificate, so the defection has to name one.
+      const certId = await bound.certIdForAgent(accounts.agent.publicKey());
+      if (certId === null) {
+        return Response.json({ error: "no certificate to withdraw against" }, { status: 409 });
+      }
+      await bound.simulateReleaseReserve(accounts.operator, BigInt(certId));
     } else {
       await bound.simulateReleaseStake(accounts.auditor);
     }

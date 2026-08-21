@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { Address } from '@stellar/stellar-sdk';
+import { Address } from "@stellar/stellar-sdk";
 import {
   AssembledTransaction,
   Client as ContractClient,
@@ -7,7 +7,7 @@ import {
   MethodOptions,
   Result,
   Spec as ContractSpec,
-} from '@stellar/stellar-sdk/contract';
+} from "@stellar/stellar-sdk/contract";
 import type {
   u32,
   i32,
@@ -17,16 +17,15 @@ import type {
   i128,
   u256,
   i256,
-  AssembledTransactionOptions,
   Option,
-  Typepoint,
+  Timepoint,
   Duration,
-} from '@stellar/stellar-sdk/contract';
-export * from '@stellar/stellar-sdk'
-export * as contract from '@stellar/stellar-sdk/contract'
-export * as rpc from '@stellar/stellar-sdk/rpc'
+} from "@stellar/stellar-sdk/contract";
+export * from "@stellar/stellar-sdk";
+export * as contract from "@stellar/stellar-sdk/contract";
+export * as rpc from "@stellar/stellar-sdk/rpc";
 
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   //@ts-ignore Buffer exists
   window.Buffer = window.Buffer || Buffer;
 }
@@ -35,7 +34,7 @@ if (typeof window !== 'undefined') {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CD4EZ5FCFC7D65OHBB5HHF6ASM4OCRGNAO6XQZQ5LKH4QB327SF5EYOF",
+    contractId: "CAM3D5PTXQ4MEY45SGNUZZGNN2D6JXHSCFR3IM6S46KCPWERWJGDFXNI",
   }
 } as const
 
@@ -45,32 +44,32 @@ export interface Client {
   /**
    * Construct and simulate a deposit transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  deposit: ({operator, auditor, amount}: {operator: string, auditor: string, amount: i128}, options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+  deposit: ({operator, auditor, amount}: {operator: string, auditor: string, amount: i128}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
    * Construct and simulate a get_amount transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  get_amount: (options?: AssembledTransactionOptions<i128>) => Promise<AssembledTransaction<i128>>
+  get_amount: (options?: MethodOptions) => Promise<AssembledTransaction<i128>>
 
   /**
    * Construct and simulate a initialize transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  initialize: ({challenge_manager, token}: {challenge_manager: string, token: string}, options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+  initialize: ({challenge_manager, token}: {challenge_manager: string, token: string}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
    * Construct and simulate a is_released transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  is_released: (options?: AssembledTransactionOptions<boolean>) => Promise<AssembledTransaction<boolean>>
+  is_released: (options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
 
   /**
    * Construct and simulate a release_to_auditor transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  release_to_auditor: (options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+  release_to_auditor: (options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
    * Construct and simulate a slash_to_challenger transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  slash_to_challenger: ({challenger}: {challenger: string}, options?: AssembledTransactionOptions<null>) => Promise<AssembledTransaction<null>>
+  slash_to_challenger: ({challenger}: {challenger: string}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
 }
 export class Client extends ContractClient {

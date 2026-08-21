@@ -41,11 +41,22 @@ export async function POST(req: Request) {
     switch (action) {
       case "deposit-reserve": {
         const dollars = amountUsd ?? DEFAULT_RESERVE_DEPOSIT;
-        await bound.depositReserve(accounts.operator, usdc(dollars));
+        // v2 keys reserves by certificate, so a deposit has to name one. The
+        // vault reads this certificate's operator from the Registry and
+        // authenticates against that, so only its own operator can fund it.
+        const depositCertId = await bound.certIdForAgent(accounts.agent.publicKey());
+        if (depositCertId === null) {
+          return Response.json(
+            { error: "publish a certificate before funding its reserve" },
+            { status: 409 },
+          );
+        }
+        const certId = BigInt(depositCertId);
+        await bound.depositReserve(accounts.operator, certId, usdc(dollars));
         return Response.json({
           action,
           depositedUsd: formatUsdc(usdc(dollars)),
-          reserveHeldUsd: formatUsdc(await bound.reserveBalance()),
+          reserveHeldUsd: formatUsdc(await bound.reserveBalance(certId)),
           claimedUsd: formatUsdc(RESERVE_CLAIMED),
         });
       }

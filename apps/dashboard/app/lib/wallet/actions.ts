@@ -31,9 +31,11 @@ export function useWalletActions() {
         xdr: signed,
       });
 
-      if (action === "challenge" && typeof result === "number") {
-        await post("/api/challenger/resolve", { challengeId: result });
-      }
+      // v2 deliberately does NOT settle here. Filing a challenge opens (or
+      // joins) a 72-hour claim window so that other victims can file against
+      // the same certificate and be paid pro rata; settling on filing was the
+      // first-resolver-takes-all defect. Closing the window is a separate call
+      // once it lapses — POST /api/challenger/resolve { certId }.
       return { hash, result };
     },
     [address, signXdr],

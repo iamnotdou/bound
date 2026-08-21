@@ -54,7 +54,9 @@ export async function POST(req: Request) {
       bound.usdcBalance(victim),
       bound.verifyCertificate(agent),
       bound.auditorStake(accounts.auditor.publicKey()),
-      bound.reserveBalance(),
+      bound
+        .certIdForAgent(agent)
+        .then((id) => (id === null ? 0n : bound.reserveBalance(BigInt(id)))),
     ]);
 
     const proven = certAfter.status.tag === "Invalid";
