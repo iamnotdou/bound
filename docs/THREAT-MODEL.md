@@ -101,6 +101,47 @@ If `BoundExceeded` ever paid out on the counter alone, stealing an agent key
 would become a way to force a payout from an honest operator's collateral. It
 does not, and this is one of the reasons why.
 
+`BoundExceeded` is now provable trustlessly — `resolve` reads the router's
+counter directly, with no arbiter — and it settles in **hygiene mode**: the
+certificate is invalidated, the challenger is paid a flat bounty out of forfeited
+bonds, the reserve is untouched, and **the auditor is not slashed**. So a thief
+who pushes `spent` past the bound can kill the certificate, which is the correct
+outcome and the same outcome a compromised agent's own overspending should have.
+They cannot reach the auditor's allocation, and neither can the operator.
+
+---
+
+## An operator can still grief their own auditor
+
+This is the most important **unclosed** item on this page, and it is stated here
+rather than buried in a design doc because it is a live economic exposure for
+anyone considering auditing on this protocol.
+
+The settlement waterfall makes manufacturing a proof **unprofitable**. It does
+not make `InsufficientReserve` **costless to the auditor**.
+
+An operator who deliberately under-funds their own certificate and then
+challenges it destroys their auditor's allocation. The slashed stake goes to the
+treasury, so the operator gains nothing — they are out their gas, their reserve
+and their certificate. The auditor is out their whole allocation regardless. The
+integration harness demonstrates exactly this sequence today: the colluders
+extract nothing, and the auditor's allocation lands in the treasury.
+
+The minimum-reserve check at `attest` mitigates the attestation-time version of
+this — an auditor cannot be walked into a certificate that is already fraudulent
+— but a reserve withdrawn _after_ attestation is precisely the case
+`InsufficientReserve` exists for, and nothing stops the operator doing that to
+themselves.
+
+**No fix is proposed here.** It needs a deliberate decision, and every obvious
+candidate trades one exposure for another: refusing a challenge from the
+certificate's own operator is defeated by a second address; routing a
+self-challenge's slash back to the auditor requires deciding what "self" means;
+settling `InsufficientReserve` as hygiene too would give an operator a way to
+walk away from a real reserve shortfall. Until one is chosen, an auditor's
+downside on any certificate is bounded by their allocation but is **not** under
+their own control.
+
 ---
 
 ## Compromise response

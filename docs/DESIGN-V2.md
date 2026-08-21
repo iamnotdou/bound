@@ -502,17 +502,117 @@ against an empty pot every time. Both now lock until
 Registry and read by both the vault and the staking contract through
 `get_cert_settlement_deadline(cert_id)`, so the two can never drift apart.
 
+### The two trustless predicates, and why they never slash
+
+**Status: implemented** (branch `feat/trustless-predicates`).
+
+`BoundExceeded` and `ExpiredCertificate` are now proven by `resolve` from
+on-chain state, with the PaymentRouter as the source of truth. Neither needs the
+arbiter any more.
+
+- **`BoundExceeded`** — `router.spent(cert_id) > certificate.bound`.
+- **`ExpiredCertificate`** — §7 in full, applied to the router's `PostExpiry`
+  record: the largest post-expiry payment settled after
+  `expires_at + GRACE_WINDOW_SECONDS` (24 hours), was at least
+  `DE_MINIMIS_FLOOR_BPS` of the certificate's own bound (0.1%), and the
+  certificate is neither invalid nor superseded by a newer certificate for the
+  same agent.
+
+The router is a sound source for both: only an enrolled agent moves the counter,
+enrollment needs the agent's **and** the certificate operator's signature, and an
+enrollment is permanent. So nobody can attach spend to a stranger's certificate,
+and no operator can walk an agent off a climbing counter onto a fresh one. An
+agent that never enrolled meters nothing, so neither predicate can be true
+against its certificate at all.
+
+**Both settle in hygiene mode. The auditor is not slashed.** This is the
+security property, not an unfinished job, and the reasoning is repeated in the
+source because a future reader will otherwise "fix" it back into the
+vulnerability:
+
+Both predicates are **manufacturable at will by the operator**. `spend-probe` and
+the router's own shuttle test prove it for `BoundExceeded` — a $1 shuttle between
+two addresses the operator controls drives `spent` past any bound for the price
+of gas, with net flow of exactly zero. `ExpiredCertificate` is the same shape:
+the operator controls whether their own agent keeps paying after expiry. If
+either slashed on the counter alone, **any operator could destroy their auditor's
+allocation for the cost of gas**. The slash goes to the treasury, so the operator
+gains nothing — but the auditor loses everything, at will, with no defence. An
+auditing business cannot exist under that rule, and the protocol is worthless
+without auditors.
+
+What these proofs establish is that the covenant was broken, not that anyone was
+harmed. The certificate dying is the correct and sufficient automatic
+consequence: it costs the operator their own certificate, their reserve lockup
+and (later) their premium, and it warns every counterparty. Compensation and
+slashing require assessed harm, which is what
+`resolve_by_arbiter(challenge_id, fraud_proven, harm)` is for — and it still
+slashes the identical breach when a human states a number.
+`InsufficientReserve` keeps the full waterfall unchanged: its harm is a shortfall
+in capital the operator promised and did not commit, which cannot be
+manufactured without actually losing that capital.
+
+**Wiring.** The ChallengeManager learns the router's address through
+`set_router`, a one-shot call authorized by the arbiter, rather than a ninth
+`initialize` argument that would break the committed bindings and the deploy
+script positionally. It is arbiter-gated because whoever names the router names
+the contract that reports `spent`, and a lying router could invalidate any
+certificate it liked. It cannot be re-pointed, for the same reason the treasury
+cannot.
+
+### The griefing residue the waterfall did **not** close
+
+Stated plainly, because the waterfall is easy to over-claim.
+
+The waterfall makes manufacturing a proof **unprofitable** — a self-dealing
+operator who names their own address as victim moves money from their left
+pocket to their right, and the slash goes to a treasury they do not control. It
+does **not** make `InsufficientReserve` **costless to the auditor**.
+
+An operator who deliberately under-funds their own certificate and then
+challenges it destroys their auditor's allocation, which goes to the treasury,
+for the price of gas plus their own reserve and their own certificate. The
+`self_dealing_against_an_empty_reserve_hands_the_colluders_nothing` test
+demonstrates exactly this and is named for only half of what it shows: the
+colluders gain nothing **and the auditor's whole allocation goes to the
+treasury**. The attacker is not enriched; the auditor is still ruined.
+
+The minimum-reserve-funding check at `attest` (§4) partly mitigates it — an
+auditor cannot be walked into a certificate that is _already_ fraudulent — but it
+does nothing about a reserve withdrawn after attestation, which is precisely the
+case `InsufficientReserve` exists for. The residue is real, it is an open
+problem, and no fix is invented here. It needs a deliberate decision. Candidate
+directions, none chosen: requiring the challenger not to be the certificate's own
+operator (weak — addresses are free); routing a self-challenge's slash back to
+the auditor rather than the treasury; or treating an operator-initiated
+`InsufficientReserve` proof as hygiene too, which trades this griefing vector for
+a way for an operator to escape a real reserve shortfall.
+
 ### Gaps deliberately left open
 
+- **`ExpiredCertificate` judges one payment, not a history.** The router records
+  a single post-expiry pair — the largest late payment and its timestamp — so a
+  large payment inside the grace window masks a smaller, later one that would
+  have cleared both tests. Conservative in the safe direction (fewer upholds),
+  and closing it would put unbounded storage on the router's x402 hot path.
+- **The renewal check is coarser than §7's wording.** §7 says "not renewed
+  _before_ the payment"; the predicate asks "not renewed as of resolution", so a
+  renewal filed _after_ the late payment also defeats the proof. That is a cure
+  path in the sense of §2, and §2's evaluate-at-filing machinery does not exist
+  yet. It errs toward not killing a certificate.
+- **The grace window and the floor are unresearched proposals.** 24 hours and
+  0.1% are §7's numbers, adopted as-is. Both are attack surface: the window is
+  free post-expiry coverage a hostile operator can plan around, and the floor is
+  a band of payments that provably breach the covenant and are unprovable anyway.
+- **`set_router` has no deploy-script caller yet.** `scripts/deploy.ts` wires the
+  contracts through `initialize` only; until it also calls `set_router`, a fresh
+  deployment resolves both new predicates into `router_not_set`.
 - **No premium step.** Step 4 is a comment, not code. No PremiumVault exists and
   none was built.
 - **The arbiter's harm figure is unbounded and unappealable.** It is capped by
   the certificate's collateral, but nothing checks it against evidence and there
   is no dispute path once it is stated. That is the same trust already placed in
   the verdict itself, now extended to an amount as well as a boolean.
-- **`BoundExceeded` and `ExpiredCertificate` predicates are still not
-  implemented.** This work is the settlement machinery that has to exist before
-  they can be safely enabled, not the predicates themselves.
 - **Still first-resolver-takes-all** (§1). The waterfall settles one challenge
   immediately; the aggregating claim window is not built.
 - **The hygiene bounty depends on forfeited bonds.** A protocol with no failed
