@@ -13,8 +13,9 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-    token, Address, Env, IntoVal,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
+    token, Address, Env, IntoVal, Symbol, TryFromVal,
 };
 
 use auditor_staking::{AuditorStaking, AuditorStakingClient};
@@ -22,6 +23,7 @@ use challenge_manager::{
     ChallengeManager, ChallengeManagerClient, ProofType, Verdict as CmVerdict,
 };
 use fee_escrow::{FeeEscrow, FeeEscrowClient};
+use payment_router::{PaymentRouter, PaymentRouterClient};
 use registry::{CertStatus, Registry, RegistryClient};
 use reserve_vault::{ReserveVault, ReserveVaultClient};
 
@@ -41,7 +43,7 @@ const FUNDING: i128 = 10_000_0000000;
 // The harness
 // ---------------------------------------------------------------------------
 
-/// All five Bound contracts plus a test USDC token, wired to each other in a
+/// All Bound contracts plus a test USDC token, wired to each other in a
 /// single `Env`, with funded actors.
 ///
 /// Clients are handed out by accessor methods rather than stored, so the struct
@@ -56,6 +58,7 @@ struct BoundWorld {
     staking: Address,
     escrow: Address,
     challenge_manager: Address,
+    router: Address,
 
     // actors
     token_admin: Address,
@@ -104,6 +107,7 @@ impl BoundWorld {
         let staking = env.register(AuditorStaking, ());
         let escrow = env.register(FeeEscrow, ());
         let challenge_manager = env.register(ChallengeManager, ());
+        let router = env.register(PaymentRouter, ());
 
         RegistryClient::new(&env, &registry).initialize(&challenge_manager, &staking);
         ReserveVaultClient::new(&env, &vault).initialize(&registry, &challenge_manager, &token);
@@ -114,6 +118,7 @@ impl BoundWorld {
             &MIN_AUDITOR_STAKE,
         );
         FeeEscrowClient::new(&env, &escrow).initialize(&challenge_manager, &token);
+        PaymentRouterClient::new(&env, &router).initialize(&registry, &token);
         ChallengeManagerClient::new(&env, &challenge_manager).initialize(
             &registry,
             &staking,
@@ -132,6 +137,7 @@ impl BoundWorld {
             staking,
             escrow,
             challenge_manager,
+            router,
             token_admin,
             operator,
             agent,
@@ -171,6 +177,9 @@ impl BoundWorld {
     }
     fn cm(&self) -> ChallengeManagerClient<'_> {
         ChallengeManagerClient::new(&self.env, &self.challenge_manager)
+    }
+    fn router(&self) -> PaymentRouterClient<'_> {
+        PaymentRouterClient::new(&self.env, &self.router)
     }
 
     // --- money -------------------------------------------------------------
@@ -1054,4 +1063,397 @@ fn double_resolve_is_rejected_after_a_real_settlement() {
     assert!(w.cm().try_resolve(&id).is_err());
     assert!(w.cm().try_resolve_by_arbiter(&id, &true).is_err());
     assert_eq!(w.balance(&w.victim), victim_after_first);
+}
+
+// ---------------------------------------------------------------------------
+// 9. PaymentRouter — custody, metering, float cap and kill switch
+// ---------------------------------------------------------------------------
+
+/// The router's float cap for the standard certificate: $50.
+const FLOAT_CAP: i128 = 50_0000000;
+const DOLLAR: i128 = 1_0000000;
+
+/// The standard world, with the agent enrolled in the router and holding
+/// `float` of routed balance.
+fn attested_and_enrolled(float: i128) -> (BoundWorld, u64) {
+    let (w, cert_id) = staked_and_attested();
+    w.mint(&w.agent, FUNDING);
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+    w.router().deposit(&w.agent, &float);
+    (w, cert_id)
+}
+
+/// Enrollment needs the agent **and** the operator, and the operator it needs is
+/// the one the Registry names on that certificate — not a local admin field.
+///
+/// Either signature alone is refused. The operator's, because nobody may
+/// conscript an address they do not control into someone else's metering and
+/// kill switch. The agent's, because otherwise anyone could bind an address they
+/// control to a stranger's certificate and manufacture spend evidence against
+/// them.
+#[test]
+fn router_enrollment_requires_both_the_agent_and_the_certificates_operator() {
+    let (w, cert_id) = staked_and_attested();
+
+    let only = |who: &Address| {
+        w.env.set_auths(&[]);
+        w.env.mock_auths(&[MockAuth {
+            address: who,
+            invoke: &MockAuthInvoke {
+                contract: &w.router,
+                fn_name: "enroll",
+                args: (w.agent.clone(), cert_id, FLOAT_CAP).into_val(&w.env),
+                sub_invokes: &[],
+            },
+        }]);
+    };
+
+    only(&w.agent);
+    assert!(w
+        .router()
+        .try_enroll(&w.agent, &cert_id, &FLOAT_CAP)
+        .is_err());
+    only(&w.operator);
+    assert!(w
+        .router()
+        .try_enroll(&w.agent, &cert_id, &FLOAT_CAP)
+        .is_err());
+    // A different operator's signature is not the certificate's operator.
+    only(&w.operator2);
+    assert!(w
+        .router()
+        .try_enroll(&w.agent, &cert_id, &FLOAT_CAP)
+        .is_err());
+    assert!(!w.router().is_tracked(&w.agent));
+
+    // Both together succeed.
+    w.mock_all_auths();
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+    assert!(w.router().is_tracked(&w.agent));
+    assert_eq!(w.router().cert_of(&w.agent), Some(cert_id));
+    assert_eq!(w.router().float_cap(&cert_id), FLOAT_CAP);
+
+    // An agent that never enrolled is not tracked, even with a live certificate.
+    assert!(!w.router().is_tracked(&w.agent2));
+    assert_eq!(w.router().cert_of(&w.agent2), None);
+}
+
+/// The x402 settlement constraint, against the real deployment wiring: paying a
+/// counterparty is one `transfer` call, one transfer event, no sub-invocation,
+/// and no movement of the underlying USDC.
+#[test]
+fn router_transfer_is_a_single_flat_call_on_the_real_wiring() {
+    let (w, _) = attested_and_enrolled(10_0000000);
+    let usdc_in_custody = w.balance(&w.router);
+
+    w.router().transfer(&w.agent, &w.victim, &4_0000000);
+
+    // One transfer event plus the protocol's own spend event; exactly one of
+    // them is a transfer, which is what a facilitator matches on.
+    let events = w.env.events().all();
+    assert_eq!(events.len(), 2);
+    let transfers = events
+        .iter()
+        .filter(|(_, topics, _)| {
+            Symbol::try_from_val(&w.env, &topics.get(0).unwrap()).unwrap()
+                == symbol_short!("transfer")
+        })
+        .count();
+    assert_eq!(transfers, 1);
+
+    // Flat authorization tree: nothing was invoked underneath the transfer.
+    let auths = w.env.auths();
+    assert_eq!(auths.len(), 1);
+    assert!(auths[0].1.sub_invocations.is_empty());
+
+    // The underlying USDC never moved — custody is internal.
+    assert_eq!(w.balance(&w.router), usdc_in_custody);
+    assert_eq!(w.router().balance(&w.victim), 4_0000000);
+    assert_eq!(w.router().total_supply(), w.balance(&w.router));
+}
+
+/// Metering follows enrollment, not the money. The tracked agent's payments
+/// accumulate against its certificate; an untracked holder's do not accumulate
+/// against anything.
+#[test]
+fn router_meters_only_enrolled_agents() {
+    let (w, cert_id) = attested_and_enrolled(10_0000000);
+
+    w.router().transfer(&w.agent, &w.victim, &3_0000000);
+    w.router().transfer(&w.agent, &w.victim, &2_0000000);
+    assert_eq!(w.router().spent(&cert_id), 5_0000000);
+
+    // The victim now holds routed balance and pays it on. Nobody's certificate
+    // is watching that address, so nobody's counter moves.
+    w.router().transfer(&w.victim, &w.challenger, &DOLLAR);
+    assert_eq!(w.router().spent(&cert_id), 5_0000000);
+
+    // A second certificate on the same router keeps its own counter.
+    let cert2 = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.mint(&w.agent2, FUNDING);
+    w.router().enroll(&w.agent2, &cert2, &FLOAT_CAP);
+    w.router().deposit(&w.agent2, &5_0000000);
+    w.router().transfer(&w.agent2, &w.victim, &DOLLAR);
+    assert_eq!(w.router().spent(&cert2), DOLLAR);
+    assert_eq!(w.router().spent(&cert_id), 5_0000000);
+}
+
+/// **The $1 shuttle, on the real contracts.**
+///
+/// `contracts/spend-probe` proved that a cumulative spend counter measures gross
+/// flow rather than loss. This reproduces that result against the router the
+/// protocol will deploy, on a certificate the Registry actually issued and an
+/// auditor actually attested.
+///
+/// One dollar of float shuttles between the enrolled agent and a second address
+/// the operator controls. Every hop is a real, authorized, correctly recorded
+/// payment. `spent` climbs past the certificate's own bound while the net flow
+/// out of the operator's control is exactly zero — and the reserve, the auditor's
+/// stake and the certificate's validity are all untouched.
+///
+/// If anyone ever wires `spent > bound` straight to a payout, this test is the
+/// reason it must not ship.
+#[test]
+fn router_reproduces_the_dollar_shuttle_against_a_real_certificate() {
+    // A deliberately tiny bound, so the shuttle is a handful of hops and the
+    // test snapshot stays small. The economics are scale-free: at a $1,500 bound
+    // it is 3,001 payments and a few dollars of fees.
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let small_bound = 10_0000000; // $10
+    let cert_id = w.publish_cert(small_bound, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+    assert!(w.registry().verify(&w.agent).valid);
+
+    // `sink` is the operator's second address. The entire float is one dollar.
+    let sink = w.operator2.clone();
+    w.mint(&w.agent, DOLLAR);
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+    w.router().deposit(&w.agent, &DOLLAR);
+
+    let net_before = w.router().balance(&w.agent) + w.router().balance(&sink);
+
+    let mut hops = 0i128;
+    while w.router().spent(&cert_id) <= small_bound {
+        if hops % 2 == 0 {
+            w.router().transfer(&w.agent, &sink, &DOLLAR);
+        } else {
+            w.router().transfer(&sink, &w.agent, &DOLLAR);
+        }
+        hops += 1;
+    }
+
+    // The naive `BoundExceeded` predicate is now true.
+    assert!(w.router().spent(&cert_id) > small_bound);
+    assert_eq!(w.router().spent(&cert_id), 11_0000000); // $11 of "spend"
+    assert_eq!(hops, 21); // 21 one-dollar payments
+
+    // Net flow is exactly zero: the controlled pair holds what it started with.
+    assert_eq!(
+        w.router().balance(&w.agent) + w.router().balance(&sink),
+        net_before
+    );
+    assert_eq!(net_before, DOLLAR);
+    assert_eq!(w.balance(&w.router), DOLLAR); // custody never moved
+
+    // Nobody outside the pair received anything.
+    assert_eq!(w.router().balance(&w.victim), 0);
+    assert_eq!(w.router().balance(&w.challenger), 0);
+
+    // And the rest of the protocol is exactly as it was: the reserve is intact,
+    // the auditor's stake is intact, the certificate is still valid. The counter
+    // is evidence that the covenant was broken; it is not evidence of harm, and
+    // there is no harm here to settle.
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert!(w.registry().verify(&w.agent).valid);
+}
+
+/// §6: the float cap bounds what a stolen agent key can reach. A deposit that
+/// lands exactly on the cap is accepted; the next dollar is refused.
+#[test]
+fn router_float_cap_accepts_at_the_cap_and_refuses_beyond_it() {
+    let (w, cert_id) = staked_and_attested();
+    w.mint(&w.agent, FUNDING);
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+
+    w.router().deposit(&w.agent, &FLOAT_CAP);
+    assert_eq!(w.router().float(&cert_id), FLOAT_CAP);
+    assert_eq!(w.balance(&w.router), FLOAT_CAP);
+
+    let agent_usdc = w.balance(&w.agent);
+    assert!(w.router().try_deposit(&w.agent, &DOLLAR).is_err());
+    assert_eq!(w.router().float(&cert_id), FLOAT_CAP);
+    assert_eq!(w.router().balance(&w.agent), FLOAT_CAP);
+    assert_eq!(w.balance(&w.agent), agent_usdc);
+    assert_eq!(w.balance(&w.router), FLOAT_CAP);
+
+    // Whatever a thief does with the key, they cannot reach past the cap: the
+    // most the router will ever hold for this certificate is $50.
+    assert_eq!(w.router().float_cap(&cert_id), FLOAT_CAP);
+}
+
+/// §6 kill switch, end to end. The operator halts routing without a challenge;
+/// the certificate stays Verified and valid, the auditor keeps their whole
+/// stake, and the reserve is untouched. The agent key cannot clear the halt.
+#[test]
+fn router_kill_switch_halts_without_invalidating_or_slashing() {
+    let (w, cert_id) = attested_and_enrolled(10_0000000);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+
+    // Only the operator may halt.
+    w.env.set_auths(&[]);
+    assert!(w.router().try_halt(&cert_id).is_err());
+    w.env.mock_auths(&[MockAuth {
+        address: &w.agent,
+        invoke: &MockAuthInvoke {
+            contract: &w.router,
+            fn_name: "halt",
+            args: (cert_id,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.router().try_halt(&cert_id).is_err());
+
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.operator,
+        invoke: &MockAuthInvoke {
+            contract: &w.router,
+            fn_name: "halt",
+            args: (cert_id,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    w.router().halt(&cert_id);
+    assert!(w.router().is_halted(&cert_id));
+
+    // Routing is dead even with the agent key fully authorized — which is the
+    // situation a compromise response is actually in.
+    w.mock_all_auths();
+    assert!(w
+        .router()
+        .try_transfer(&w.agent, &w.victim, &DOLLAR)
+        .is_err());
+    assert!(w.router().try_withdraw(&w.agent, &DOLLAR).is_err());
+    assert_eq!(w.router().spent(&cert_id), DOLLAR);
+    assert_eq!(w.router().balance(&w.agent), 9_0000000);
+
+    // Halting is not a challenge: nothing about the certificate or the auditor
+    // changed.
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert!(w.registry().verify(&w.agent).valid);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+
+    // A thief holding the agent key cannot re-enable routing.
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.agent,
+        invoke: &MockAuthInvoke {
+            contract: &w.router,
+            fn_name: "resume",
+            args: (cert_id,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.router().try_resume(&cert_id).is_err());
+    assert!(w.router().is_halted(&cert_id));
+
+    // The operator can.
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.operator,
+        invoke: &MockAuthInvoke {
+            contract: &w.router,
+            fn_name: "resume",
+            args: (cert_id,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    w.router().resume(&cert_id);
+    assert!(!w.router().is_halted(&cert_id));
+
+    w.mock_all_auths();
+    w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+    assert_eq!(w.router().spent(&cert_id), 2 * DOLLAR);
+}
+
+/// The hole a halt would otherwise leave open: an allowance the thief granted
+/// themselves *before* the halt.
+///
+/// While halted, `transfer_from` against the certificate's agent is refused too.
+/// The allowance is suspended, not deleted — a halt/resume cycle must not
+/// silently destroy a legitimate standing approval.
+#[test]
+fn router_halt_suspends_pre_existing_allowances_without_destroying_them() {
+    let (w, cert_id) = attested_and_enrolled(10_0000000);
+    let thief = w.challenger.clone();
+
+    w.router().approve(&w.agent, &thief, &6_0000000, &1_000u32);
+    assert_eq!(w.router().allowance(&w.agent, &thief), 6_0000000);
+
+    w.router().halt(&cert_id);
+
+    assert!(w
+        .router()
+        .try_transfer_from(&thief, &w.agent, &thief, &4_0000000)
+        .is_err());
+    assert_eq!(w.router().balance(&w.agent), 10_0000000);
+    assert_eq!(w.router().balance(&thief), 0);
+    assert_eq!(w.router().spent(&cert_id), 0);
+    assert_eq!(w.router().allowance(&w.agent, &thief), 6_0000000);
+
+    w.router().resume(&cert_id);
+
+    w.router()
+        .transfer_from(&thief, &w.agent, &thief, &4_0000000);
+    assert_eq!(w.router().balance(&w.agent), 6_0000000);
+    assert_eq!(w.router().balance(&thief), 4_0000000);
+    assert_eq!(w.router().allowance(&w.agent, &thief), 2_0000000);
+    assert_eq!(w.router().spent(&cert_id), 4_0000000);
+}
+
+/// §7: post-expiry payments are recorded separately, with enough detail for a
+/// grace window and a de-minimis floor to be applied by a predicate later — and
+/// they still count as spend, because they are still flow.
+#[test]
+fn router_records_post_expiry_payments_without_judging_them() {
+    let (w, cert_id) = attested_and_enrolled(10_0000000);
+
+    w.router().transfer(&w.agent, &w.victim, &2_0000000);
+    assert_eq!(w.router().post_expiry_spent(&cert_id).count, 0);
+
+    // The certificate expires. The Registry stops calling it valid...
+    w.set_time(EXPIRES_AT + 1);
+    assert!(!w.registry().verify(&w.agent).valid);
+
+    // ...but the router keeps routing and keeps counting, because refusing to
+    // record is not the same as refusing to pay, and the predicate that decides
+    // what a late payment means does not live here.
+    w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+    w.set_time(EXPIRES_AT + 100_000);
+    w.router().transfer(&w.agent, &w.victim, &3_0000000);
+
+    let pe = w.router().post_expiry_spent(&cert_id);
+    assert_eq!(pe.total, 4_0000000);
+    assert_eq!(pe.count, 2);
+    // The grace window is measured from the first late payment...
+    assert_eq!(pe.first_at, EXPIRES_AT + 1);
+    // ...and the de-minimis floor is applied to the largest one.
+    assert_eq!(pe.max_payment, 3_0000000);
+    assert_eq!(pe.max_payment_at, EXPIRES_AT + 100_000);
+
+    // Post-expiry flow is still flow.
+    assert_eq!(w.router().spent(&cert_id), 6_0000000);
+
+    // Neither the grace window nor the floor has been applied by the router: a
+    // one-dollar payment one second after expiry was recorded in full.
+    assert_eq!(w.router().post_expiry_spent(&cert_id).total, 4_0000000);
 }

@@ -18,3 +18,4 @@ reserve-vault = { path = "../reserve-vault", features = ["testutils"] }
 auditor-staking = { path = "../auditor-staking", features = ["testutils"] }
 fee-escrow = { path = "../fee-escrow", features = ["testutils"] }
 challenge-manager = { path = "../challenge-manager", features = ["testutils"] }
+payment-router = { path = "../payment-router", features = ["testutils"] }

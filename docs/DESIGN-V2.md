@@ -416,3 +416,21 @@ this is a redeploy and not a patch.
   They need to be argued individually, and each one is an attack surface.
 - Whether `Cured` should cost the operator anything at all. Currently free, which
   may under-price getting caught.
+- **A metered transfer emits two events, not one.** The router emits the standard
+  `transfer` event plus a `spend` event for indexers. The x402 constraint is
+  usually stated as "exactly one transfer event", and a facilitator matching on
+  the transfer topic is satisfied — but a facilitator that requires exactly one
+  event _in total_ would reject metered payments. This is untested against a real
+  facilitator and must be confirmed before the router settles live x402 traffic.
+  If it fails, the `spend` event has to move out of the transfer path.
+- **No clawback from a halted certificate.** Halt gates `withdraw` too, so an
+  honest operator cannot recover their own float while halted, and resuming to
+  recover it re-enables the thief. See `docs/THREAT-MODEL.md`; this is the most
+  important open item there.
+- **The float cap lives on the router, not the certificate.** § 6 calls for it to
+  be set at publish and visible in `get_certificate` and `CertView`. That is a
+  `Certificate` struct change and therefore a bindings/SDK change, so it was left
+  out of the Rust-only build. Until it moves, a counterparty cannot see the cap
+  on the certificate — which was half the point of having one.
+- **§ 8's `tracked` field is not on `VerifyResult`.** Same reason. `is_tracked()`
+  exists on the router for a future `verify` to read.
