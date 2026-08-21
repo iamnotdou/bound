@@ -23,6 +23,7 @@ export interface CertListItem extends CertView {
 }
 
 const DEFAULT_LIMIT = 50;
+const FETCH_CONCURRENCY = 8;
 
 function registry(): RegistryClient {
   return new RegistryClient({
@@ -74,14 +75,23 @@ export async function listCertificates(opts?: {
   const ids: number[] = [];
   for (let id = count - offset; id >= 1 && ids.length < limit; id--) ids.push(id);
 
+  // Fetched in bounded-concurrency batches: one RPC round-trip per certificate,
+  // so a serial loop would make a 50-row page 50 round-trips deep. The cap keeps
+  // us from opening fifty sockets at a public RPC endpoint at once.
   const items: CertListItem[] = [];
-  for (const certId of ids) {
-    try {
-      const cert = (await client.get_certificate({ cert_id: BigInt(certId) })).result;
-      items.push({ ...toCertView(cert.agent, asVerifyResult(cert), certId), certId });
-    } catch {
-      // certificate_not_found, or a record this SDK version cannot decode.
-    }
+  for (let i = 0; i < ids.length; i += FETCH_CONCURRENCY) {
+    const batch = await Promise.all(
+      ids.slice(i, i + FETCH_CONCURRENCY).map(async (certId) => {
+        try {
+          const cert = (await client.get_certificate({ cert_id: BigInt(certId) })).result;
+          return { ...toCertView(cert.agent, asVerifyResult(cert), certId), certId };
+        } catch {
+          // certificate_not_found, or a record this SDK version cannot decode.
+          return null;
+        }
+      }),
+    );
+    for (const item of batch) if (item) items.push(item);
   }
   return items;
 }
