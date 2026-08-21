@@ -8,6 +8,16 @@
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, Symbol, Vec};
 
+/// How long after a certificate expires a challenge may still be filed against
+/// it — and therefore how long the money backing it must stay put.
+///
+/// A proof about post-expiry activity only becomes provable *after* expiry. If
+/// the operator's reserve and the auditor's allocation both unlocked at
+/// `expires_at`, such a proof would settle against an empty pot every single
+/// time. Both the ReserveVault and AuditorStaking read the deadline below, so
+/// this constant is the one place the window is defined.
+pub const CHALLENGE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
+
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum CertStatus {
@@ -122,8 +132,22 @@ impl Registry {
         cert_id
     }
 
-    // Sadece registered auditor → VERIFIED
-    pub fn attest(env: Env, auditor: Address, cert_id: u64) {
+    /// Sadece registered auditor → VERIFIED.
+    ///
+    /// `allocation` is how much of the auditor's **free** stake stands behind
+    /// this one certificate. It is a parameter rather than a derived number
+    /// because the alternatives are both worse: allocating the auditor's whole
+    /// stake reproduces v1, where one bad certificate destroys an entire book;
+    /// allocating a protocol-fixed amount would price every certificate the
+    /// same regardless of the bound it backs. The auditor is the party pricing
+    /// the risk, so the auditor names the number — and AuditorStaking enforces
+    /// the two limits that matter: it must be at least `min_stake` (the same
+    /// floor `is_registered` uses, now applied per certificate rather than per
+    /// auditor) and it cannot exceed the auditor's free stake.
+    ///
+    /// The allocation is locked until this certificate's settlement deadline,
+    /// not its expiry — see `CHALLENGE_WINDOW_SECONDS`.
+    pub fn attest(env: Env, auditor: Address, cert_id: u64, allocation: i128) {
         auditor.require_auth();
 
         let auditor_staking: Address = env
@@ -153,26 +177,30 @@ impl Registry {
             panic!("cert_not_pending");
         }
 
-        // Cross-contract: AuditorStaking.get_stake(auditor)
-        let stake_snapshot: i128 = env.invoke_contract(
-            &auditor_staking,
-            &Symbol::new(&env, "get_stake"),
-            Vec::from_array(&env, [auditor.clone().into_val(&env)]),
-        );
-
+        // The snapshot is now the amount actually at risk for *this*
+        // certificate, not the auditor's whole book. A counterparty reading
+        // `verify` sees the collateral that would actually be drawn on if this
+        // certificate turns out to be a lie.
         cert.auditor = Some(auditor.clone());
-        cert.auditor_stake_snapshot = stake_snapshot;
+        cert.auditor_stake_snapshot = allocation;
         cert.status = CertStatus::Verified;
 
-        // Bond the auditor's stake to this certificate until it expires. From
+        let unlock_at = cert.expires_at.saturating_add(CHALLENGE_WINDOW_SECONDS);
+
+        // Allocate that slice of the auditor's stake to this certificate. From
         // this moment they cannot withdraw the capital they just vouched with —
         // the "skin in the game" is enforced on-chain, not merely advertised.
         env.invoke_contract::<()>(
             &auditor_staking,
-            &Symbol::new(&env, "lock"),
+            &Symbol::new(&env, "allocate"),
             Vec::from_array(
                 &env,
-                [auditor.into_val(&env), cert.expires_at.into_val(&env)],
+                [
+                    auditor.into_val(&env),
+                    cert_id.into_val(&env),
+                    allocation.into_val(&env),
+                    unlock_at.into_val(&env),
+                ],
             ),
         );
 
@@ -271,6 +299,20 @@ impl Registry {
         cert.expires_at
     }
 
+    /// The instant after which nothing can still be proven against this
+    /// certificate, and therefore the instant its collateral may unwind.
+    ///
+    /// Both the ReserveVault (operator's reserve) and AuditorStaking (auditor's
+    /// allocation) lock to this, so the two never drift apart.
+    pub fn get_cert_settlement_deadline(env: Env, cert_id: u64) -> u64 {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.expires_at.saturating_add(CHALLENGE_WINDOW_SECONDS)
+    }
+
     pub fn get_cert_reserve(env: Env, cert_id: u64) -> i128 {
         let cert: Certificate = env
             .storage()
@@ -313,10 +355,7 @@ mod mock_staking_registered {
         pub fn is_registered(_env: Env, _auditor: Address) -> bool {
             true
         }
-        pub fn get_stake(_env: Env, _auditor: Address) -> i128 {
-            500_0000000
-        }
-        pub fn lock(_env: Env, _auditor: Address, _until: u64) {}
+        pub fn allocate(_env: Env, _auditor: Address, _cert_id: u64, _amount: i128, _until: u64) {}
     }
 }
 
@@ -332,10 +371,7 @@ mod mock_staking_unregistered {
         pub fn is_registered(_env: Env, _auditor: Address) -> bool {
             false
         }
-        pub fn get_stake(_env: Env, _auditor: Address) -> i128 {
-            0
-        }
-        pub fn lock(_env: Env, _auditor: Address, _until: u64) {}
+        pub fn allocate(_env: Env, _auditor: Address, _cert_id: u64, _amount: i128, _until: u64) {}
     }
 }
 
@@ -351,6 +387,9 @@ mod tests {
         testutils::{Address as _, Ledger as _},
         Env,
     };
+
+    /// The slice of stake an auditor puts behind a certificate in these tests.
+    const ALLOCATION: i128 = 500_0000000;
 
     fn setup_with_mock(env: &Env, registered: bool) -> (RegistryClient<'_>, Address) {
         let cm = Address::generate(env);
@@ -429,12 +468,12 @@ mod tests {
         let auditor = Address::generate(&env);
 
         let cert_id = publish_cert(&client, &env, &operator, &agent);
-        client.attest(&auditor, &cert_id);
+        client.attest(&auditor, &cert_id, &ALLOCATION);
 
         let result = client.verify(&agent);
         assert!(result.valid);
         assert_eq!(result.status, CertStatus::Verified);
-        assert_eq!(result.auditor_stake, 500_0000000);
+        assert_eq!(result.auditor_stake, ALLOCATION);
         assert!(result.auditor.is_some());
     }
 
@@ -451,7 +490,7 @@ mod tests {
         let auditor = Address::generate(&env);
 
         let cert_id = publish_cert(&client, &env, &operator, &agent);
-        client.attest(&auditor, &cert_id);
+        client.attest(&auditor, &cert_id, &ALLOCATION);
     }
 
     #[test]
@@ -467,8 +506,8 @@ mod tests {
         let auditor = Address::generate(&env);
 
         let cert_id = publish_cert(&client, &env, &operator, &agent);
-        client.attest(&auditor, &cert_id);
-        client.attest(&auditor, &cert_id); // ikinci kez → panic
+        client.attest(&auditor, &cert_id, &ALLOCATION);
+        client.attest(&auditor, &cert_id, &ALLOCATION); // ikinci kez → panic
     }
 
     #[test]
@@ -494,7 +533,7 @@ mod tests {
             &ast,
         );
 
-        client.attest(&auditor, &cert_id);
+        client.attest(&auditor, &cert_id, &ALLOCATION);
         assert!(client.verify(&agent).valid);
 
         env.ledger().set_timestamp(3000);
@@ -513,7 +552,7 @@ mod tests {
         let auditor = Address::generate(&env);
 
         let cert_id = publish_cert(&client, &env, &operator, &agent);
-        client.attest(&auditor, &cert_id);
+        client.attest(&auditor, &cert_id, &ALLOCATION);
         assert!(client.verify(&agent).valid);
 
         client.invalidate(&cert_id);

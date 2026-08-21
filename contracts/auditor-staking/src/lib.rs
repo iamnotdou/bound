@@ -7,9 +7,25 @@ pub enum DataKey {
     Registry,
     Token,
     MinRegistrationStake,
+    /// Total capital this auditor has deposited: free + allocated. This is the
+    /// number the contract actually custodies for them.
     Stake(Address),
-    // Timestamp until which this auditor's stake is bonded to a live attestation
-    // and cannot be withdrawn. Set by the Registry on attest = cert.expires_at.
+    /// Sum of every live per-certificate allocation this auditor holds.
+    /// `free = Stake - Allocated`, and free stake is what may be allocated to a
+    /// new certificate or withdrawn.
+    Allocated(Address),
+    /// Per-certificate allocation, in the style the ReserveVault adopted: the
+    /// slice of an auditor's stake that stands behind exactly one certificate.
+    /// A slash draws against this and nothing else, so one bad certificate can
+    /// never destroy an auditor's whole book.
+    Allocation(u64),
+    AllocationAuditor(u64),
+    /// Ledger time at which this allocation may be freed by the auditor. Set by
+    /// the Registry on attest to the certificate's *settlement deadline*
+    /// (`expires_at + CHALLENGE_WINDOW`), not its expiry — see the comment on
+    /// `allocate`.
+    AllocationUnlockAt(u64),
+    /// Informational: the latest unlock time across this auditor's allocations.
     LockedUntil(Address),
 }
 
@@ -31,7 +47,8 @@ impl AuditorStaking {
         env.storage()
             .instance()
             .set(&DataKey::ChallengeManager, &challenge_manager);
-        // Only the Registry may bond an auditor's stake to a certificate (on attest).
+        // Only the Registry may allocate an auditor's stake to a certificate
+        // (on attest).
         env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage()
@@ -39,10 +56,14 @@ impl AuditorStaking {
             .set(&DataKey::MinRegistrationStake, &min_stake);
     }
 
-    // Stake USDC → otomatik olarak registered auditor olursun
-    // Stake >= min_stake ise registered sayılırsın
+    /// Deposit USDC into the staking contract. Deposited capital starts entirely
+    /// free; it only goes at risk when it is allocated to a certificate.
     pub fn stake(env: Env, auditor: Address, amount: i128) {
         auditor.require_auth();
+
+        if amount <= 0 {
+            panic!("invalid_amount");
+        }
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         token::Client::new(&env, &token_addr).transfer(
@@ -51,36 +72,39 @@ impl AuditorStaking {
             &amount,
         );
 
-        let current: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Stake(auditor.clone()))
-            .unwrap_or(0);
+        let current = Self::stake_of(&env, &auditor);
         env.storage()
             .persistent()
             .set(&DataKey::Stake(auditor), &(current + amount));
     }
 
+    /// Total capital custodied for this auditor: free + allocated.
     pub fn get_stake(env: Env, auditor: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Stake(auditor))
-            .unwrap_or(0)
+        Self::stake_of(&env, &auditor)
     }
 
-    // Stake >= min_registration_stake ise registered sayılır — ayrı bir kayıt yok
+    /// Capital not currently standing behind any certificate. This is what can
+    /// be allocated to a new attestation or withdrawn.
+    pub fn get_free_stake(env: Env, auditor: Address) -> i128 {
+        Self::stake_of(&env, &auditor) - Self::allocated_of(&env, &auditor)
+    }
+
+    pub fn get_allocated(env: Env, auditor: Address) -> i128 {
+        Self::allocated_of(&env, &auditor)
+    }
+
+    /// Registration is judged on **free** stake, because the thing an auditor
+    /// needs before vouching for one more certificate is capital that is not
+    /// already vouching for another one. Under the old global-stake model this
+    /// read the whole book, so a single $500 stake could back an unlimited
+    /// number of certificates at $500 of advertised collateral each.
     pub fn is_registered(env: Env, auditor: Address) -> bool {
         let min: i128 = env
             .storage()
             .instance()
             .get(&DataKey::MinRegistrationStake)
             .unwrap_or(0);
-        let stake: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Stake(auditor))
-            .unwrap_or(0);
-        stake >= min
+        Self::stake_of(&env, &auditor) - Self::allocated_of(&env, &auditor) >= min
     }
 
     pub fn get_min_stake(env: Env) -> i128 {
@@ -90,14 +114,59 @@ impl AuditorStaking {
             .unwrap_or(0)
     }
 
-    // Bond an auditor's stake to a live attestation until `until` (the cert's
-    // expiry). Only the Registry may call this — it does so inside attest(), so
-    // the moment an auditor vouches, their capital is locked and cannot be
-    // pulled out from under the counterparty. Extends an existing lock, never
-    // shortens it (an auditor backing several certs stays locked to the latest).
-    pub fn lock(env: Env, auditor: Address, until: u64) {
+    /// Allocate `amount` of an auditor's free stake to one certificate, locked
+    /// until `until`. Only the Registry may call this — it does so inside
+    /// `attest`, so the moment an auditor vouches, a named slice of their
+    /// capital is at risk for that certificate and cannot be pulled out from
+    /// under the counterparty.
+    ///
+    /// `until` is the certificate's **settlement deadline**
+    /// (`expires_at + CHALLENGE_WINDOW`), not its expiry. A proof about
+    /// post-expiry activity only becomes provable after expiry; if the
+    /// allocation unlocked at `expires_at` the proof would settle against an
+    /// already-freed allocation every single time.
+    pub fn allocate(env: Env, auditor: Address, cert_id: u64, amount: i128, until: u64) {
         let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
         registry.require_auth();
+
+        if amount <= 0 {
+            panic!("invalid_amount");
+        }
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Allocation(cert_id))
+        {
+            panic!("already_allocated");
+        }
+
+        let min: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinRegistrationStake)
+            .unwrap_or(0);
+        if amount < min {
+            panic!("allocation_below_minimum");
+        }
+
+        let free = Self::stake_of(&env, &auditor) - Self::allocated_of(&env, &auditor);
+        if amount > free {
+            panic!("insufficient_free_stake");
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Allocation(cert_id), &amount);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllocationAuditor(cert_id), &auditor);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllocationUnlockAt(cert_id), &until);
+        env.storage().persistent().set(
+            &DataKey::Allocated(auditor.clone()),
+            &(Self::allocated_of(&env, &auditor) + amount),
+        );
 
         let current: u64 = env
             .storage()
@@ -111,6 +180,26 @@ impl AuditorStaking {
         }
     }
 
+    pub fn get_allocation(env: Env, cert_id: u64) -> i128 {
+        Self::allocation_of(&env, cert_id)
+    }
+
+    pub fn get_allocation_auditor(env: Env, cert_id: u64) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AllocationAuditor(cert_id))
+    }
+
+    pub fn allocation_unlock_at(env: Env, cert_id: u64) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AllocationUnlockAt(cert_id))
+            .unwrap_or(0)
+    }
+
+    /// Informational: the latest settlement deadline across this auditor's
+    /// allocations. Nothing gates on it — an allocation is locked because it is
+    /// allocated, not because of this timestamp.
     pub fn locked_until(env: Env, auditor: Address) -> u64 {
         env.storage()
             .persistent()
@@ -118,8 +207,17 @@ impl AuditorStaking {
             .unwrap_or(0)
     }
 
-    // Sadece ChallengeManager slash edebilir — yanlış attest ederse stake gider
-    pub fn slash(env: Env, auditor: Address, recipient: Address, amount: i128) {
+    /// Slash a certificate's allocation to the **treasury**, and nowhere else.
+    ///
+    /// The recipient is a parameter only so the ChallengeManager can pass the
+    /// treasury address it was initialized with; there is deliberately no path
+    /// that lets a challenger, a victim or an operator name themselves here.
+    /// Slashed stake must never be a prize, or manufacturing a true proof
+    /// becomes a business model.
+    ///
+    /// The draw is capped by *this certificate's* allocation, so slashing
+    /// certificate A cannot touch the allocation backing certificate B.
+    pub fn slash_allocation(env: Env, cert_id: u64, treasury: Address, amount: i128) {
         let cm: Address = env
             .storage()
             .instance()
@@ -127,48 +225,86 @@ impl AuditorStaking {
             .unwrap();
         cm.require_auth();
 
-        let stake: i128 = env
+        if amount <= 0 {
+            panic!("invalid_amount");
+        }
+        let allocation = Self::allocation_of(&env, cert_id);
+        if amount > allocation {
+            panic!("slash_exceeds_allocation");
+        }
+
+        let auditor: Address = env
             .storage()
             .persistent()
-            .get(&DataKey::Stake(auditor.clone()))
-            .unwrap_or(0);
-        if amount > stake {
-            panic!("slash_exceeds_stake");
-        }
+            .get(&DataKey::AllocationAuditor(cert_id))
+            .expect("no_allocation");
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         token::Client::new(&env, &token_addr).transfer(
             &env.current_contract_address(),
-            &recipient,
+            &treasury,
             &amount,
         );
 
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(auditor), &(stake - amount));
+            .set(&DataKey::Allocation(cert_id), &(allocation - amount));
+        env.storage().persistent().set(
+            &DataKey::Allocated(auditor.clone()),
+            &(Self::allocated_of(&env, &auditor) - amount),
+        );
+        env.storage().persistent().set(
+            &DataKey::Stake(auditor.clone()),
+            &(Self::stake_of(&env, &auditor) - amount),
+        );
     }
 
-    // Temiz çıkış — stake'ini geri çek, artık registered değilsin.
-    // Bir aktif attestation'a bağlıysa (cert süresi dolana dek) reddedilir —
-    // denetçinin teminatı, vouch ettiği sürece counterparty'nin altından çekilemez.
+    /// Retire an allocation at settlement: whatever was not slashed goes back
+    /// to the auditor's **free** stake.
+    ///
+    /// Without this the unslashed remainder would sit allocated to a dead
+    /// certificate forever — capital stranded, which is the exact defect the
+    /// per-certificate refactor exists to remove.
+    pub fn retire_allocation(env: Env, cert_id: u64) {
+        let cm: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
+        cm.require_auth();
+        Self::free_allocation(&env, cert_id);
+    }
+
+    /// The auditor frees a live allocation themselves, once the certificate's
+    /// settlement deadline has passed and no challenge can still land on it.
+    pub fn release_allocation(env: Env, cert_id: u64) {
+        let auditor: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllocationAuditor(cert_id))
+            .expect("no_allocation");
+        auditor.require_auth();
+
+        let unlock_at: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllocationUnlockAt(cert_id))
+            .unwrap_or(0);
+        if env.ledger().timestamp() < unlock_at {
+            panic!("allocation_still_locked");
+        }
+
+        Self::free_allocation(&env, cert_id);
+    }
+
+    /// Withdraw **free** stake. Allocated capital is untouchable by definition:
+    /// it is locked because a live certificate stands on it, not because of a
+    /// timestamp on the auditor.
     pub fn release(env: Env, auditor: Address) {
         auditor.require_auth();
 
-        let locked_until: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::LockedUntil(auditor.clone()))
-            .unwrap_or(0);
-        if env.ledger().timestamp() < locked_until {
-            panic!("stake_locked");
-        }
-
-        let stake: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Stake(auditor.clone()))
-            .unwrap_or(0);
-        if stake == 0 {
+        let free = Self::stake_of(&env, &auditor) - Self::allocated_of(&env, &auditor);
+        if free <= 0 {
             return;
         }
 
@@ -176,129 +312,67 @@ impl AuditorStaking {
         token::Client::new(&env, &token_addr).transfer(
             &env.current_contract_address(),
             &auditor,
-            &stake,
+            &free,
         );
 
+        env.storage().persistent().set(
+            &DataKey::Stake(auditor.clone()),
+            &(Self::stake_of(&env, &auditor) - free),
+        );
+    }
+
+    // ----- internals -----
+
+    fn stake_of(env: &Env, auditor: &Address) -> i128 {
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(auditor), &0i128);
+            .get(&DataKey::Stake(auditor.clone()))
+            .unwrap_or(0)
+    }
+
+    fn allocated_of(env: &Env, auditor: &Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Allocated(auditor.clone()))
+            .unwrap_or(0)
+    }
+
+    fn allocation_of(env: &Env, cert_id: u64) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Allocation(cert_id))
+            .unwrap_or(0)
+    }
+
+    fn free_allocation(env: &Env, cert_id: u64) {
+        let remainder = Self::allocation_of(env, cert_id);
+        let auditor: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllocationAuditor(cert_id));
+        let auditor = match auditor {
+            None => return,
+            Some(a) => a,
+        };
+
+        if remainder > 0 {
+            env.storage().persistent().set(
+                &DataKey::Allocated(auditor.clone()),
+                &(Self::allocated_of(env, &auditor) - remainder),
+            );
+        }
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Allocation(cert_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::AllocationAuditor(cert_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::AllocationUnlockAt(cert_id));
     }
 }
 
 #[cfg(test)]
-// USDC amounts are written as <dollars>_<7 decimals>, e.g. 50_000_0000000 is
-// $50,000. Clippy reads that as inconsistent grouping and suggests
-// 500_000_000_000, which is the same number with the dollar figure no longer
-// legible. The grouping is deliberate.
-#[allow(clippy::inconsistent_digit_grouping)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{
-        testutils::{Address as _, Ledger as _},
-        Env,
-    };
-
-    fn setup(env: &Env, min_stake: i128) -> (AuditorStakingClient<'_>, Address) {
-        let cm = Address::generate(env);
-        let registry = Address::generate(env);
-        let token = Address::generate(env);
-        let contract_id = env.register(AuditorStaking, ());
-        let client = AuditorStakingClient::new(env, &contract_id);
-        client.initialize(&cm, &registry, &token, &min_stake);
-        (client, cm)
-    }
-
-    #[test]
-    fn test_not_registered_with_zero_stake() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _) = setup(&env, 500_0000000);
-        let auditor = Address::generate(&env);
-        assert!(!client.is_registered(&auditor));
-    }
-
-    #[test]
-    fn test_registered_after_sufficient_stake() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _) = setup(&env, 500_0000000);
-        let auditor = Address::generate(&env);
-
-        // Set stake directly to simulate a deposit
-        env.as_contract(&client.address, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Stake(auditor.clone()), &500_0000000i128);
-        });
-
-        assert!(client.is_registered(&auditor));
-    }
-
-    #[test]
-    fn test_not_registered_below_min_stake() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _) = setup(&env, 500_0000000);
-        let auditor = Address::generate(&env);
-
-        // Stake below minimum
-        env.as_contract(&client.address, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Stake(auditor.clone()), &100_0000000i128); // $100 < $500 min
-        });
-
-        assert!(!client.is_registered(&auditor));
-    }
-
-    #[test]
-    #[should_panic(expected = "slash_exceeds_stake")]
-    fn test_slash_above_stake_panics() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _) = setup(&env, 500_0000000);
-        let auditor = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        client.slash(&auditor, &recipient, &100);
-    }
-
-    #[test]
-    #[should_panic(expected = "stake_locked")]
-    fn test_release_blocked_while_bonded_to_cert() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _) = setup(&env, 500_0000000);
-        let auditor = Address::generate(&env);
-
-        // Auditor has stake, bonded to a cert that expires at t=5000.
-        env.as_contract(&client.address, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Stake(auditor.clone()), &1_500_0000000i128);
-            env.storage()
-                .persistent()
-                .set(&DataKey::LockedUntil(auditor.clone()), &5000u64);
-        });
-        env.ledger().set_timestamp(1000); // before expiry — stake must stay put
-        client.release(&auditor); // → panic: stake_locked
-    }
-
-    #[test]
-    fn test_release_allowed_after_lock_expires() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _) = setup(&env, 500_0000000);
-        let auditor = Address::generate(&env);
-
-        env.as_contract(&client.address, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::LockedUntil(auditor.clone()), &5000u64);
-        });
-        // After the certificate's expiry the bond is lifted: release no longer
-        // panics (zero stake → early return, but past the lock check).
-        env.ledger().set_timestamp(6000);
-        client.release(&auditor);
-        assert_eq!(client.get_stake(&auditor), 0);
-    }
-}
+#[path = "test.rs"]
+mod test;

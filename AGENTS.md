@@ -33,7 +33,7 @@ Run everything from the repo root.
 | `pnpm lint` / `lint:fix`       | eslint                                                                    | no      | no      |
 | `pnpm format` / `format:check` | prettier                                                                  | no      | no      |
 | `pnpm test` / `test:watch`     | unit tests                                                                | no      | no      |
-| `pnpm test:contracts`          | `cargo test` — 81 tests, 6 contracts + the offline cross-contract harness | no      | no      |
+| `pnpm test:contracts`          | `cargo test` — 98 tests, 7 contracts + the offline cross-contract harness | no      | no      |
 | `pnpm lint:contracts`          | `cargo clippy -D warnings`                                                | no      | no      |
 | `pnpm format:contracts`        | `cargo fmt --check`                                                       | no      | no      |
 | `pnpm build:contracts`         | 7 wasm artifacts                                                          | no      | no      |

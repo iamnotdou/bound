@@ -393,6 +393,118 @@ draw down the other's reserve.
 
 ---
 
+## 10. Per-certificate stake allocation and one uniform settlement waterfall
+
+**Status: implemented, not deployed** (branch `feat/settlement-waterfall`).
+
+**Problem.** Every trustless proof in this protocol proves something _the
+operator controls_: the reserve balance, the agent that spends, the expiry. So
+the security question is never "can the proof be forged" — the arithmetic is
+sound — but **"does manufacturing a true proof pay?"** Under v1 it paid
+extremely well. `settle_fraud` slashed the auditor's entire live stake, sent 80%
+of it to an address the challenger named and 20% to the challenger, then drained
+the certificate's reserve to the same named address. A colluding operator named
+itself and walked off with the auditor's whole bond.
+
+### F02 — allocation, not a global stake
+
+`AuditorStaking` no longer holds one global stake that a slash consumes whole.
+
+- `Stake(auditor)` is total custodied capital; `Allocated(auditor)` is the sum of
+  live allocations; **free = Stake − Allocated**.
+- `Allocation(cert_id)` is the slice standing behind exactly one certificate,
+  keyed the way the ReserveVault keys reserves.
+- `is_registered` is judged on **free** stake. Under the old model one $500 stake
+  could back an unlimited number of certificates at $500 of advertised
+  collateral each.
+- `release(auditor)` withdraws free stake only. Allocated capital is locked
+  because a live certificate stands on it, not because of a timestamp.
+
+**How the allocation amount is chosen.** It is a parameter on `attest`:
+`attest(auditor, cert_id, allocation)`. The alternatives are both worse —
+allocating the auditor's whole stake reproduces v1, where one bad certificate
+destroys an entire book; a protocol-fixed amount prices every certificate the
+same regardless of the bound it backs. The auditor is the party pricing the risk,
+so the auditor names the number, and `AuditorStaking::allocate` enforces the two
+limits that matter: at least `min_stake` (the same floor `is_registered` uses,
+now applied per certificate) and no more than free stake.
+`Certificate.auditor_stake_snapshot` becomes the allocation, so a counterparty
+reading `verify` sees collateral that would actually be drawn on.
+
+**How it retires.** At settlement the ChallengeManager calls
+`retire_allocation(cert_id)`; on a clean expiry the auditor calls
+`release_allocation(cert_id)` once the challenge window has closed. Either way
+the unslashed remainder returns to **free stake**. Without that, capital is
+stranded on dead certificates — the exact defect the refactor exists to remove.
+
+### The waterfall
+
+`settle_fraud` is one rule, applied identically to every proof type:
+
+```
+harm    = raw_harm_from_predicate
+payable = min(harm, reserve_for_this_cert + allocation_for_this_cert)
+
+1. victim compensation  <- the operator's own reserve for THIS certificate only
+2. challenger fee       <- the same reserve, 10% of PROVEN HARM
+3. auditor slash        -> the TREASURY, capped by harm and by allocation
+4. (premium step — not built; documented gap)
+5. allocation retires; unslashed remainder returns to free stake
+6. certificate invalidated; challenger's bond returned
+```
+
+| Rule                                                       | Attack it closes                                                                                                                                                                                       |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Victim paid **only** from the operator's own reserve       | A colluding operator paying its own colluder moves money from its left pocket to its right. Manufacturing a proof against yourself extracts nothing, so victim naming can stay as permissive as it is. |
+| Slashed stake goes **only** to the treasury                | Removes the prize. Nobody who can trigger a proof can receive the auditor's money.                                                                                                                     |
+| Challenger fee is a % of **proven harm**, from the reserve | v1's 20%-of-stake fee made hunting _auditors_ profitable rather than hunting _fraud_.                                                                                                                  |
+| Slash capped by allocation **and** by harm                 | A manufactured $10 breach cannot cost an auditor a $50,000 bond, and one bad certificate cannot destroy a book.                                                                                        |
+| Unslashed remainder returns to free stake                  | Otherwise auditor capital is stranded.                                                                                                                                                                 |
+
+`harm` for `InsufficientReserve` is the shortfall, claimed reserve minus actual.
+The named victim is deliberately not part of it: a named victim is a _filter, not
+a proof_, and receiving a payment is evidence of being paid, not of being harmed.
+
+**Hygiene mode.** When `harm` computes to zero the proof is real but nobody can
+evidence loss. The certificate is invalidated, the allocation retires in full,
+the reserve is not touched, and the challenger is paid a **flat** $10 bounty out
+of forfeited bonds — the only pot available, since the reserve is off limits by
+definition and paying from the stake would reinstate rule 3's prize. An empty
+pool pays nothing.
+
+**Treasury.** Named once at `initialize`, with no admin and no upgrade path.
+Making it mutable would reopen the prize.
+
+### The post-expiry timing bug
+
+The reserve used to unlock at `expires_at`, and so did the auditor's stake. But
+an `ExpiredCertificate` proof is about activity _after_ expiry, so by the time it
+became provable the reserve was withdrawn and the stake was free: it would settle
+against an empty pot every time. Both now lock until
+`expires_at + CHALLENGE_WINDOW_SECONDS` (7 days), a constant owned by the
+Registry and read by both the vault and the staking contract through
+`get_cert_settlement_deadline(cert_id)`, so the two can never drift apart.
+
+### Gaps deliberately left open
+
+- **No premium step.** Step 4 is a comment, not code. No PremiumVault exists and
+  none was built.
+- **The arbiter path settles in hygiene mode.** `resolve_by_arbiter` carries a
+  verdict, not a quantity, so `raw_harm` is zero for `BoundExceeded` and
+  `FakeSignature`: those certificates die and the challenger gets the flat
+  bounty, but nobody is slashed. Giving the arbiter a harm figure to sign is a
+  separate decision.
+- **`BoundExceeded` and `ExpiredCertificate` predicates are still not
+  implemented.** This work is the settlement machinery that has to exist before
+  they can be safely enabled, not the predicates themselves.
+- **Still first-resolver-takes-all** (§1). The waterfall settles one challenge
+  immediately; the aggregating claim window is not built.
+- **The hygiene bounty depends on forfeited bonds.** A protocol with no failed
+  challenges yet pays nothing for hygiene work.
+- **No admin, so no way to fix a mis-set treasury**, by design.
+
+---
+
 ## What this changes downstream
 
 - **Certificate struct** gains: float cap (§6), and whatever the claim window and
