@@ -465,7 +465,24 @@ payable = min(harm, reserve_for_this_cert + allocation_for_this_cert)
 The named victim is deliberately not part of it: a named victim is a _filter, not
 a proof_, and receiving a payment is evidence of being paid, not of being harmed.
 
-**Hygiene mode.** When `harm` computes to zero the proof is real but nobody can
+**The arbiter states the quantity as well as the verdict.**
+`resolve_by_arbiter(challenge_id, upheld, harm)` feeds its `harm` into the same
+waterfall, so `BoundExceeded` and `FakeSignature` slash exactly like an
+arithmetic proof does. This grants no new trust: for these proof types the
+arbiter already decides whether fraud occurred at all, and their number is bound
+by identical rails — `payable = min(harm, reserve + allocation)`, victim
+compensation only from the operator's own reserve, slash only to the treasury. An
+arbiter who overstates harm therefore cannot direct money to anyone who could
+have bribed them; the self-dealing property is preserved by the waterfall, not by
+the predicate. A negative `harm` is rejected, and `upheld == false` requires
+`harm == 0`, so a contradictory call fails loudly rather than being silently
+ignored. The alternative — a verdict with no quantity — meant every arbiter proof
+settled in hygiene mode, letting an auditor who vouched for a certificate whose
+agent blew through its bound walk away whole purely because the proof happened to
+be arbiter-gated rather than arithmetic.
+
+**Hygiene mode.** When `harm` is zero — computed or stated — the proof is real
+but nobody can
 evidence loss. The certificate is invalidated, the allocation retires in full,
 the reserve is not touched, and the challenger is paid a **flat** $10 bounty out
 of forfeited bonds — the only pot available, since the reserve is off limits by
@@ -489,11 +506,10 @@ Registry and read by both the vault and the staking contract through
 
 - **No premium step.** Step 4 is a comment, not code. No PremiumVault exists and
   none was built.
-- **The arbiter path settles in hygiene mode.** `resolve_by_arbiter` carries a
-  verdict, not a quantity, so `raw_harm` is zero for `BoundExceeded` and
-  `FakeSignature`: those certificates die and the challenger gets the flat
-  bounty, but nobody is slashed. Giving the arbiter a harm figure to sign is a
-  separate decision.
+- **The arbiter's harm figure is unbounded and unappealable.** It is capped by
+  the certificate's collateral, but nothing checks it against evidence and there
+  is no dispute path once it is stated. That is the same trust already placed in
+  the verdict itself, now extended to an amount as well as a boolean.
 - **`BoundExceeded` and `ExpiredCertificate` predicates are still not
   implemented.** This work is the settlement machinery that has to exist before
   they can be safely enabled, not the predicates themselves.

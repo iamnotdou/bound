@@ -186,23 +186,58 @@ impl ChallengeManager {
         };
 
         if fraud {
-            Self::settle_fraud(&env, challenge_id, &ch);
+            // Harm is arithmetic here: the contract computes it from state.
+            let harm = Self::raw_harm(&env, &ch);
+            Self::settle_fraud(&env, challenge_id, &ch, harm);
         } else {
             Self::settle_no_fraud(&env, challenge_id);
         }
     }
 
-    // Arbiter-gated resolution for subjective proof types (BoundExceeded,
-    // FakeSignature) that no contract can verify on-chain. This is an explicit
-    // trust assumption: the arbiter is named at initialize().
-    pub fn resolve_by_arbiter(env: Env, challenge_id: u64, fraud_proven: bool) {
+    /// Arbiter-gated resolution for subjective proof types (BoundExceeded,
+    /// FakeSignature) that no contract can verify on-chain. This is an explicit
+    /// trust assumption: the arbiter is named at initialize().
+    ///
+    /// The arbiter states the **quantity** as well as the verdict, and that
+    /// `harm` feeds the same waterfall every other proof type uses.
+    ///
+    /// WHY THAT IS SAFE. The arbiter is already a fully trusted party for these
+    /// proof types — they are the ones deciding whether fraud occurred at all,
+    /// so letting them also state the amount grants no new trust. And their
+    /// number is bounded by exactly the same rails as an arithmetic one:
+    /// `payable = min(harm, reserve + allocation)` caps the total outflow,
+    /// victim compensation still comes only from the operator's own reserve for
+    /// this certificate, and the slash still goes only to the treasury. An
+    /// arbiter who overstates harm therefore cannot direct money to anyone who
+    /// could have bribed them — the self-dealing property is preserved by the
+    /// waterfall, not by the predicate.
+    ///
+    /// The alternative — a verdict with no quantity — is worse, and was the
+    /// behaviour this replaced: every arbiter proof settled in hygiene mode, so
+    /// an auditor who genuinely vouched for a certificate whose agent blew
+    /// through its bound walked away whole purely because the proof happened to
+    /// be arbiter-gated rather than arithmetic.
+    pub fn resolve_by_arbiter(env: Env, challenge_id: u64, fraud_proven: bool, harm: i128) {
         let arbiter: Address = env.storage().instance().get(&DataKey::Arbiter).unwrap();
         arbiter.require_auth();
+
+        if harm < 0 {
+            panic!("invalid_harm");
+        }
+        // A rejected challenge has no harm to quantify. Requiring the zero
+        // explicitly, rather than silently ignoring the argument, means a
+        // mis-typed call fails loudly instead of recording a verdict that
+        // contradicts its own number.
+        if !fraud_proven && harm != 0 {
+            panic!("harm_without_verdict");
+        }
 
         let ch = Self::load_pending(&env, challenge_id);
 
         if fraud_proven {
-            Self::settle_fraud(&env, challenge_id, &ch);
+            // harm == 0 is legitimate and lands in hygiene mode: a real breach
+            // that nobody can evidence a loss for.
+            Self::settle_fraud(&env, challenge_id, &ch, harm);
         } else {
             Self::settle_no_fraud(&env, challenge_id);
         }
@@ -280,7 +315,7 @@ impl ChallengeManager {
     //
     // ONE rule, applied identically to every proof type:
     //
-    //     harm    = raw harm from the predicate
+    //     harm    = raw harm from the predicate, or stated by the arbiter
     //     payable = min(harm, reserve_for_this_cert + allocation_for_this_cert)
     //
     //     1. victim compensation  <- the operator's OWN reserve for THIS cert
@@ -294,8 +329,11 @@ impl ChallengeManager {
     // read the reason attached to it — v1 had none of these and paid a
     // colluding operator the auditor's entire bond for the price of one lie.
 
-    /// Raw harm the predicate proves, in stroops. Zero means "the covenant was
-    /// broken but no harm is evidenced on-chain" — see `settle_hygiene`.
+    /// Raw harm an **on-chain** predicate proves, in stroops. Zero means "the
+    /// covenant was broken but no harm is evidenced on-chain" — see
+    /// `settle_hygiene`. Arbiter-gated proof types never reach this function:
+    /// their harm is stated by the arbiter and passed straight to
+    /// `settle_fraud`.
     ///
     /// `InsufficientReserve`: the shortfall, claimed reserve minus actual. The
     /// named victim is deliberately NOT part of this number. A named victim is a
@@ -327,18 +365,18 @@ impl ChallengeManager {
                     0
                 }
             }
-            // GAP: the arbiter path carries a verdict, not a quantity. Nothing
-            // on-chain tells this contract how much a BoundExceeded or
-            // FakeSignature ruling cost anyone, so those settle in hygiene mode:
-            // the certificate dies, the challenger gets the flat bounty, and no
-            // payout is invented from a number nobody proved. Giving the arbiter
-            // a harm figure to sign is a separate decision, deliberately not
-            // taken here.
+            // Unreachable in practice: `resolve` refuses every other proof type
+            // with `needs_arbiter`, and the arbiter path supplies its own
+            // quantity. Zero is the safe answer if that ever stops being true —
+            // it settles in hygiene mode rather than inventing a payout.
             _ => 0,
         }
     }
 
-    fn settle_fraud(env: &Env, challenge_id: u64, ch: &Challenge) {
+    /// `harm` is supplied by the caller: computed from chain state by
+    /// `resolve`, stated by the trusted arbiter in `resolve_by_arbiter`. From
+    /// here down the two are indistinguishable and travel identical rails.
+    fn settle_fraud(env: &Env, challenge_id: u64, ch: &Challenge, harm: i128) {
         let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
         let staking: Address = env
             .storage()
@@ -351,8 +389,6 @@ impl ChallengeManager {
             .get(&DataKey::ReserveVault)
             .unwrap();
         let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
-
-        let harm = Self::raw_harm(env, ch);
 
         // The two pots this certificate can be settled against, and nothing
         // else. Both are keyed by cert_id: no other certificate's reserve and no
@@ -651,19 +687,13 @@ mod tests {
         );
     }
 
-    #[test]
-    #[should_panic(expected = "already_resolved")]
-    fn test_double_resolve_panics() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, contract_id) = init_client(&env);
-
-        let challenger = Address::generate(&env);
-        let victim = Address::generate(&env);
-
-        // Seed a pending challenge directly (bypasses token transfer in challenge()).
-        // Use an arbiter-path proof type so settle_no_fraud touches no other contract.
-        env.as_contract(&contract_id, || {
+    /// Seed a pending challenge directly, bypassing the token transfer in
+    /// `challenge()`. `BoundExceeded` keeps `settle_no_fraud` from touching any
+    /// other contract.
+    fn seed_pending(env: &Env, contract_id: &Address) {
+        let challenger = Address::generate(env);
+        let victim = Address::generate(env);
+        env.as_contract(contract_id, || {
             env.storage().persistent().set(
                 &DataKey::Challenge(1u64),
                 &Challenge {
@@ -676,9 +706,43 @@ mod tests {
                 },
             );
         });
+    }
+
+    /// The arbiter states the quantity, but it must be a quantity: a negative
+    /// harm is rejected before the verdict is even loaded.
+    #[test]
+    #[should_panic(expected = "invalid_harm")]
+    fn test_arbiter_negative_harm_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id) = init_client(&env);
+        seed_pending(&env, &contract_id);
+        client.resolve_by_arbiter(&1u64, &true, &-1i128);
+    }
+
+    /// A rejected challenge has no harm to quantify. Stating one anyway is a
+    /// contradiction, and fails loudly rather than being silently ignored.
+    #[test]
+    #[should_panic(expected = "harm_without_verdict")]
+    fn test_arbiter_harm_without_a_fraud_verdict_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id) = init_client(&env);
+        seed_pending(&env, &contract_id);
+        client.resolve_by_arbiter(&1u64, &false, &100_0000000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "already_resolved")]
+    fn test_double_resolve_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id) = init_client(&env);
+
+        seed_pending(&env, &contract_id);
 
         // Arbiter rules "no fraud" → resolved. Second call must panic.
-        client.resolve_by_arbiter(&1u64, &false);
-        client.resolve_by_arbiter(&1u64, &false);
+        client.resolve_by_arbiter(&1u64, &false, &0i128);
+        client.resolve_by_arbiter(&1u64, &false, &0i128);
     }
 }
