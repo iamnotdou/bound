@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CertificateCard } from "@/app/components/CertificateCard";
+import { CoveragePanel } from "@/app/components/CoveragePanel";
+import { SpendMeter } from "@/app/components/SpendMeter";
+import { useCoverage } from "@/app/lib/hooks/useCoverage";
 import { roles } from "@/app/lib/ui-config";
 import type { CertView } from "@bound/sdk";
 
@@ -18,6 +21,10 @@ export default function DashboardPage() {
   const [cert, setCert] = useState<CertView | null>(null);
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  // The economics ride behind the certificate rather than inside it: /api/verify
+  // answers "is this good?" in one round trip, and the premium and the meter —
+  // two more contracts — load after it rather than holding it up.
+  const { coverage, loading: coverageLoading } = useCoverage(cert?.agent ?? null);
 
   async function verify(addr: string) {
     const trimmed = addr.trim();
@@ -61,7 +68,9 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Verify a certificate</h1>
         <p className="text-sm text-muted-foreground">
           Read an agent&apos;s Bound Certificate before you transact — the bound, the locked
-          reserve, the auditor&apos;s slashable stake, and whether it&apos;s still valid.
+          reserve, the auditor&apos;s slashable stake, and whether it&apos;s still valid. Then the
+          economics behind it: whether coverage was ever paid for, and what the agent has actually
+          routed.
         </p>
       </div>
 
@@ -101,6 +110,22 @@ export default function DashboardPage() {
           </p>
         )}
       </div>
+
+      {cert && (
+        <div className="mt-6 space-y-6">
+          {coverage ? (
+            <>
+              <CoveragePanel view={coverage} />
+              <SpendMeter view={coverage} />
+            </>
+          ) : coverageLoading ? (
+            <>
+              <Skeleton className="h-64 w-full rounded-xl" />
+              <Skeleton className="h-64 w-full rounded-xl" />
+            </>
+          ) : null}
+        </div>
+      )}
     </main>
   );
 }

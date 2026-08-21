@@ -6,13 +6,17 @@
 //    itself (stake / attest / publish / fee / pay / challenge), funds routed to
 //    and from its own address.
 // Every action refetches the ledger, so each click produces a visible state diff.
+import { useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { LedgerBoard } from "@/app/components/control/LedgerBoard";
+import { CoveragePanel } from "@/app/components/CoveragePanel";
+import { SpendMeter } from "@/app/components/SpendMeter";
 import { ActionButton, type ActionResult } from "@/app/components/control/ActionButton";
 import { AddressPill } from "@/app/components/AddressPill";
 import { useLedger } from "@/app/lib/hooks/useLedger";
+import { useCoverage } from "@/app/lib/hooks/useCoverage";
 import { useWallet } from "@/app/lib/wallet/useWallet";
 import { useWalletActions } from "@/app/lib/wallet/actions";
 import { roles, roleForAddress } from "@/app/lib/ui-config";
@@ -51,8 +55,18 @@ function Lane({
 
 export default function ControlPage() {
   const { ledger, loading, refetch } = useLedger(5000);
+  const { coverage, refetch: refetchCoverage } = useCoverage(roles.agent.address, { pollMs: 5000 });
   const { address } = useWallet();
   const wallet = useWalletActions();
+
+  // Every action on this page can move both boards: paying a premium changes the
+  // operator's and the treasury's balances as well as the coverage record, and a
+  // slash closes the coverage at the same instant it flips the certificate. One
+  // refresh for both keeps them from disagreeing for a poll interval.
+  const refreshAll = useCallback(() => {
+    refetch();
+    void refetchCoverage();
+  }, [refetch, refetchCoverage]);
 
   const certId = ledger?.cert.certId ?? null;
   const noCert = certId == null;
@@ -80,6 +94,13 @@ export default function ControlPage() {
 
       <LedgerBoard ledger={ledger} loading={loading} />
 
+      {coverage && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <CoveragePanel view={coverage} />
+          <SpendMeter view={coverage} />
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── Section B: deterministic demo (server keys) ───────────────── */}
         <Card>
@@ -93,7 +114,7 @@ export default function ControlPage() {
             <Lane title="Reset" hint="Re-seed a fresh Verified cert (re-stakes the auditor).">
               <ActionButton
                 label="Seed / Reset cert"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{ certId: number }>("/api/auditor", {
                     action: "sign-publish",
@@ -112,7 +133,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Fund $4k (trap)"
                 variant="secondary"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{ reserveHeldUsd: string; claimedUsd: string }>(
                     "/api/operator",
@@ -127,7 +148,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Fund $10k (honest)"
                 variant="secondary"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{ reserveHeldUsd: string; claimedUsd: string }>(
                     "/api/operator",
@@ -142,12 +163,75 @@ export default function ControlPage() {
               <ActionButton
                 label="Deposit fee $500"
                 variant="outline"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{ feeUsd: string }>("/api/operator", {
                     action: "deposit-fee",
                   });
                   return `Fee escrowed ${d.feeUsd}`;
+                }}
+              />
+            </Lane>
+
+            <Separator />
+
+            <Lane
+              title="Coverage premium"
+              hint="Priced on bound × term, fixed at publish. Payable once, and only on a Verified cert — the yield needs an auditor to accrue to."
+            >
+              <ActionButton
+                label="Operator pays premium"
+                variant="secondary"
+                onDone={refreshAll}
+                run={async () => {
+                  const d = await post<{
+                    hash?: string;
+                    premiumUsd: string;
+                    protocolFeeUsd: string;
+                    yieldPotUsd: string;
+                  }>("/api/coverage", { action: "pay-premium" });
+                  return {
+                    message: `Premium ${d.premiumUsd} paid — ${d.protocolFeeUsd} protocol fee, ${d.yieldPotUsd} accruing to the auditor`,
+                    txHash: d.hash,
+                  };
+                }}
+              />
+              <ActionButton
+                label="Auditor claims yield"
+                variant="outline"
+                onDone={refreshAll}
+                run={async () => {
+                  const d = await post<{ hash?: string; claimedUsd: string }>("/api/coverage", {
+                    action: "claim-premium",
+                  });
+                  // claim() returns 0 rather than reverting when nothing has
+                  // accrued yet, so say that instead of reporting a claim of $0.
+                  return {
+                    message:
+                      d.claimedUsd === "$0"
+                        ? "Nothing accrued yet — no yield to withdraw"
+                        : `Auditor withdrew ${d.claimedUsd} of accrued yield`,
+                    txHash: d.hash,
+                  };
+                }}
+              />
+            </Lane>
+
+            <Separator />
+
+            <Lane
+              title="Spend meter"
+              hint="Only an enrolled agent's payments reach the counter. A binding is permanent, so re-seeding the cert will not move it onto the new one."
+            >
+              <ActionButton
+                label="Enroll agent (cap $2,000)"
+                variant="outline"
+                onDone={refreshAll}
+                run={async () => {
+                  const d = await post<{ certId: number; floatCapUsd: string }>("/api/coverage", {
+                    action: "enroll-agent",
+                  });
+                  return `Agent enrolled on cert #${d.certId} · float cap ${d.floatCapUsd}`;
                 }}
               />
             </Lane>
@@ -161,7 +245,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Challenge → resolve"
                 variant="destructive"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{
                     outcome: string;
@@ -182,7 +266,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Withdraw reserve early"
                 variant="outline"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{ reverted: boolean; reason?: string; expected?: string }>(
                     "/api/cheat",
@@ -198,7 +282,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Withdraw stake early"
                 variant="outline"
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await post<{ reverted: boolean; reason?: string; expected?: string }>(
                     "/api/cheat",
@@ -238,7 +322,7 @@ export default function ControlPage() {
                 label="Fund my wallet"
                 variant="secondary"
                 disabled={!address}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={async () => {
                   const d = await wallet.fund(5000);
                   return `Funded → ${d.balanceUsd} USDC`;
@@ -252,7 +336,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Stake $1,500"
                 disabled={!address}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={w("stake", { amountUsd: 1500 }, () => "Staked $1,500")}
               />
               <ActionButton
@@ -260,7 +344,7 @@ export default function ControlPage() {
                 variant="outline"
                 disabled={!address || noCert}
                 title={noCert ? "No cert to attest — seed one first" : undefined}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={w("attest", { certId: certId ?? undefined }, () => `Attested cert #${certId}`)}
               />
             </Lane>
@@ -275,7 +359,7 @@ export default function ControlPage() {
                 label="Publish cert"
                 variant="outline"
                 disabled={!address}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={w(
                   "publish",
                   { agent: roles.agent.address },
@@ -286,7 +370,7 @@ export default function ControlPage() {
                 label="Deposit fee $500"
                 variant="outline"
                 disabled={!address}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={w(
                   "deposit-fee",
                   { auditor: roles.auditor.address, amountUsd: 500 },
@@ -301,7 +385,7 @@ export default function ControlPage() {
               <ActionButton
                 label="Pay $500 → Counterparty"
                 disabled={!address}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={w(
                   "pay",
                   { to: roles.counterparty.address, amountUsd: 500 },
@@ -321,7 +405,7 @@ export default function ControlPage() {
                 variant="destructive"
                 disabled={!address || noCert}
                 title={noCert ? "No cert to challenge — seed one first" : undefined}
-                onDone={refetch}
+                onDone={refreshAll}
                 run={w(
                   "challenge",
                   { certId: certId ?? undefined, victim: roles.counterparty.address, bondUsd: 100 },

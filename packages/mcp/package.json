@@ -1,0 +1,78 @@
+{
+  "name": "@bound/mcp",
+  "version": "0.1.0",
+  "private": false,
+  "description": "MCP server exposing Bound Protocol's agent tools to any MCP-capable client.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamnotdou/bound.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/iamnotdou/bound/tree/main/packages/mcp#readme",
+  "keywords": [
+    "bound-protocol",
+    "mcp",
+    "model-context-protocol",
+    "stellar",
+    "soroban",
+    "agent",
+    "x402"
+  ],
+  "sideEffects": false,
+  "bin": {
+    "bound-mcp": "./dist/bound-mcp.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./tools": {
+      "import": {
+        "types": "./dist/tools.d.mts",
+        "default": "./dist/tools.mjs"
+      },
+      "require": {
+        "types": "./dist/tools.d.ts",
+        "default": "./dist/tools.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepack": "pnpm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bound/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@stellar/stellar-sdk": "^16.0.1",
+    "zod": "^3.25.56"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.1",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}
