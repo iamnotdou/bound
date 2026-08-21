@@ -620,7 +620,10 @@ mod mock_staking_unregistered {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
+        testutils::{
+            storage::{Instance as _, Persistent as _},
+            Address as _, Ledger as _, MockAuth, MockAuthInvoke,
+        },
         Env, IntoVal,
     };
 
@@ -1017,5 +1020,108 @@ mod tests {
 
         // Renewal would otherwise wash the live dispute out of `verify`.
         publish_cert(&client, &env, &operator, &agent);
+    }
+
+    // ---- Defect L2: entries survive long enough to be archived -------------
+
+    /// A contract that writes a persistent entry and never extends anything —
+    /// the state every contract in this workspace was in before defect L2 was
+    /// fixed. It exists so the test below proves archival is real in this host
+    /// rather than assuming it.
+    #[contract]
+    pub struct Unbumped;
+
+    #[contractimpl]
+    impl Unbumped {
+        pub fn put(env: Env) {
+            env.storage()
+                .persistent()
+                .set(&Symbol::new(&env, "k"), &1i128);
+        }
+        pub fn get(env: Env) -> i128 {
+            env.storage()
+                .persistent()
+                .get(&Symbol::new(&env, "k"))
+                .unwrap_or(-1)
+        }
+    }
+
+    /// The control. Without a TTL extension the test host's default persistent
+    /// minimum is 4,096 ledgers, and once that lapses the entry is archived and
+    /// the *call* fails — it does not read back as a default. This is the
+    /// failure mode L2 was about, demonstrated rather than asserted in prose.
+    #[test]
+    #[should_panic(expected = "Storage, InternalError")]
+    fn test_an_unbumped_entry_really_does_archive() {
+        let env = Env::default();
+        let id = env.register(Unbumped, ());
+        let client = UnbumpedClient::new(&env, &id);
+        client.put();
+
+        env.as_contract(&id, || {
+            assert!(
+                env.storage().persistent().get_ttl(&Symbol::new(&env, "k")) < 4_096,
+                "the host's default persistent TTL should be the 4,096-ledger minimum"
+            );
+        });
+
+        // Past the TTL. The host aborts the whole call — note it names the
+        // *instance* key, so an un-bumped contract does not merely lose one
+        // entry, it stops answering at all. This escalates to a host error
+        // rather than a contract error, so `try_get` cannot catch it either;
+        // hence `should_panic` rather than an `is_err` assertion.
+        env.ledger().set_sequence_number(100_000);
+        client.get();
+    }
+
+    /// The fix. Same clock, same host, but the Registry extends its TTLs on the
+    /// write path, so everything the certificate needs is still live.
+    #[test]
+    fn test_published_certificate_survives_the_archival_horizon() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        client.attest(&auditor, &cert_id, &ALLOCATION);
+
+        // The TTLs were actually extended, not merely written. `extend_ttl`
+        // reports the remaining lifetime, which is `extend_to` counted from the
+        // current ledger.
+        env.as_contract(&client.address, || {
+            assert!(
+                env.storage().instance().get_ttl() >= TTL_EXTEND_TO - 1,
+                "instance TTL was not extended"
+            );
+            assert!(
+                env.storage()
+                    .persistent()
+                    .get_ttl(&DataKey::Certificate(cert_id))
+                    >= TTL_EXTEND_TO - 1,
+                "certificate TTL was not extended"
+            );
+            assert!(
+                env.storage()
+                    .persistent()
+                    .get_ttl(&DataKey::AgentCert(agent.clone()))
+                    >= TTL_EXTEND_TO - 1,
+                "agent mapping TTL was not extended"
+            );
+        });
+
+        // Past the horizon that archived the control contract's entry, and then
+        // some. Both the instance and the two persistent entries are still
+        // reachable, so `verify` still answers.
+        env.ledger().set_sequence_number(100_000);
+        assert_eq!(client.get_cert_id(&agent), cert_id);
+        assert!(client.verify(&agent).valid);
+        assert_eq!(
+            client.get_certificate(&cert_id).status,
+            CertStatus::Verified
+        );
     }
 }
