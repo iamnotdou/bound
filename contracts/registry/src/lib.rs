@@ -299,6 +299,23 @@ impl Registry {
         cert.expires_at
     }
 
+    /// When the certificate was published.
+    ///
+    /// The PremiumVault reads this together with `get_cert_expires_at` to price
+    /// coverage over `expires_at - issued_at`. Both fields are immutable once
+    /// published, which is the point: a premium priced from `now` would be a
+    /// function of when the operator chose to pay it, and an operator would
+    /// simply wait until the instant before expiry and buy a year of coverage
+    /// for a day's price.
+    pub fn get_cert_issued_at(env: Env, cert_id: u64) -> u64 {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.issued_at
+    }
+
     /// The instant after which nothing can still be proven against this
     /// certificate, and therefore the instant its collateral may unwind.
     ///

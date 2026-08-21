@@ -448,18 +448,20 @@ payable = min(harm, reserve_for_this_cert + allocation_for_this_cert)
 1. victim compensation  <- the operator's own reserve for THIS certificate only
 2. challenger fee       <- the same reserve, 10% of PROVEN HARM
 3. auditor slash        -> the TREASURY, capped by harm and by allocation
-4. (premium step — not built; documented gap)
+4. forfeited premium    -> the victim, capped by harm the reserve did not
+                           cover; the remainder + the unaccrued share -> TREASURY
 5. allocation retires; unslashed remainder returns to free stake
 6. certificate invalidated; challenger's bond returned
 ```
 
-| Rule                                                       | Attack it closes                                                                                                                                                                                       |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Victim paid **only** from the operator's own reserve       | A colluding operator paying its own colluder moves money from its left pocket to its right. Manufacturing a proof against yourself extracts nothing, so victim naming can stay as permissive as it is. |
-| Slashed stake goes **only** to the treasury                | Removes the prize. Nobody who can trigger a proof can receive the auditor's money.                                                                                                                     |
-| Challenger fee is a % of **proven harm**, from the reserve | v1's 20%-of-stake fee made hunting _auditors_ profitable rather than hunting _fraud_.                                                                                                                  |
-| Slash capped by allocation **and** by harm                 | A manufactured $10 breach cannot cost an auditor a $50,000 bond, and one bad certificate cannot destroy a book.                                                                                        |
-| Unslashed remainder returns to free stake                  | Otherwise auditor capital is stranded.                                                                                                                                                                 |
+| Rule                                                        | Attack it closes                                                                                                                                                                                       |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Victim paid **only** from the operator's own reserve        | A colluding operator paying its own colluder moves money from its left pocket to its right. Manufacturing a proof against yourself extracts nothing, so victim naming can stay as permissive as it is. |
+| Slashed stake goes **only** to the treasury                 | Removes the prize. Nobody who can trigger a proof can receive the auditor's money.                                                                                                                     |
+| Challenger fee is a % of **proven harm**, from the reserve  | v1's 20%-of-stake fee made hunting _auditors_ profitable rather than hunting _fraud_.                                                                                                                  |
+| Slash capped by allocation **and** by harm                  | A manufactured $10 breach cannot cost an auditor a $50,000 bond, and one bad certificate cannot destroy a book.                                                                                        |
+| Unslashed remainder returns to free stake                   | Otherwise auditor capital is stranded.                                                                                                                                                                 |
+| Forfeited premium to the victim is capped by uncovered harm | Otherwise a large premium could pay a victim more than the harm proven against the certificate, breaking the "capped by proven harm" rail.                                                             |
 
 `harm` for `InsufficientReserve` is the shortfall, claimed reserve minus actual.
 The named victim is deliberately not part of it: a named victim is a _filter, not
@@ -491,6 +493,175 @@ pool pays nothing.
 
 **Treasury.** Named once at `initialize`, with no admin and no upgrade path.
 Making it mutable would reopen the prize.
+
+### The premium economy — step 4, and the PremiumVault
+
+**Status: implemented, not deployed** (branch `feat/premium-economy`).
+
+Step 4 was a comment. It is now a contract.
+
+`contracts/premium-vault` is a **new, per-certificate** contract in the
+ReserveVault's storage style (`Coverage(cert_id)`). It is deliberately _not_ an
+extension of `fee-escrow`: that contract is a singleton whose `Released` flag
+never resets, so it pays out exactly once ever, and the ChallengeManager never
+calls it. That is known defect **L3**, and building a premium economy on top of
+it would inherit the defect rather than fix it. `fee-escrow` is untouched and
+stays off the settlement path.
+
+#### Pricing
+
+```
+premium = bound * rate_bps * duration_seconds / (10_000 * SECONDS_PER_YEAR)
+SECONDS_PER_YEAR = 31_536_000
+```
+
+`rate_bps` and `fee_bps` are **simple, transparent, configurable parameters set
+at `initialize`** — no actuarial model, no risk tiering, no external
+underwriter, all of which this milestone explicitly excludes. Risk-based pricing
+needs a loss history the protocol does not have, and inventing one in code would
+be a lie dressed as a model. There is no admin, so re-pricing means a fresh
+deployment. The deploy script ships 200 bps and a 10% fee share.
+
+Worked example, and the test that pins it: a **$1,500 bound at 200 bps for 90
+days** is `15_000_000_000 * 200 * 7_776_000 / (10_000 * 31_536_000)` =
+**73_972_602 stroops** ($7.3972602). The exact rational value carries a
+`.7397…` tail; integer division truncates it.
+
+**Truncation is a chosen direction, not an accident.** Every division truncates
+toward zero: the operator is charged **no more** than the exact price, and the
+auditor accrues **no more** than the exact figure, so the vault can never owe
+out more than it holds. Each error is at most one stroop (10⁻⁷ USDC). One real
+consequence, asserted rather than hidden: **linearity is not exact at arbitrary
+magnitudes.** Doubling the duration of the 90-day case gives 147_945_205, which
+is `2 × 73_972_602 + 1` — two truncated halves lose more than one truncated
+whole. The linearity test uses periods that divide `SECONDS_PER_YEAR` evenly, so
+the identity it asserts really is one, and a separate test pins the off-by-one
+where it bites.
+
+**Which duration: `expires_at - issued_at`, not `expires_at - now`.** Both are
+immutable fields of the certificate. Pricing from `now` would make the premium a
+function of _when the operator chose to call `pay_premium`_, and an operator
+would simply wait until the instant before expiry and buy a year of coverage for
+a day's price. Anchoring to `issued_at` removes the choice: the price is fixed at
+publish, and no transaction timing can move it.
+
+A zero-bound or zero-duration certificate prices at zero and is recorded as paid
+without moving a stroop. Neither is reachable through the Registry, which rejects
+both at `publish`, but the vault does not panic on them.
+
+#### Accrual and claiming
+
+The premium accrues to the certificate's auditor **straight-line over the
+coverage period**: `accrued = yield_pot * elapsed / duration`, clamped to
+`[0, yield_pot]`. It is yield on **staked** capital, so the certificate must be
+attested before coverage can be bought — there has to be an allocation for the
+yield to be yield _on_.
+
+**Claiming is allowed at any time, including mid-coverage.** Straight-line
+accrual makes that the natural reading: at every instant the accrued figure is
+precisely payment for coverage already delivered, and making the auditor wait
+until expiry would be an interest-free loan from the auditor to the protocol for
+no security gain. It is safe _because_ forfeiture takes only **unclaimed** yield,
+so an auditor who claims continuously is converting forfeitable yield into
+settled income as fast as they earn it.
+
+The honest cost, stated rather than glossed: **a diligent auditor who claims
+often forfeits almost nothing on a slash.** That is accepted, because the
+auditor's skin in the game is their **allocation**, which stays fully slashable
+however fast they claim. The premium is yield on that capital, not a second bond.
+Treating unclaimed premium as collateral would over-state the protocol's teeth.
+
+#### The protocol fee share
+
+`fee_bps` of each premium is transferred to the treasury **at payment time**,
+not held and released later. Holding it would create a second pot with its own
+release rules and its own way to get stuck — which is exactly what `fee-escrow`
+demonstrates. Nothing about the fee is contingent, so nothing needs deciding
+later. The auditor's pot is `premium - protocol_fee` and there is no path by
+which the auditor can reach the fee.
+
+#### Forfeiture, and step 4
+
+When an auditor is slashed for a certificate, they forfeit **unclaimed** yield on
+it. `PremiumVault::forfeit(cert_id, victim, victim_cap)` splits the pot:
+
+- **accrued-but-unclaimed → the victim**, capped by `victim_cap`;
+- **the excess over the cap, plus the entire unaccrued remainder → the
+  treasury**.
+
+`victim_cap` is `harm - victim_amount`: the harm the operator's own reserve did
+not already cover.
+
+**Why this does not break rule 1.** Victim compensation still comes only from the
+operator's own money, because **the premium _is_ the operator's money** — every
+stroop in that pot was paid in by this certificate's operator and has not yet
+been handed to anyone else. Paying a victim from it is the same
+left-pocket-to-right move that makes a self-dealing operator's "compensation" a
+wash.
+
+**Why this does not break rule 3.** The vault has no reference to
+`AuditorStaking` and moves only tokens it already holds. Nothing a challenger or
+victim can trigger can pay them the auditor's stake.
+
+**Why this does not break "capped by proven harm."** That is what `victim_cap`
+is for. Without it a large premium could pay a victim more than the harm proven
+against the certificate.
+
+**Already-claimed yield is not clawed back, and no clawback is attempted.** The
+money has left the contract. Writing a clawback that cannot work would be a lie
+in the code.
+
+#### Does forfeited premium raise `payable`? No — and the reason is arithmetic
+
+It was considered and rejected, because **it is provably a no-op.** `payable`
+binds through exactly two mins: `victim_amount = min(payable, reserve)` and
+`slash = min(payable - victim_amount, allocation)`. Adding a premium `P` gives
+`payable' = min(harm, reserve + allocation + P)`.
+
+- If `harm < reserve + allocation`, then `payable' = payable = harm`. Nothing
+  changes.
+- Otherwise `victim_amount` is `reserve` either way (since `payable ≥ reserve`),
+  and `slash` is capped at `allocation` either way (since
+  `payable' - reserve ≥ allocation`).
+
+So folding `P` into `payable` changes neither line — while making steps 1 and 3
+_read_ as though the premium could enlarge them. Keeping `payable` as the cap on
+**collateral** (reserve + allocation) and giving the premium its own explicit cap
+in step 4 is the same money with none of the ambiguity. It also honours what the
+original gap note promised: step 4 arrives without disturbing the amounts above
+it.
+
+The attack this closes is a readability one, which is the honest way to put it:
+there is no arithmetic attack either way, and the risk being managed is a future
+reader mis-reading the cap and "simplifying" one of the two mins away.
+
+#### Hygiene mode (`harm == 0`)
+
+The proof is true, nobody is evidenced as harmed and **the auditor is not
+slashed**, so nothing is forfeited to a victim.
+`PremiumVault::terminate(cert_id)` instead freezes accrual at the kill: the
+auditor **keeps** — and can still claim — the share they earned up to that
+instant, and the unaccrued remainder goes to the treasury.
+
+The remainder is deliberately **not** refunded to the operator. §10 already
+prices a hygiene kill as costing the operator their certificate, their reserve
+lockup _and their premium_: both hygiene predicates are manufacturable by the
+operator for the price of gas, and a refund would make manufacturing one free.
+
+#### Wiring
+
+`ChallengeManager::set_premium_vault(vault)` — one-shot, arbiter-gated, exactly
+like `set_router` and for the same reason: whoever names the vault names the
+contract that is handed the forfeited premium and told where to send it. It
+cannot be re-pointed.
+
+**Same trap as `set_router`, and it is worth stating twice.** If the vault is
+never set, step 4 is _silently skipped_ on every challenge — the vault still
+takes operators' money and never forfeits it — while every contract test passes.
+It is a skip rather than a panic so that a deployment predating the premium
+economy can still settle. `ChallengeManager::has_premium_vault()` exists so a
+deploy check can catch it, and `scripts/deploy-all.ts` makes the call with a
+comment saying why.
 
 ### The post-expiry timing bug
 
@@ -604,11 +775,28 @@ a way for an operator to escape a real reserve shortfall.
   0.1% are §7's numbers, adopted as-is. Both are attack surface: the window is
   free post-expiry coverage a hostile operator can plan around, and the floor is
   a band of payments that provably breach the covenant and are unprovable anyway.
-- **`set_router` has no deploy-script caller yet.** `scripts/deploy.ts` wires the
-  contracts through `initialize` only; until it also calls `set_router`, a fresh
-  deployment resolves both new predicates into `router_not_set`.
-- **No premium step.** Step 4 is a comment, not code. No PremiumVault exists and
-  none was built.
+- **A premium vault that is never wired is silently inert.** `set_premium_vault`
+  is one-shot and arbiter-gated; skipping it makes step 4 a no-op on every
+  challenge while the vault keeps accepting premiums. `has_premium_vault()` is
+  the check; nothing enforces it.
+- **Nothing forces an operator to buy coverage.** `pay_premium` is voluntary and
+  not a precondition of `publish`, `attest` or `verify`, so a certificate can be
+  fully valid with no premium behind it and step 4 settles as a no-op for it. The
+  milestone asks for premiums priced and accrued, not for coverage to be
+  compulsory; making it compulsory is a `publish`-time change and therefore a
+  Certificate/bindings change.
+- **A slashed auditor who claimed early loses almost nothing.** Continuous
+  claiming is deliberate (see above) and the allocation is the real
+  consequence — but the premium forfeiture is a weak deterrent by construction,
+  not a strong one.
+- **The premium address is not in `deployments/*.json` yet.** The contract map
+  lives in `packages/sdk/src`, which this branch does not touch; the address is
+  written to `.env.testnet` and the map gains its key in the cutover change that
+  regenerates bindings.
+- **`rate_bps` is one number for every certificate,** regardless of the auditor,
+  the operator or the bound's composition. That is the milestone's explicit
+  instruction, and it is also a real limitation: coverage is mispriced for
+  everybody except the median risk.
 - **The arbiter's harm figure is unbounded and unappealable.** It is capped by
   the certificate's collateral, but nothing checks it against evidence and there
   is no dispute path once it is stated. That is the same trust already placed in

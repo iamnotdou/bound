@@ -1,6 +1,6 @@
 # Working in this repo
 
-Bound Protocol: six Soroban contracts on Stellar, a TypeScript client over
+Bound Protocol: eight Soroban contracts on Stellar, a TypeScript client over
 generated bindings, and a Next.js app. This file is how work is done here. It
 serves humans and agents equally, and stays honest because both read it.
 
@@ -33,10 +33,10 @@ Run everything from the repo root.
 | `pnpm lint` / `lint:fix`       | eslint                                                                     | no      | no      |
 | `pnpm format` / `format:check` | prettier                                                                   | no      | no      |
 | `pnpm test` / `test:watch`     | unit tests                                                                 | no      | no      |
-| `pnpm test:contracts`          | `cargo test` — 102 tests, 7 contracts + the offline cross-contract harness | no      | no      |
+| `pnpm test:contracts`          | `cargo test` — 152 tests, 8 contracts + the offline cross-contract harness | no      | no      |
 | `pnpm lint:contracts`          | `cargo clippy -D warnings`                                                 | no      | no      |
 | `pnpm format:contracts`        | `cargo fmt --check`                                                        | no      | no      |
-| `pnpm build:contracts`         | 7 wasm artifacts                                                           | no      | no      |
+| `pnpm build:contracts`         | 8 wasm artifacts                                                           | no      | no      |
 | `pnpm test:e2e`                | 5 live smoke suites                                                        | **yes** | **yes** |
 | `pnpm demo`                    | 8-step end-to-end demo                                                     | **yes** | **yes** |
 | `pnpm deploy`                  | deploy contracts                                                           | **yes** | **yes** |
@@ -70,7 +70,7 @@ Each is a rule because the consequence is expensive or irreversible.
 
 | Path                                                | What lives there                                                                                                              |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `contracts/`                                        | 6 Soroban contracts (Rust workspace) + their tests, plus `integration-tests` (the offline cross-contract harness)             |
+| `contracts/`                                        | 8 Soroban contracts (Rust workspace) + their tests, plus `integration-tests` (the offline cross-contract harness)             |
 | `bindings/`                                         | **Generated** TypeScript clients — do not hand-edit                                                                           |
 | `packages/sdk/`                                     | `@bound/sdk` — the publishable client: `bound-client.ts` (the facade over all 6 bindings), config, deployments, money helpers |
 | `apps/dashboard/app/lib/`                           | App-only server code: secrets (`accounts.ts`), agent tools, tx building, UI config                                            |

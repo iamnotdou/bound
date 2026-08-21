@@ -41,6 +41,7 @@ export const contracts = {
   challengeManager: deployment.contracts.challengeManager,
   // undefined on a v1 deployment record — see Deployment.contracts.paymentRouter.
   paymentRouter: deployment.contracts.paymentRouter,
+  premiumVault: deployment.contracts.premiumVault,
   usdc: deployment.contracts.usdc,
 };
 

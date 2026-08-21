@@ -32,3 +32,8 @@ contracts/integration-tests/test_snapshots/
 # Stellar Asset Contract and a mock Registry alongside the router, so its
 # snapshots are ~35 KB each — ~900 KB of generated JSON that nothing asserts on.
 contracts/payment-router/test_snapshots/
+
+# And the same for the PremiumVault, which registers a Stellar Asset Contract
+# and a mock Registry per test: ~776 KB of generated JSON that nothing asserts
+# on.
+contracts/premium-vault/test_snapshots/

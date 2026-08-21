@@ -62,6 +62,9 @@ pub enum DataKey {
     /// The PaymentRouter, source of truth for `spent` and `post_expiry_spent`.
     /// Set once, after initialize — see `set_router`.
     Router,
+    /// The PremiumVault, source of the step-4 premium forfeiture. Set once,
+    /// after initialize — see `set_premium_vault`.
+    PremiumVault,
     /// Where slashed stake goes, and the only place it may go.
     Treasury,
     MinStake,
@@ -201,6 +204,45 @@ impl ChallengeManager {
             .instance()
             .get(&DataKey::Router)
             .expect("router_not_set")
+    }
+
+    /// Point this contract at the PremiumVault, which owns step 4 of the
+    /// settlement waterfall.
+    ///
+    /// A second one-shot call rather than a tenth `initialize` argument, for
+    /// exactly the reasons spelled out on `set_router`: `initialize`'s argument
+    /// list is the on-chain ABI, the deploy script and the committed bindings
+    /// pass it positionally, and widening it would break both at runtime.
+    ///
+    /// **Arbiter-authorized, and settable exactly once.** The vault named here
+    /// is handed the certificate's forfeited premium and told where to send it,
+    /// so whoever names it can name a contract that keeps the money. The arbiter
+    /// is already a trusted party at `initialize`, so requiring their signature
+    /// grants no new trust and closes the race. There is no re-pointing, for the
+    /// same reason the treasury cannot be re-pointed.
+    pub fn set_premium_vault(env: Env, premium_vault: Address) {
+        let arbiter: Address = env.storage().instance().get(&DataKey::Arbiter).unwrap();
+        arbiter.require_auth();
+        if env.storage().instance().has(&DataKey::PremiumVault) {
+            panic!("premium_vault_already_set");
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::PremiumVault, &premium_vault);
+    }
+
+    pub fn get_premium_vault(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::PremiumVault)
+            .expect("premium_vault_not_set")
+    }
+
+    /// Whether step 4 is live. False means a deployment that never called
+    /// `set_premium_vault`, in which case settlement silently skips the premium
+    /// step — see the comment on step 4 in `settle_fraud`.
+    pub fn has_premium_vault(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::PremiumVault)
     }
 
     // Anyone can submit a challenge — must post a bond to prevent spam.
@@ -529,6 +571,19 @@ impl ChallengeManager {
             .expect("router_not_set")
     }
 
+    /// The PremiumVault, if one was ever wired.
+    ///
+    /// Optional rather than `expect`ing, unlike `router()`. A deployment that
+    /// predates the premium economy — or one whose deploy script skipped
+    /// `set_premium_vault` — must still settle, and skipping a step that has no
+    /// money behind it is correct. THE TRAP IS THE SAME ONE `set_router` HAS:
+    /// a deployment that forgets the wiring looks completely healthy and
+    /// silently settles every challenge without step 4. `has_premium_vault()`
+    /// exists so a deploy check can catch it.
+    fn premium_vault(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PremiumVault)
+    }
+
     fn registry(env: &Env) -> Address {
         env.storage().instance().get(&DataKey::Registry).unwrap()
     }
@@ -599,7 +654,8 @@ impl ChallengeManager {
     //     1. victim compensation  <- the operator's OWN reserve for THIS cert
     //     2. challenger fee       <- the same reserve, % of PROVEN HARM
     //     3. auditor slash        -> the TREASURY, never victim or challenger
-    //     4. (premium step — not built; see the gap note in `settle_fraud`)
+    //     4. forfeited premium  -> the victim, capped by uncovered harm;
+    //                                the unaccrued remainder -> the TREASURY
     //     5. allocation retires; unslashed remainder returns to free stake
     //     6. certificate invalidated; challenger's bond returned
     //
@@ -764,12 +820,58 @@ impl ChallengeManager {
             );
         }
 
-        // 4. GAP — premium step. DESIGN-V2's premium economy would take a cut
-        //    here, before the allocation retires, and route it to whoever
-        //    underwrote the coverage. No PremiumVault exists yet, so nothing is
-        //    taken and nothing is escrowed for one. When it lands it goes here,
-        //    between the slash and the retirement, so that the amounts above are
-        //    unaffected by its arrival.
+        // 4. Forfeited premium. The auditor vouched for a certificate that has
+        //    now been proven harmful, so they forfeit the yield they have not
+        //    already withdrawn. `PremiumVault::forfeit` splits it: accrued-but-
+        //    unclaimed to the victim, capped below; everything else — the excess
+        //    over the cap plus the entire unaccrued remainder — to the treasury.
+        //
+        //    CONSISTENT WITH RULE 1, and this is the whole reason it is allowed
+        //    to reach the victim at all: **the premium is the operator's own
+        //    money.** Every stroop in that pot was paid in by this certificate's
+        //    operator and has not yet been handed to anyone. Paying a victim out
+        //    of it is the same left-pocket-to-right move that makes a
+        //    self-dealing operator's "compensation" a wash.
+        //
+        //    CONSISTENT WITH RULE 3: nothing here can move the auditor's stake.
+        //    The vault has no reference to AuditorStaking and moves only tokens
+        //    it already holds.
+        //
+        //    THE CAP is `harm - victim_amount`: the harm the operator's own
+        //    reserve did not already cover. Without it, a large premium could
+        //    pay a victim more than the harm proven against the certificate,
+        //    breaking the waterfall's "capped by proven harm" invariant.
+        //
+        //    WHY `payable` IS NOT RAISED BY THE FORFEITED PREMIUM. It was
+        //    considered and rejected, because it is arithmetically a no-op and a
+        //    readability loss. `payable` only ever binds through two mins:
+        //    `victim_amount = min(payable, reserve)` and
+        //    `slash = min(payable - victim_amount, allocation)`. Adding a
+        //    premium `P` gives `payable' = min(harm, reserve + allocation + P)`.
+        //    If `harm < reserve + allocation` nothing changes at all. Otherwise
+        //    `victim_amount` is `reserve` either way, and `slash` is capped at
+        //    `allocation` either way. So folding `P` into `payable` changes
+        //    neither line — while making steps 1 and 3 read as though the
+        //    premium could enlarge them. Keeping `payable` as the cap on
+        //    *collateral* (reserve + allocation), and giving the premium its own
+        //    explicit cap here, is the same amount of money with none of the
+        //    ambiguity. It also honours what the original gap note promised:
+        //    step 4 arrives without disturbing the amounts above it.
+        if let Some(pv) = Self::premium_vault(env) {
+            let victim_cap = harm - victim_amount;
+            env.invoke_contract::<i128>(
+                &pv,
+                &Symbol::new(env, "forfeit"),
+                Vec::from_array(
+                    env,
+                    [
+                        ch.cert_id.into_val(env),
+                        ch.victim.clone().into_val(env),
+                        victim_cap.into_val(env),
+                    ],
+                ),
+            );
+        }
 
         // 5. Retire the allocation: the unslashed remainder goes back to the
         //    auditor's FREE stake.
@@ -809,6 +911,25 @@ impl ChallengeManager {
             &Symbol::new(env, "retire_allocation"),
             Vec::from_array(env, [ch.cert_id.into_val(env)]),
         );
+
+        // Step 4 in hygiene mode. The auditor was not slashed and nobody is
+        // evidenced as harmed, so nothing is forfeited to a victim: accrual
+        // stops at the kill, the auditor keeps — and can still claim — the
+        // share they earned before it, and the unaccrued remainder goes to the
+        // treasury.
+        //
+        // The remainder is deliberately NOT refunded to the operator. DESIGN-V2
+        // §10 already prices a hygiene kill as costing the operator "their own
+        // certificate, their reserve lockup and their premium": both hygiene
+        // predicates are manufacturable by the operator at the price of gas, and
+        // a refund would make manufacturing one free.
+        if let Some(pv) = Self::premium_vault(env) {
+            env.invoke_contract::<i128>(
+                &pv,
+                &Symbol::new(env, "terminate"),
+                Vec::from_array(env, [ch.cert_id.into_val(env)]),
+            );
+        }
 
         Self::invalidate(env, registry, ch.cert_id);
         Self::return_bond(env, ch);
