@@ -36,6 +36,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Trusted Publishing (OIDC) needs npm >= 11.5.1; Node 22.14 ships 10.x.
+      - run: npm install -g npm@latest
+
       - run: pnpm install --frozen-lockfile
 
       # The tag is the release contract: fail loudly rather than publish a
@@ -54,10 +57,14 @@ jobs:
 
       - run: pnpm build
 
-      # NPM_TOKEN must be added under repo Settings → Secrets and variables →
-      # Actions by the maintainer before this workflow can publish.
+      # No token. npm Trusted Publishing authenticates this workflow by its OIDC
+      # identity, which is why `id-token: write` is granted above. Configure the
+      # trusted publisher once on npmjs.com (package → Settings → Trusted
+      # Publisher: repository iamnotdou/bound, workflow release.yml).
+      #
+      # This replaces NPM_TOKEN deliberately. A token has to bypass the account's
+      # 2FA to work unattended, which repeatedly failed here with EOTP; OIDC has
+      # no second factor to bypass because there is no shared secret at all.
       - name: Publish @bound/sdk
         working-directory: packages/sdk
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
