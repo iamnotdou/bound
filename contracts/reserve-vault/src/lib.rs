@@ -1,14 +1,20 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+};
 
 #[contracttype]
 pub enum DataKey {
-    Operator,
+    Registry,
     ChallengeManager,
     Token,
-    Balance,
-    Locked,
-    UnlockAt,
+    // Per-certificate reserve accounting. A single vault contract serves many
+    // certificates, and each certificate's money is walled off from every other
+    // one: funding cert A can never back cert B, and settling against A can
+    // never draw down B.
+    Balance(u64),
+    Locked(u64),
+    UnlockAt(u64),
 }
 
 #[contract]
@@ -16,29 +22,29 @@ pub struct ReserveVault;
 
 #[contractimpl]
 impl ReserveVault {
-    pub fn initialize(
-        env: Env,
-        operator: Address,
-        challenge_manager: Address,
-        token: Address,
-        unlock_at: u64,
-    ) {
-        if env.storage().instance().has(&DataKey::Operator) {
+    pub fn initialize(env: Env, registry: Address, challenge_manager: Address, token: Address) {
+        if env.storage().instance().has(&DataKey::Registry) {
             panic!("already_initialized");
         }
-        // Reserve stays locked to the operator until the certificate expires.
-        env.storage().instance().set(&DataKey::Operator, &operator);
+        // The vault owns no operator of its own. Every certificate names its own
+        // operator in the Registry, and that is the only address allowed to fund
+        // or reclaim that certificate's reserve.
+        env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage()
             .instance()
             .set(&DataKey::ChallengeManager, &challenge_manager);
         env.storage().instance().set(&DataKey::Token, &token);
-        env.storage().instance().set(&DataKey::Balance, &0i128);
-        env.storage().instance().set(&DataKey::Locked, &false);
-        env.storage().instance().set(&DataKey::UnlockAt, &unlock_at);
     }
 
-    pub fn deposit(env: Env, amount: i128) {
-        let operator: Address = env.storage().instance().get(&DataKey::Operator).unwrap();
+    pub fn deposit(env: Env, cert_id: u64, amount: i128) {
+        if amount <= 0 {
+            panic!("invalid_amount");
+        }
+
+        // Authenticate against *this certificate's* operator, read live from the
+        // Registry. Any operator can fund their own certificate; nobody can fund
+        // somebody else's.
+        let operator = Self::cert_operator(&env, cert_id);
         operator.require_auth();
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
@@ -48,19 +54,42 @@ impl ReserveVault {
             &amount,
         );
 
-        let balance: i128 = env.storage().instance().get(&DataKey::Balance).unwrap();
+        let balance = Self::balance_of(&env, cert_id)
+            .checked_add(amount)
+            .expect("reserve_overflow");
+        Self::set_balance(&env, cert_id, balance);
+
+        // Reserve stays locked to the operator until the certificate expires.
         env.storage()
-            .instance()
-            .set(&DataKey::Balance, &(balance + amount));
-        env.storage().instance().set(&DataKey::Locked, &true);
+            .persistent()
+            .set(&DataKey::Locked(cert_id), &true);
+        env.storage().persistent().set(
+            &DataKey::UnlockAt(cert_id),
+            &Self::cert_expires_at(&env, cert_id),
+        );
     }
 
-    pub fn get_balance(env: Env) -> i128 {
-        env.storage().instance().get(&DataKey::Balance).unwrap_or(0)
+    pub fn get_balance(env: Env, cert_id: u64) -> i128 {
+        Self::balance_of(&env, cert_id)
+    }
+
+    pub fn is_locked(env: Env, cert_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Locked(cert_id))
+            .unwrap_or(false)
+    }
+
+    pub fn get_unlock_at(env: Env, cert_id: u64) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::UnlockAt(cert_id))
+            .unwrap_or(0)
     }
 
     // Only ChallengeManager can call this — compensates a harmed counterparty
-    pub fn release_to_victim(env: Env, victim: Address, amount: i128) {
+    // out of the reserve of the certificate under challenge, and no other.
+    pub fn release_to_victim(env: Env, cert_id: u64, victim: Address, amount: i128) {
         let cm: Address = env
             .storage()
             .instance()
@@ -68,7 +97,11 @@ impl ReserveVault {
             .unwrap();
         cm.require_auth();
 
-        let balance: i128 = env.storage().instance().get(&DataKey::Balance).unwrap();
+        if amount <= 0 {
+            panic!("invalid_amount");
+        }
+
+        let balance = Self::balance_of(&env, cert_id);
         if amount > balance {
             panic!("insufficient_reserve");
         }
@@ -80,22 +113,24 @@ impl ReserveVault {
             &amount,
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::Balance, &(balance - amount));
+        Self::set_balance(&env, cert_id, balance - amount);
     }
 
-    // Operator reclaims reserve only after certificate expiry, with no incidents
-    pub fn release_to_operator(env: Env) {
-        let operator: Address = env.storage().instance().get(&DataKey::Operator).unwrap();
+    // Operator reclaims this certificate's reserve only after its expiry.
+    pub fn release_to_operator(env: Env, cert_id: u64) {
+        let operator = Self::cert_operator(&env, cert_id);
         operator.require_auth();
 
-        let unlock_at: u64 = env.storage().instance().get(&DataKey::UnlockAt).unwrap();
+        let unlock_at: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UnlockAt(cert_id))
+            .unwrap_or_else(|| Self::cert_expires_at(&env, cert_id));
         if env.ledger().timestamp() < unlock_at {
             panic!("reserve_still_locked");
         }
 
-        let balance: i128 = env.storage().instance().get(&DataKey::Balance).unwrap();
+        let balance = Self::balance_of(&env, cert_id);
         if balance == 0 {
             return;
         }
@@ -107,35 +142,118 @@ impl ReserveVault {
             &balance,
         );
 
-        env.storage().instance().set(&DataKey::Balance, &0i128);
-        env.storage().instance().set(&DataKey::Locked, &false);
+        Self::set_balance(&env, cert_id, 0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Locked(cert_id), &false);
+    }
+
+    // ----- internals -----
+
+    fn balance_of(env: &Env, cert_id: u64) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Balance(cert_id))
+            .unwrap_or(0)
+    }
+
+    fn set_balance(env: &Env, cert_id: u64, amount: i128) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(cert_id), &amount);
+    }
+
+    fn registry(env: &Env) -> Address {
+        env.storage().instance().get(&DataKey::Registry).unwrap()
+    }
+
+    fn cert_operator(env: &Env, cert_id: u64) -> Address {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_operator"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn cert_expires_at(env: &Env, cert_id: u64) -> u64 {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_expires_at"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+}
+
+#[cfg(test)]
+mod mock_registry {
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+    #[contracttype]
+    pub enum MockKey {
+        Operator(u64),
+        ExpiresAt(u64),
+    }
+
+    #[contract]
+    pub struct MockRegistry;
+
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn set_cert(env: Env, cert_id: u64, operator: Address, expires_at: u64) {
+            env.storage()
+                .persistent()
+                .set(&MockKey::Operator(cert_id), &operator);
+            env.storage()
+                .persistent()
+                .set(&MockKey::ExpiresAt(cert_id), &expires_at);
+        }
+
+        pub fn get_cert_operator(env: Env, cert_id: u64) -> Address {
+            env.storage()
+                .persistent()
+                .get(&MockKey::Operator(cert_id))
+                .expect("certificate_not_found")
+        }
+
+        pub fn get_cert_expires_at(env: Env, cert_id: u64) -> u64 {
+            env.storage()
+                .persistent()
+                .get(&MockKey::ExpiresAt(cert_id))
+                .expect("certificate_not_found")
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::mock_registry::{MockRegistry, MockRegistryClient};
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _},
         Env,
     };
 
+    fn setup(env: &Env) -> (ReserveVaultClient<'_>, MockRegistryClient<'_>, Address) {
+        let cm = Address::generate(env);
+        let token = Address::generate(env);
+        let registry_id = env.register(MockRegistry, ());
+        let contract_id = env.register(ReserveVault, ());
+        let client = ReserveVaultClient::new(env, &contract_id);
+        client.initialize(&registry_id, &cm, &token);
+        (client, MockRegistryClient::new(env, &registry_id), cm)
+    }
+
     #[test]
-    fn test_deposit_updates_balance() {
+    fn test_balance_starts_at_zero_per_certificate() {
         let env = Env::default();
         env.mock_all_auths();
+        let (client, _registry, _cm) = setup(&env);
 
-        let operator = Address::generate(&env);
-        let cm = Address::generate(&env);
-        let token = Address::generate(&env);
-
-        let contract_id = env.register(ReserveVault, ());
-        let client = ReserveVaultClient::new(&env, &contract_id);
-
-        client.initialize(&operator, &cm, &token, &1000u64);
-        // Note: actual token transfer tested in integration tests
-        // Here we verify state management logic
-        assert_eq!(client.get_balance(), 0);
+        // Note: actual token transfer tested in integration tests.
+        // Here we verify state management logic.
+        assert_eq!(client.get_balance(&1u64), 0);
+        assert_eq!(client.get_balance(&2u64), 0);
+        assert!(!client.is_locked(&1u64));
     }
 
     #[test]
@@ -143,16 +261,10 @@ mod tests {
     fn test_double_initialize_panics() {
         let env = Env::default();
         env.mock_all_auths();
+        let (client, _registry, cm) = setup(&env);
 
-        let operator = Address::generate(&env);
-        let cm = Address::generate(&env);
         let token = Address::generate(&env);
-
-        let contract_id = env.register(ReserveVault, ());
-        let client = ReserveVaultClient::new(&env, &contract_id);
-
-        client.initialize(&operator, &cm, &token, &1000u64);
-        client.initialize(&operator, &cm, &token, &1000u64); // should panic
+        client.initialize(&cm, &cm, &token); // should panic
     }
 
     #[test]
@@ -160,16 +272,12 @@ mod tests {
     fn test_release_to_operator_before_unlock_panics() {
         let env = Env::default();
         env.mock_all_auths();
+        let (client, registry, _cm) = setup(&env);
 
         let operator = Address::generate(&env);
-        let cm = Address::generate(&env);
-        let token = Address::generate(&env);
+        registry.set_cert(&1u64, &operator, &5000u64);
 
-        let contract_id = env.register(ReserveVault, ());
-        let client = ReserveVaultClient::new(&env, &contract_id);
-
-        client.initialize(&operator, &cm, &token, &5000u64);
         env.ledger().set_timestamp(1000); // before unlock_at — still locked
-        client.release_to_operator(); // should panic
+        client.release_to_operator(&1u64); // should panic
     }
 }

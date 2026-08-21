@@ -250,6 +250,27 @@ impl Registry {
         cert.auditor.expect("cert_has_no_auditor")
     }
 
+    // ReserveVault reads this to authenticate deposits and reclaims against the
+    // operator who actually owns the certificate, rather than one global operator.
+    pub fn get_cert_operator(env: Env, cert_id: u64) -> Address {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.operator
+    }
+
+    // ReserveVault reads this to lock a certificate's reserve until its expiry.
+    pub fn get_cert_expires_at(env: Env, cert_id: u64) -> u64 {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.expires_at
+    }
+
     pub fn get_cert_reserve(env: Env, cert_id: u64) -> i128 {
         let cert: Certificate = env
             .storage()

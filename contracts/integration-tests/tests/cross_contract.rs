@@ -61,6 +61,10 @@ struct BoundWorld {
     token_admin: Address,
     operator: Address,
     agent: Address,
+    /// A second, entirely unprivileged operator with their own agent. Used by
+    /// the per-certificate isolation tests.
+    operator2: Address,
+    agent2: Address,
     auditor: Address,
     challenger: Address,
     victim: Address,
@@ -70,15 +74,18 @@ struct BoundWorld {
 impl BoundWorld {
     /// Register every contract, wire them together, and fund the actors.
     ///
-    /// `unlock_at` is the reserve vault's unlock timestamp (in the real system,
-    /// the certificate's expiry).
-    fn new(unlock_at: u64) -> Self {
+    /// The vault holds no unlock timestamp of its own: each certificate's
+    /// reserve unlocks at that certificate's own `expires_at`, read from the
+    /// Registry when the reserve is funded.
+    fn new() -> Self {
         let env = Env::default();
         env.mock_all_auths();
 
         let token_admin = Address::generate(&env);
         let operator = Address::generate(&env);
         let agent = Address::generate(&env);
+        let operator2 = Address::generate(&env);
+        let agent2 = Address::generate(&env);
         let auditor = Address::generate(&env);
         let challenger = Address::generate(&env);
         let victim = Address::generate(&env);
@@ -99,12 +106,7 @@ impl BoundWorld {
         let challenge_manager = env.register(ChallengeManager, ());
 
         RegistryClient::new(&env, &registry).initialize(&challenge_manager, &staking);
-        ReserveVaultClient::new(&env, &vault).initialize(
-            &operator,
-            &challenge_manager,
-            &token,
-            &unlock_at,
-        );
+        ReserveVaultClient::new(&env, &vault).initialize(&registry, &challenge_manager, &token);
         AuditorStakingClient::new(&env, &staking).initialize(
             &challenge_manager,
             &registry,
@@ -133,6 +135,8 @@ impl BoundWorld {
             token_admin,
             operator,
             agent,
+            operator2,
+            agent2,
             auditor,
             challenger,
             victim,
@@ -141,6 +145,7 @@ impl BoundWorld {
 
         for who in [
             world.operator.clone(),
+            world.operator2.clone(),
             world.auditor.clone(),
             world.challenger.clone(),
         ] {
@@ -185,9 +190,28 @@ impl BoundWorld {
     }
 
     fn publish_cert(&self, bound: i128, reserve_claim: i128, expires_at: u64) -> u64 {
-        self.registry().publish(
+        self.publish_cert_for(
             &self.operator,
             &self.agent,
+            bound,
+            reserve_claim,
+            expires_at,
+        )
+    }
+
+    /// Publish on behalf of an arbitrary operator/agent pair, so a single vault
+    /// can be made to hold reserves for two unrelated certificates.
+    fn publish_cert_for(
+        &self,
+        operator: &Address,
+        agent: &Address,
+        bound: i128,
+        reserve_claim: i128,
+        expires_at: u64,
+    ) -> u64 {
+        self.registry().publish(
+            operator,
+            agent,
             &bound,
             &reserve_claim,
             &expires_at,
@@ -200,8 +224,12 @@ impl BoundWorld {
         self.registry().attest(&self.auditor, &cert_id);
     }
 
-    fn deposit_reserve(&self, amount: i128) {
-        self.vault().deposit(&amount);
+    fn deposit_reserve(&self, cert_id: u64, amount: i128) {
+        self.vault().deposit(&cert_id, &amount);
+    }
+
+    fn reserve_of(&self, cert_id: u64) -> i128 {
+        self.vault().get_balance(&cert_id)
     }
 
     fn deposit_fee(&self, amount: i128) {
@@ -212,6 +240,12 @@ impl BoundWorld {
     fn challenge(&self, cert_id: u64, proof: ProofType, bond: i128) -> u64 {
         self.cm()
             .challenge(&self.challenger, &cert_id, &proof, &self.victim, &bond)
+    }
+
+    /// Restore blanket auth mocking after a test has narrowed it with
+    /// `mock_auths`.
+    fn mock_all_auths(&self) {
+        self.env.mock_all_auths();
     }
 
     fn resolve(&self, challenge_id: u64) {
@@ -233,7 +267,7 @@ const BOUND: i128 = 5_000_0000000;
 const RESERVE_CLAIM: i128 = 1_000_0000000;
 
 fn staked_and_attested() -> (BoundWorld, u64) {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
@@ -249,7 +283,7 @@ fn staked_and_attested() -> (BoundWorld, u64) {
 /// `verify` reports the certificate valid — across all five contracts at once.
 #[test]
 fn happy_path_publishes_funds_attests_and_verifies() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
 
     // Auditor puts up capital and thereby becomes registered.
@@ -269,8 +303,8 @@ fn happy_path_publishes_funds_attests_and_verifies() {
     assert!(!w.registry().verify(&w.agent).valid);
 
     // Operator pre-funds the reserve with real tokens.
-    w.deposit_reserve(RESERVE_CLAIM);
-    assert_eq!(w.vault().get_balance(), RESERVE_CLAIM);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    assert_eq!(w.vault().get_balance(&cert_id), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.operator), FUNDING - RESERVE_CLAIM);
 
@@ -297,21 +331,21 @@ fn happy_path_publishes_funds_attests_and_verifies() {
 /// out of pocket when nothing went wrong.
 #[test]
 fn clean_expiry_returns_stake_and_reserve() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    w.deposit_reserve(RESERVE_CLAIM);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
     w.attest(cert_id);
 
     w.set_time(EXPIRES_AT + 1);
     w.staking().release(&w.auditor);
-    w.vault().release_to_operator();
+    w.vault().release_to_operator(&cert_id);
 
     assert_eq!(w.balance(&w.auditor), FUNDING);
     assert_eq!(w.balance(&w.operator), FUNDING);
     assert_eq!(w.staking().get_stake(&w.auditor), 0);
-    assert_eq!(w.vault().get_balance(), 0);
+    assert_eq!(w.vault().get_balance(&cert_id), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -329,14 +363,14 @@ fn clean_expiry_returns_stake_and_reserve() {
 ///   bond                          → returned to the challenger in full
 #[test]
 fn insufficient_reserve_fraud_slashes_auditor_and_pays_victim() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
 
     // The lie: the certificate claims $1,000 of reserve, only $400 is deposited.
     let actually_deposited = 400_0000000i128;
-    w.deposit_reserve(actually_deposited);
+    w.deposit_reserve(cert_id, actually_deposited);
     w.attest(cert_id);
     assert!(w.registry().verify(&w.agent).valid);
 
@@ -370,7 +404,7 @@ fn insufficient_reserve_fraud_slashes_auditor_and_pays_victim() {
     assert_eq!(w.balance(&w.victim), 880_0000000);
 
     // Vault is empty and reports it.
-    assert_eq!(w.vault().get_balance(), 0);
+    assert_eq!(w.vault().get_balance(&cert_id), 0);
     assert_eq!(w.balance(&w.vault), 0);
 
     // Challenger: bond returned in full, plus the 20% finder's fee.
@@ -402,7 +436,7 @@ fn insufficient_reserve_fraud_slashes_auditor_and_pays_victim() {
 #[test]
 fn insufficient_reserve_fraud_with_empty_vault_pays_from_stake_only() {
     let (w, cert_id) = staked_and_attested();
-    assert_eq!(w.vault().get_balance(), 0);
+    assert_eq!(w.vault().get_balance(&cert_id), 0);
 
     let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
     w.resolve(challenge_id);
@@ -422,11 +456,11 @@ fn insufficient_reserve_fraud_with_empty_vault_pays_from_stake_only() {
 /// challenger forfeits their bond to the ChallengeManager.
 #[test]
 fn insufficient_reserve_no_fraud_forfeits_the_challengers_bond() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    w.deposit_reserve(RESERVE_CLAIM); // fully funded — the claim is honest
+    w.deposit_reserve(cert_id, RESERVE_CLAIM); // fully funded — the claim is honest
     w.attest(cert_id);
 
     let auditor_before = w.balance(&w.auditor);
@@ -445,7 +479,7 @@ fn insufficient_reserve_no_fraud_forfeits_the_challengers_bond() {
     assert_eq!(w.balance(&w.staking), AUDITOR_STAKE);
     assert_eq!(w.balance(&w.auditor), auditor_before);
     assert_eq!(w.balance(&w.operator), operator_before);
-    assert_eq!(w.vault().get_balance(), RESERVE_CLAIM);
+    assert_eq!(w.vault().get_balance(&cert_id), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.victim), 0);
 
@@ -466,11 +500,11 @@ fn insufficient_reserve_no_fraud_forfeits_the_challengers_bond() {
 /// `actual < claimed`, not `actual != claimed`.
 #[test]
 fn over_funded_reserve_is_not_fraud() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    w.deposit_reserve(RESERVE_CLAIM + 1_0000000);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM + 1_0000000);
     w.attest(cert_id);
 
     let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
@@ -538,7 +572,7 @@ fn certificate_becomes_invalid_after_expiry() {
 #[test]
 fn privileged_entry_points_reject_unauthorized_callers() {
     let (w, cert_id) = staked_and_attested();
-    w.deposit_reserve(RESERVE_CLAIM);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
 
     // Drop every mocked signature: from here on, require_auth actually bites.
     w.env.set_auths(&[]);
@@ -551,15 +585,15 @@ fn privileged_entry_points_reject_unauthorized_callers() {
     // Only the ChallengeManager may pay a victim out of the reserve.
     assert!(w
         .vault()
-        .try_release_to_victim(&w.challenger, &RESERVE_CLAIM)
+        .try_release_to_victim(&cert_id, &w.challenger, &RESERVE_CLAIM)
         .is_err());
     // Only the ChallengeManager may kill a certificate.
     assert!(w.registry().try_invalidate(&cert_id).is_err());
     // Only the Registry may bond an auditor's stake.
     assert!(w.staking().try_lock(&w.auditor, &99_999u64).is_err());
     // Only the operator may deposit into (or reclaim from) the vault.
-    assert!(w.vault().try_deposit(&1_0000000i128).is_err());
-    assert!(w.vault().try_release_to_operator().is_err());
+    assert!(w.vault().try_deposit(&cert_id, &1_0000000i128).is_err());
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
     // The challenger must sign their own bond.
     assert!(w
         .cm()
@@ -574,7 +608,7 @@ fn privileged_entry_points_reject_unauthorized_callers() {
 
     // Nothing moved.
     assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
-    assert_eq!(w.vault().get_balance(), RESERVE_CLAIM);
+    assert_eq!(w.vault().get_balance(&cert_id), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.victim), 0);
     assert_eq!(
         w.registry().get_certificate(&cert_id).status,
@@ -587,7 +621,7 @@ fn privileged_entry_points_reject_unauthorized_callers() {
 /// satisfy it.
 #[test]
 fn attest_rejects_a_signature_from_the_wrong_address() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
@@ -614,7 +648,7 @@ fn attest_rejects_a_signature_from_the_wrong_address() {
 /// reads `is_registered` from AuditorStaking cross-contract to decide.
 #[test]
 fn under_staked_auditor_cannot_attest() {
-    let w = BoundWorld::new(EXPIRES_AT);
+    let w = BoundWorld::new();
     w.set_time(1_000);
     w.stake_auditor(MIN_AUDITOR_STAKE - 1);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
@@ -741,29 +775,227 @@ fn defect_fee_escrow_is_never_slashed_and_pays_out_only_once() {
     assert_eq!(w.balance(&w.escrow), fee);
 }
 
-/// KNOWN DEFECT (v2): the ReserveVault is a singleton with a single `Balance`
-/// and a single `UnlockAt`, but `Certificate` stores a per-certificate
-/// `reserve_vault_contract` as though each certificate had its own. With one
-/// shared vault, a second certificate's deposit inflates the first
-/// certificate's provable reserve — the `InsufficientReserve` proof reads
-/// `get_balance()` with no certificate argument at all.
+// ---------------------------------------------------------------------------
+// Per-certificate reserve accounting (was defect L5 / DESIGN-V2 §9)
+// ---------------------------------------------------------------------------
+
+/// This test used to be `defect_reserve_vault_balance_is_shared_across_certificates`,
+/// and it asserted the opposite of what it asserts now.
 ///
-/// v2 must scope reserves per certificate.
+/// Defect L5: the ReserveVault kept a single `Balance` and the
+/// `InsufficientReserve` proof called `get_balance()` with **no certificate
+/// argument**, so any deposit — by anyone, for any certificate — made an
+/// entirely unfunded certificate read as fully backed. A genuine fraud proof
+/// resolved `ChallengeFails` and the auditor kept their stake. That defeated
+/// the protocol's only trustless proof.
+///
+/// Reserves are now keyed by certificate id, so an unrelated deposit is
+/// invisible to this certificate's proof: the fraud is still proven, the
+/// auditor is still slashed, and the unrelated reserve is left where it was.
 #[test]
-fn defect_reserve_vault_balance_is_shared_across_certificates() {
+fn unrelated_deposit_does_not_rescue_an_unfunded_certificate() {
     let (w, cert_id) = staked_and_attested();
-    assert_eq!(w.vault().get_balance(), 0);
+    assert_eq!(w.reserve_of(cert_id), 0);
 
-    // A completely unrelated deposit — the vault has no idea which certificate
-    // it belongs to — makes the under-funded certificate look fully backed.
-    w.deposit_reserve(RESERVE_CLAIM);
+    // A second, entirely unrelated certificate is funded to the hilt.
+    let other_id = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(other_id, RESERVE_CLAIM);
+    assert_eq!(w.reserve_of(other_id), RESERVE_CLAIM);
+    // ...and the challenged certificate is still empty. Under L5 these were the
+    // same number.
+    assert_eq!(w.reserve_of(cert_id), 0);
 
+    let victim_before = w.balance(&w.victim);
     let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
     w.resolve(challenge_id);
 
-    // The fraud proof fails even though nothing was ever reserved *for this cert*.
-    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeFails);
-    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    // The fraud proof UPHOLDS, and the auditor is slashed to zero.
+    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(w.staking().get_stake(&w.auditor), 0);
+    assert_eq!(w.balance(&w.staking), 0);
+    assert_eq!(
+        w.balance(&w.victim),
+        victim_before + AUDITOR_STAKE - AUDITOR_STAKE / 5
+    );
+    assert_eq!(w.balance(&w.challenger), FUNDING + AUDITOR_STAKE / 5);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+
+    // The unrelated certificate's reserve was neither spent nor counted.
+    assert_eq!(w.reserve_of(other_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+}
+
+/// Two certificates share one vault contract. Funding one must not back the
+/// other, and `get_balance` must answer per certificate.
+#[test]
+fn funding_one_certificate_does_not_back_another_in_the_same_vault() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+
+    let cert_a = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    let cert_b = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    assert_ne!(cert_a, cert_b);
+
+    assert_eq!(w.reserve_of(cert_a), 0);
+    assert_eq!(w.reserve_of(cert_b), 0);
+
+    let a_funding = 700_0000000i128;
+    w.deposit_reserve(cert_a, a_funding);
+
+    // A's money is A's alone.
+    assert_eq!(w.reserve_of(cert_a), a_funding);
+    assert_eq!(w.reserve_of(cert_b), 0);
+    // The vault contract itself custodies the sum.
+    assert_eq!(w.balance(&w.vault), a_funding);
+    assert_eq!(w.balance(&w.operator), FUNDING - a_funding);
+    assert_eq!(w.balance(&w.operator2), FUNDING);
+
+    let b_funding = 250_0000000i128;
+    w.deposit_reserve(cert_b, b_funding);
+    assert_eq!(w.reserve_of(cert_a), a_funding);
+    assert_eq!(w.reserve_of(cert_b), b_funding);
+    assert_eq!(w.balance(&w.vault), a_funding + b_funding);
+    assert_eq!(w.balance(&w.operator2), FUNDING - b_funding);
+
+    // Each certificate's reserve unlocks at its own certificate's expiry.
+    assert!(w.vault().is_locked(&cert_a));
+    assert!(w.vault().is_locked(&cert_b));
+    assert_eq!(w.vault().get_unlock_at(&cert_a), EXPIRES_AT);
+}
+
+/// Settlement isolation: proving fraud against certificate A drains A's reserve
+/// to the victim and leaves B's reserve byte-identical.
+#[test]
+fn fraud_settlement_against_one_certificate_leaves_the_others_reserve_untouched() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+
+    let cert_a = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    let cert_b = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.attest(cert_a);
+
+    // A is under-funded (the fraud); B is fully funded and innocent.
+    let a_funding = 400_0000000i128;
+    w.deposit_reserve(cert_a, a_funding);
+    w.deposit_reserve(cert_b, RESERVE_CLAIM);
+
+    let b_before = w.reserve_of(cert_b);
+    assert_eq!(b_before, RESERVE_CLAIM);
+
+    let challenge_id = w.challenge(cert_a, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(challenge_id);
+    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
+
+    // A's reserve is drained to the victim, alongside the slashed stake.
+    assert_eq!(w.reserve_of(cert_a), 0);
+    assert_eq!(
+        w.balance(&w.victim),
+        AUDITOR_STAKE - AUDITOR_STAKE / 5 + a_funding
+    );
+
+    // B's reserve did not move by a single stroop, and neither did operator2.
+    assert_eq!(w.reserve_of(cert_b), b_before);
+    assert_eq!(w.reserve_of(cert_b), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.operator2), FUNDING - RESERVE_CLAIM);
+
+    // B is still live and still verifiable.
+    assert_eq!(
+        w.registry().get_certificate(&cert_b).status,
+        CertStatus::Pending
+    );
+
+    // Conservation across every account that holds money in this scenario.
+    let total = w.balance(&w.operator)
+        + w.balance(&w.operator2)
+        + w.balance(&w.auditor)
+        + w.balance(&w.challenger)
+        + w.balance(&w.victim)
+        + w.balance(&w.vault)
+        + w.balance(&w.staking)
+        + w.balance(&w.challenge_manager);
+    assert_eq!(total, FUNDING * 4);
+
+    // B's operator can still reclaim it in full once B expires.
+    w.set_time(EXPIRES_AT + 1);
+    w.vault().release_to_operator(&cert_b);
+    assert_eq!(w.balance(&w.operator2), FUNDING);
+    assert_eq!(w.reserve_of(cert_b), 0);
+    assert_eq!(w.balance(&w.vault), 0);
+}
+
+/// The second face of defect L5: the vault authenticated deposits against one
+/// global `Operator` stored at `initialize()`, so no other operator could fund
+/// a reserve at all. Authentication is now per certificate — read live from the
+/// Registry — so any operator can fund their own certificate, and only their
+/// own.
+#[test]
+fn an_arbitrary_operator_can_fund_only_their_own_certificate() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+
+    // `operator` is the address the vault would have been pinned to under v1.
+    let cert_a = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    // `operator2` holds no privileged position anywhere in the system.
+    let cert_b = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
+
+    // Signing only as operator2, only for cert_b: the deposit succeeds.
+    w.env.mock_auths(&[MockAuth {
+        address: &w.operator2,
+        invoke: &MockAuthInvoke {
+            contract: &w.vault,
+            fn_name: "deposit",
+            args: (cert_b, RESERVE_CLAIM).into_val(&w.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &w.token,
+                fn_name: "transfer",
+                args: (w.operator2.clone(), w.vault.clone(), RESERVE_CLAIM).into_val(&w.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+    w.vault().deposit(&cert_b, &RESERVE_CLAIM);
+    assert_eq!(w.reserve_of(cert_b), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.operator2), FUNDING - RESERVE_CLAIM);
+
+    // The same signature aimed at somebody else's certificate is refused: the
+    // vault requires cert_a's own operator, not whoever is paying.
+    w.env.mock_auths(&[MockAuth {
+        address: &w.operator2,
+        invoke: &MockAuthInvoke {
+            contract: &w.vault,
+            fn_name: "deposit",
+            args: (cert_a, RESERVE_CLAIM).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.vault().try_deposit(&cert_a, &RESERVE_CLAIM).is_err());
+
+    // Nothing moved on the failed attempt.
+    assert_eq!(w.reserve_of(cert_a), 0);
+    assert_eq!(w.reserve_of(cert_b), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.operator2), FUNDING - RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+
+    // Nor may a stranger reclaim another operator's reserve after expiry.
+    w.mock_all_auths();
+    w.set_time(EXPIRES_AT + 1);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.operator,
+        invoke: &MockAuthInvoke {
+            contract: &w.vault,
+            fn_name: "release_to_operator",
+            args: (cert_b,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.vault().try_release_to_operator(&cert_b).is_err());
+    assert_eq!(w.reserve_of(cert_b), RESERVE_CLAIM);
 }
 
 // ---------------------------------------------------------------------------

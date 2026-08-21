@@ -368,6 +368,15 @@ defect defeats it.
 **Decision. This is F01, and it is why the per-certificate refactor is a
 prerequisite rather than an enhancement.**
 
+> **Status: implemented, not deployed** (branch `feat/per-certificate-reserve`).
+> The vault now keys `Balance`, `Locked` and `UnlockAt` by certificate id and
+> stores no global operator; `deposit` and `release_to_operator` authenticate
+> against `Registry::get_cert_operator(cert_id)`. The harness test that used to
+> document the defect is inverted: `unrelated_deposit_does_not_rescue_an_
+unfunded_certificate` asserts the fraud proof now upholds and the auditor is
+> slashed. The contracts running on testnet are still v1 and still carry the
+> defect described below.
+
 Reserve accounting becomes per-certificate: `get_balance(cert_id)`, deposits
 attributed to a certificate, and the proof reading the certificate's own vault
 (constrained by the §3 allowlist, since the operator names it). No new mechanism
