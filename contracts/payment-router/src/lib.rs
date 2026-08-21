@@ -296,6 +296,10 @@ impl PaymentRouter {
     /// The agent key cannot clear this: `resume` authenticates against the
     /// certificate's operator, which is exactly the address a thief holding the
     /// agent key does not have.
+    ///
+    /// Halting freezes the float rather than rescuing it — `withdraw` is gated
+    /// too, so the honest operator cannot get their own money out either. See
+    /// `clawback`, which is the recovery door that does not re-arm the thief.
     pub fn halt(env: Env, cert_id: u64) {
         Self::set_halted(&env, cert_id, true);
         env.events().publish((symbol_short!("halt"), cert_id), ());
@@ -308,6 +312,142 @@ impl PaymentRouter {
 
     pub fn is_halted(env: Env, cert_id: u64) -> bool {
         Self::cert_config(&env, cert_id).halted
+    }
+
+    /// Sweep a halted certificate's agent balance back to the operator (§6).
+    ///
+    /// ## The problem this exists to solve
+    ///
+    /// `halt` gates `transfer`, `transfer_from`, `burn`, `burn_from` **and**
+    /// `withdraw`. `withdraw` has to be gated, or a thief holding the agent key
+    /// simply withdraws the float and the kill switch is decorative. But that
+    /// gate is symmetric: it also stops the *honest operator* from recovering
+    /// their own float, and the only way out was `resume` — which re-arms the
+    /// thief. The operator was made to choose between losing the money and
+    /// handing it back to the attacker. `clawback` is the third door.
+    ///
+    /// ## Why this is safe
+    ///
+    /// Two independent reasons, and both matter:
+    ///
+    /// 1. **The thief cannot call it.** Authority is the certificate's
+    ///    **operator**, read live from the Registry at enrollment and stored in
+    ///    `CertConfig` — exactly the address a thief holding the *agent* key
+    ///    does not have. It is the same authority that gates `halt`, `resume`
+    ///    and `set_float_cap`.
+    /// 2. **The money cannot reach a stranger.** The destination is not a
+    ///    parameter. It is the operator, and nothing else. And the float is the
+    ///    operator's own committed capital in the first place — this returns
+    ///    their money to them, it does not reach anyone else's.
+    ///
+    /// ## Two decisions, stated rather than buried
+    ///
+    /// **No timelock, deliberately.** A timelock on clawback would be a delay
+    /// handed to the thief: the whole point of the halt/clawback pair is that
+    /// compromise response is faster than the attacker. A 24-hour clawback
+    /// timelock gives an attacker who has *already* got the agent key 24 hours
+    /// to find any path out of the router that the halt did not close. And a
+    /// timelock buys nothing here that is worth that: the standard reason to
+    /// timelock a privileged sweep is to give *depositors* time to exit ahead
+    /// of an abusive admin, and there are no third-party depositors on this
+    /// balance — see the next paragraph.
+    ///
+    /// **An operator can sweep their agent's float at will, halt or no halt —
+    /// and that is acceptable.** Say it plainly: outside a compromise, nothing
+    /// stops an operator halting their own certificate and clawing the float
+    /// back at any moment. The agent's routed balance is money the operator
+    /// deposited under a cap the operator set, and the operator could already
+    /// reach all of it by halting and then `withdraw`ing after a resume. So
+    /// clawback creates **no new authority over anyone else's money** — it only
+    /// removes the requirement to re-arm the thief on the way. What it does
+    /// change is the *cost of the sweep* to the operator: it is now a one-call,
+    /// no-window operation. An agent is not a custodian and must never be
+    /// treated as one. Anyone extending this router so that a **third party**
+    /// can hold a balance under an enrolled agent's certificate must revisit
+    /// this function first, because that person's money would be inside the
+    /// sweep. Recorded in `docs/THREAT-MODEL.md` as residue, not as a fix.
+    ///
+    /// Returns the amount swept. Sweeping an already-empty balance is a no-op
+    /// that returns `0` rather than panicking: clawback is compromise-response
+    /// plumbing, and a retry during an incident must not fail loudly for having
+    /// nothing left to do.
+    pub fn clawback(env: Env, cert_id: u64, agent: Address) -> i128 {
+        let cfg = Self::cert_config(&env, cert_id);
+        cfg.operator.require_auth();
+
+        // Only while halted. Clawback is not a routine withdrawal path — the
+        // halt is the operator's own on-chain statement that this certificate
+        // is in incident response, and it is what makes the sweep legible to
+        // anybody reading the ledger afterwards.
+        if !cfg.halted {
+            panic!("not_halted");
+        }
+
+        // The agent must belong to *this* certificate. `cert_id` is not
+        // redundant with the enrollment: passing both and checking them against
+        // each other means a mistyped agent address on a certificate the caller
+        // does not operate fails the operator check instead of sweeping a
+        // stranger.
+        //
+        // The agent is a parameter because a certificate may have several
+        // enrolled agents (`enroll` lets later agents inherit the config) and
+        // the router keeps no certificate -> agents index. Sweeping one named
+        // agent per call is the honest shape; a compromise of two keys is two
+        // calls.
+        match Self::enrollment(&env, &agent) {
+            Some(e) if e.cert_id == cert_id => {}
+            _ => panic!("agent_not_enrolled"),
+        }
+
+        let amount = Self::balance(env.clone(), agent.clone());
+        if amount == 0 {
+            return 0;
+        }
+
+        // A pure internal balance move: no USDC leaves custody and `Supply` is
+        // untouched, so `total_supply() == usdc(router)` still holds. The
+        // operator can `withdraw` from their own balance afterwards on their
+        // own authority — that path is not halted, because the operator is not
+        // an enrolled agent of the certificate.
+        Self::debit(&env, &agent, amount);
+        Self::credit(&env, &cfg.operator, amount);
+
+        // The float moves with the balance, using exactly the same rule the hot
+        // path uses: it leaves the agent's certificate, and lands on the
+        // operator's certificate only if the operator is themselves an enrolled
+        // agent somewhere (they normally are not).
+        Self::reduce_float(&env, cert_id, amount);
+        if let Some(e) = Self::enrollment(&env, &cfg.operator) {
+            Self::raise_float(&env, e.cert_id, amount);
+        }
+
+        // **The meter is deliberately not touched.** `spent` is evidence that
+        // the covenant was broken, and a recovery is not a payment. Metering a
+        // clawback would let an operator inflate their own `spent` counter —
+        // and, worse, would let a recovery look like the very breach a
+        // `BoundExceeded` challenge reads.
+        //
+        // Routing also stays halted. Clawback neither performs nor implies a
+        // resume, so the thief is never re-enabled; recovering the money and
+        // re-opening the certificate stay two separate, deliberate acts.
+
+        // Both events on purpose. The `clawback` event is the one an operator
+        // audits; the SEP-41 `transfer` event is what keeps any indexer
+        // tracking router balances from desynchronising. Emitting `transfer`
+        // here does not touch the x402 constraint, which is about what the
+        // `transfer` *function* may do on the hot path.
+        env.events().publish(
+            (
+                symbol_short!("transfer"),
+                agent.clone(),
+                cfg.operator.clone(),
+            ),
+            amount,
+        );
+        env.events()
+            .publish((symbol_short!("clawback"), cert_id, agent), amount);
+
+        amount
     }
 
     // -----------------------------------------------------------------------

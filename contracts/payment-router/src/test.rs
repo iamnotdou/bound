@@ -735,3 +735,146 @@ fn views_on_an_unenrolled_certificate_read_zero() {
     assert_eq!(w.router.float(&99), 0);
     assert!(w.router.try_is_halted(&99).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Clawback (§6) — recovering the float from a halted certificate without
+// re-arming the thief.
+// ---------------------------------------------------------------------------
+
+/// The whole point: the operator gets their float back and the certificate
+/// stays halted.
+#[test]
+fn operator_claws_back_the_float_and_routing_stays_halted() {
+    let w = World::new();
+    let payee = w.addr();
+    w.enrolled(10_0000000);
+    w.router.transfer(&w.agent, &payee, &DOLLAR);
+
+    let agent_balance = w.router.balance(&w.agent);
+    assert_eq!(agent_balance, 9_0000000);
+    let operator_before = w.router.balance(&w.operator);
+    let supply_before = w.router.total_supply();
+
+    w.router.halt(&CERT);
+    assert_eq!(w.router.clawback(&CERT, &w.agent), agent_balance);
+
+    // The agent is empty and the operator is up by exactly what the agent held.
+    assert_eq!(w.router.balance(&w.agent), 0);
+    assert_eq!(
+        w.router.balance(&w.operator),
+        operator_before + agent_balance
+    );
+
+    // Custody never moved: no USDC left the router, and the invariant holds.
+    assert_eq!(w.router.total_supply(), supply_before);
+    assert_fully_backed(&w);
+
+    // The certificate's float is gone with it.
+    assert_eq!(w.router.float(&CERT), 0);
+
+    // The meter is untouched — a recovery is not a payment.
+    assert_eq!(w.router.spent(&CERT), DOLLAR);
+
+    // The thief is not re-enabled. Routing is still dead even though the money
+    // is safe, and it takes a deliberate `resume` to change that.
+    assert!(w.router.is_halted(&CERT));
+    assert!(w.router.try_transfer(&w.agent, &payee, &DOLLAR).is_err());
+    assert!(w.router.try_withdraw(&w.agent, &DOLLAR).is_err());
+
+    // And the operator can take the recovered money out for real: they are not
+    // an enrolled agent of the certificate, so the halt does not gate them.
+    let usdc_before = w.usdc_balance(&w.operator);
+    w.router.withdraw(&w.operator, &agent_balance);
+    assert_eq!(w.usdc_balance(&w.operator), usdc_before + agent_balance);
+    assert_fully_backed(&w);
+}
+
+#[test]
+fn clawback_while_not_halted_is_rejected() {
+    let w = World::new();
+    w.enrolled(10_0000000);
+    assert!(!w.router.is_halted(&CERT));
+    assert!(w.router.try_clawback(&CERT, &w.agent).is_err());
+    assert_eq!(w.router.balance(&w.agent), 10_0000000);
+}
+
+/// The security property, asserted narrowly: a thief holding the **agent** key
+/// cannot claw back to themselves. `mock_all_auths` would prove nothing here,
+/// so authorization is narrowed to the agent alone.
+#[test]
+fn the_agent_key_cannot_call_clawback() {
+    let w = World::new();
+    w.enrolled(10_0000000);
+    w.router.halt(&CERT);
+
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.agent,
+        invoke: &MockAuthInvoke {
+            contract: &w.router_id,
+            fn_name: "clawback",
+            args: (CERT, w.agent.clone()).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.router.try_clawback(&CERT, &w.agent).is_err());
+
+    w.env.mock_all_auths();
+    assert_eq!(w.router.balance(&w.agent), 10_0000000);
+}
+
+#[test]
+fn a_third_party_cannot_call_clawback() {
+    let w = World::new();
+    let stranger = w.addr();
+    w.enrolled(10_0000000);
+    w.router.halt(&CERT);
+
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &w.router_id,
+            fn_name: "clawback",
+            args: (CERT, w.agent.clone()).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.router.try_clawback(&CERT, &w.agent).is_err());
+
+    w.env.mock_all_auths();
+    assert_eq!(w.router.balance(&w.agent), 10_0000000);
+    assert_eq!(w.router.balance(&stranger), 0);
+}
+
+/// A second clawback is a no-op returning zero, not an error. During an
+/// incident a retry must not fail loudly for having nothing left to do.
+#[test]
+fn a_second_clawback_on_an_empty_balance_is_a_no_op() {
+    let w = World::new();
+    w.enrolled(10_0000000);
+    w.router.halt(&CERT);
+
+    assert_eq!(w.router.clawback(&CERT, &w.agent), 10_0000000);
+    let operator_after_first = w.router.balance(&w.operator);
+
+    assert_eq!(w.router.clawback(&CERT, &w.agent), 0);
+    assert_eq!(w.router.balance(&w.operator), operator_after_first);
+    assert_eq!(w.router.balance(&w.agent), 0);
+    assert_fully_backed(&w);
+}
+
+/// The agent has to belong to the certificate named in the call.
+#[test]
+fn clawback_refuses_an_agent_that_is_not_enrolled_on_this_certificate() {
+    let w = World::new();
+    let stranger = w.addr();
+    w.enrolled(10_0000000);
+    w.mint(&stranger, 100_0000000);
+    w.router.deposit(&stranger, &50_0000000);
+    w.router.halt(&CERT);
+
+    // Untracked address holding a router balance: not reachable.
+    assert!(w.router.try_clawback(&CERT, &stranger).is_err());
+    assert_eq!(w.router.balance(&stranger), 50_0000000);
+}

@@ -112,6 +112,15 @@ be rewritten.
 - **`Challenge` gains five fields**: `filed_at`, `proven`, `harm`,
   `adjudicated`, `arbitrated`. Any client decoding a `Challenge` breaks.
 - New type `ClaimWindow { cert_id, opened_at, closes_at, claims }`.
+- **New (additive): `close_window_early(challenge_id)`.** Arbiter-only. Ends an
+  open window the moment the arbiter has rejected a claim in it **and no other
+  live claim remains** — where live means un-ruled or proven. It exists because
+  a `FakeSignature` claim has no predicate and so could freeze a certificate for
+  the full 72 hours on a minimum bond. It settles through the same internal path
+  as `close_window`, so bonds are forfeited identically: rejection is not
+  cheaper for being faster. Panics `not_arbitrated`, `claim_not_rejected`,
+  `no_open_window`, `claim_window_closed`, or `live_claim_remains`. Purely
+  additive — clients that never call it are unaffected. See DESIGN-V2 §10.
 
 ### Registry — the freeze, and one additive getter
 
@@ -140,6 +149,22 @@ and its failure modes even though the ABI is identical.
 
 A SEP-41 token (`bUSDC`) wrapping USDC and metering spend per certificate. Needs
 its own bindings entry, its own `deployments/` key, and an SDK surface.
+
+Beyond SEP-41 it carries the §6 float cap and kill switch — `enroll`, `deposit`,
+`withdraw`, `float`, `float_cap`, `set_float_cap`, `halt`, `resume`,
+`is_halted` — plus:
+
+- **`clawback(cert_id, agent) -> i128`.** Operator-only, and only while the
+  certificate is **halted**. Sweeps the named enrolled agent's entire router
+  balance to the certificate's registered operator and returns the amount swept.
+  The destination is not a parameter. It performs **no resume**, so recovering
+  the float never re-enables a thief holding the agent key. It is an internal
+  balance move: no USDC leaves custody, `total_supply()` is unchanged, and the
+  spend meter is deliberately not advanced. Sweeping an empty balance returns
+  `0` rather than panicking, so an incident-response retry does not fail loudly.
+  Panics `not_halted` or `agent_not_enrolled`. Emits both a SEP-41 `transfer`
+  event (so balance indexers stay in sync) and a `clawback` event.
+  See `docs/THREAT-MODEL.md` for the no-timelock decision and the residue.
 
 ### PremiumVault — entirely new
 

@@ -3897,3 +3897,264 @@ fn a_cured_resolution_leaves_the_auditors_stake_and_premium_alone() {
 
     assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
+
+// ---------------------------------------------------------------------------
+// 13. DESIGN-V2 §10 — an arbiter rejection closes the window early
+//
+// The abuse: `FakeSignature` has no predicate, so it cannot be rejected at
+// filing the way a false `InsufficientReserve` claim is. It opens a window and
+// freezes the certificate for 72 hours — no attestation, no reserve
+// withdrawal, no allocation release — for the price of the minimum bond. An
+// arbiter ruling it false did nothing to shorten that.
+//
+// The fix: when the arbiter rejects a claim and NO OTHER LIVE CLAIM remains,
+// the window closes on the spot through the same settlement path a natural
+// close uses. The freeze lifts, the certificate survives, and the bond is
+// forfeited exactly as it would have been at `closes_at` — getting rejected
+// faster is not cheaper.
+// ---------------------------------------------------------------------------
+
+/// **The griefer's freeze is cut from 72 hours to one arbiter transaction.**
+///
+/// The bond is still forfeited, the certificate survives, and the auditor —
+/// who was never accused of anything — is untouched.
+#[test]
+fn an_arbiter_rejection_closes_a_lone_claim_window_immediately() {
+    let (w, cert_id) = window_world(RESERVE_CLAIM); // fully funded, nothing wrong
+
+    let opened_at = 1_000u64;
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+
+    // The freeze is real, and it runs 72 hours past the filing.
+    let closes_at = w.cm().window_closes_at(&cert_id);
+    assert_eq!(closes_at, opened_at + CLAIM_WINDOW);
+    assert!(w.registry().is_frozen(&cert_id));
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+
+    // The arbiter rules it false, then ends the window. Not one second of the
+    // 72 hours has elapsed.
+    w.cm().resolve_by_arbiter(&id, &false, &0i128);
+    assert!(w.registry().is_frozen(&cert_id));
+    w.cm().close_window_early(&id);
+    assert_eq!(w.env.ledger().timestamp(), opened_at);
+
+    // The window is gone and the freeze with it.
+    assert!(w.cm().get_window(&cert_id).is_none());
+    assert_eq!(w.cm().window_closes_at(&cert_id), 0);
+    assert!(!w.registry().is_frozen(&cert_id));
+
+    // The certificate SURVIVES. Nothing was settled, so a genuine claim can
+    // still be filed against it later.
+    assert!(!w.cm().is_settled(&cert_id));
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+
+    // THE BOND IS STILL FORFEITED. Speeding up the rejection did not make it
+    // cheaper: the challenger is out the full minimum bond, exactly as they
+    // would have been 72 hours later.
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeFails);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_eq!(w.cm().get_bonds_held(), 0);
+    assert_eq!(w.cm().get_bounty_pool(), MIN_CHALLENGE_STAKE);
+
+    // Nobody else moved a stroop. The auditor in particular was never accused.
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **The rail that matters: a genuine claimant's window is never cut short.**
+///
+/// A griefer's `FakeSignature` claim sits in the same window as a real,
+/// predicate-backed `InsufficientReserve` claim. The arbiter rejects the
+/// griefer — and the window must run its full 72 hours anyway, because the
+/// honest claimant is standing in it and has not been paid.
+#[test]
+fn an_arbiter_rejection_cannot_cut_short_a_window_holding_a_live_claim() {
+    let deposit = 900_0000000i128; // $100 short of the $1,000 claimed
+    let (w, cert_id) = window_world(deposit);
+
+    // The honest claim opens the window: a real, on-chain-provable shortfall.
+    let honest = w.challenge_as(
+        &w.challenger2,
+        &w.victim2,
+        cert_id,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    let closes_at = w.cm().window_closes_at(&cert_id);
+
+    // The griefer files into it and is rejected by the arbiter.
+    let grief = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&grief, &false, &0i128);
+
+    // THE EARLY CLOSE IS REFUSED. A live claim remains.
+    assert!(w.cm().try_close_window_early(&grief).is_err());
+    assert!(w.cm().get_window(&cert_id).is_some());
+    assert_eq!(w.cm().window_closes_at(&cert_id), closes_at);
+    assert!(w.registry().is_frozen(&cert_id));
+
+    // Still refused one ledger before the real close.
+    w.set_time(closes_at - 1);
+    assert!(w.cm().try_close_window_early(&grief).is_err());
+    assert!(w.registry().is_frozen(&cert_id));
+
+    // At the real close the honest claimant is paid IN FULL out of the
+    // operator's own reserve, and the griefer's bond is forfeited.
+    w.set_time(closes_at);
+    w.cm().close_window(&cert_id);
+
+    let harm = RESERVE_CLAIM - deposit; // the $100 shortfall
+    assert!(w.verdict_of(honest) == CmVerdict::ChallengeWins);
+    assert!(w.verdict_of(grief) == CmVerdict::ChallengeFails);
+    assert_eq!(w.balance(&w.victim2), harm);
+    assert_eq!(w.balance(&w.challenger2), FUNDING + harm / 10);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+
+    // The reserve covered it, so the auditor is untouched and the treasury empty.
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.reserve_of(cert_id), deposit - harm - harm / 10);
+    assert!(w.cm().is_settled(&cert_id));
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// An **un-adjudicated** claim is live too: the arbiter may still uphold it, so
+/// it holds the window open exactly as a proven one does.
+#[test]
+fn an_unruled_claim_keeps_the_window_open() {
+    let (w, cert_id) = window_world(RESERVE_CLAIM);
+
+    let a = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    let b = w.challenge_as(
+        &w.challenger2,
+        &w.victim2,
+        cert_id,
+        ProofType::FakeSignature,
+        MIN_CHALLENGE_STAKE,
+    );
+
+    // `a` is rejected; `b` has not been ruled on at all.
+    w.cm().resolve_by_arbiter(&a, &false, &0i128);
+    assert!(w.cm().try_close_window_early(&a).is_err());
+    assert!(w.registry().is_frozen(&cert_id));
+
+    // Once `b` is rejected as well, either rejected claim opens the door.
+    w.cm().resolve_by_arbiter(&b, &false, &0i128);
+    w.cm().close_window_early(&b);
+    assert!(!w.registry().is_frozen(&cert_id));
+    assert!(w.verdict_of(a) == CmVerdict::ChallengeFails);
+    assert!(w.verdict_of(b) == CmVerdict::ChallengeFails);
+
+    // Both bonds forfeited, neither returned.
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_eq!(w.balance(&w.challenger2), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_eq!(w.cm().get_bonds_held(), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **Only the arbiter may end a window early**, and only against a claim the
+/// arbiter actually ruled false.
+#[test]
+fn a_non_arbiter_cannot_close_a_window_early() {
+    let (w, cert_id) = window_world(RESERVE_CLAIM);
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&id, &false, &0i128);
+
+    // The operator has the most to gain from lifting their own freeze. Signing
+    // as themselves is not enough.
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.operator,
+        invoke: &MockAuthInvoke {
+            contract: &w.challenge_manager,
+            fn_name: "close_window_early",
+            args: (id,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.cm().try_close_window_early(&id).is_err());
+
+    // Nor the challenger who filed it, hoping to shorten their own exposure.
+    w.env.set_auths(&[]);
+    w.env.mock_auths(&[MockAuth {
+        address: &w.challenger,
+        invoke: &MockAuthInvoke {
+            contract: &w.challenge_manager,
+            fn_name: "close_window_early",
+            args: (id,).into_val(&w.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(w.cm().try_close_window_early(&id).is_err());
+
+    // And with no signature at all.
+    w.env.set_auths(&[]);
+    assert!(w.cm().try_close_window_early(&id).is_err());
+
+    w.mock_all_auths();
+    assert!(w.registry().is_frozen(&cert_id));
+    assert!(w.cm().get_window(&cert_id).is_some());
+
+    // A claim the arbiter UPHELD is not a key to this door either.
+    let (w2, cert2) = window_world(RESERVE_CLAIM);
+    let upheld = w2.challenge(cert2, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    w2.cm().resolve_by_arbiter(&upheld, &true, &10_0000000i128);
+    assert!(w2.cm().try_close_window_early(&upheld).is_err());
+
+    // Nor is a claim nobody has ruled on.
+    let (w3, cert3) = window_world(RESERVE_CLAIM);
+    let unruled = w3.challenge(cert3, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    assert!(w3.cm().try_close_window_early(&unruled).is_err());
+    assert!(w3.registry().is_frozen(&cert3));
+}
+
+/// **After an early close the collateral unwinds on its normal schedule.**
+///
+/// The point of surviving the grief is that nothing about the certificate's
+/// ordinary lifecycle changed: the operator gets the whole reserve back and the
+/// auditor gets the whole allocation back, at `expires_at + CHALLENGE_WINDOW`
+/// and not a second later.
+#[test]
+fn collateral_unwinds_normally_after_an_early_close() {
+    let (w, cert_id) = window_world(RESERVE_CLAIM);
+    let operator_before = w.balance(&w.operator);
+
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&id, &false, &0i128);
+    w.cm().close_window_early(&id);
+
+    // The Registry's settlement deadline is back to the ordinary one — the
+    // window's close is no longer extending it.
+    assert_eq!(
+        w.registry().get_cert_settlement_deadline(&cert_id),
+        SETTLEMENT_DEADLINE
+    );
+
+    // Still locked until that deadline, exactly as an unchallenged certificate.
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+
+    w.set_time(SETTLEMENT_DEADLINE);
+    w.vault().release_to_operator(&cert_id);
+    w.staking().release_allocation(&cert_id);
+
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.balance(&w.operator), operator_before + RESERVE_CLAIM);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+
+    // CONSERVATION. The griefer's bond is the only money that moved, and it is
+    // sitting in the ChallengeManager as forfeited surplus.
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_eq!(w.balance(&w.challenge_manager), MIN_CHALLENGE_STAKE);
+    assert_eq!(w.cm().get_bonds_held(), 0);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
