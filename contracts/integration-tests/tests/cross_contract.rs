@@ -4394,3 +4394,396 @@ fn collateral_unwinds_normally_after_an_early_close() {
     assert_eq!(w.balance(&w.treasury), 0);
     assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
+
+// ---------------------------------------------------------------------------
+// 14. Adversarial review (docs/SECURITY-REVIEW-V2.md)
+//
+// The review shipped four proof-of-concept attacks that all PASSED, which is to
+// say the behaviour they described was real. R1 and R2 have since been fixed;
+// their tests are kept, under their original names, converted from "this attack
+// works" into "this attack no longer works". R3 and R4 are still open and their
+// tests still pin the behaviour down exactly as filed, so that a future change
+// which fixes one of them fails loudly here.
+// ---------------------------------------------------------------------------
+
+/// **R1 — FIXED. A lawful reserve withdrawal no longer manufactures a free,
+/// total slash.**
+///
+/// The attack: `get_cert_reserve` is what the certificate *claims* and is
+/// immutable; `ReserveVault::get_balance` is what the vault *holds* and
+/// `release_to_operator` zeroes it the instant the settlement deadline passes.
+/// `reserve_shortfall` compared the two and asked no other question, so at
+/// `expires_at + CHALLENGE_WINDOW` — the moment the protocol itself invites the
+/// operator to reclaim their money — every honestly completed certificate
+/// acquired a permanently true `InsufficientReserve` proof. Filing it cost gas,
+/// re-froze the certificate so the auditor could not escape, and 72 hours later
+/// sent the auditor's entire allocation to the treasury. Nobody was compensated
+/// and nobody profited: pure destruction of auditor capital, for gas.
+///
+/// The fix is the deadline itself, which the Registry already documents as "the
+/// instant after which nothing can still be proven against this certificate".
+/// A claim filed from that instant onwards is refused, whatever its proof type,
+/// because it is settling against collateral the protocol already promised
+/// away. This test now walks the same sequence and asserts it dies at the
+/// filing, leaving everybody whole.
+#[test]
+fn a_lawful_reserve_withdrawal_manufactures_a_free_total_slash_of_the_allocation() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+
+    // Nothing went wrong. The certificate ran its term fully funded and the
+    // operator reclaims the reserve exactly when the protocol says they may.
+    w.set_time(SETTLEMENT_DEADLINE);
+    w.vault().release_to_operator(&cert_id);
+    assert_eq!(w.balance(&w.operator), FUNDING);
+    assert_eq!(w.reserve_of(cert_id), 0);
+
+    // The auditor has not yet made their own (separate, permissionless-timed)
+    // release call. That gap is all the attack needed.
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+
+    // The arithmetic is still exactly as it was — claimed $1,000, held $0 — and
+    // it no longer matters, because nothing may be filed against a certificate
+    // whose collateral has already been released.
+    assert_eq!(w.registry().get_cert_reserve(&cert_id), RESERVE_CLAIM);
+    assert!(w
+        .cm()
+        .try_challenge(
+            &w.challenger,
+            &cert_id,
+            &ProofType::InsufficientReserve,
+            &w.victim,
+            &MIN_CHALLENGE_STAKE,
+        )
+        .is_err());
+    // Not just this predicate: the deadline is not proof-type-specific, and a
+    // freeze bought through any other one would trap exactly the same
+    // already-released collateral.
+    for proof in [
+        ProofType::FakeSignature,
+        ProofType::BoundExceeded,
+        ProofType::ExpiredCertificate,
+    ] {
+        assert!(w
+            .cm()
+            .try_challenge(
+                &w.challenger,
+                &cert_id,
+                &proof,
+                &w.victim,
+                &MIN_CHALLENGE_STAKE,
+            )
+            .is_err());
+    }
+
+    // No window, no freeze, no bond taken — and so the auditor's own release
+    // call goes through and everybody ends the story whole.
+    assert!(w.cm().get_window(&cert_id).is_none());
+    assert!(!w.registry().is_frozen(&cert_id));
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    assert_eq!(w.cm().get_bonds_held(), 0);
+
+    w.staking().release_allocation(&cert_id);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    w.staking().release(&w.auditor);
+
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.auditor), FUNDING);
+    assert_eq!(w.balance(&w.operator), FUNDING);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **R1, the other half — a window opened BEFORE the deadline still runs to
+/// completion and settles.**
+///
+/// The rail must not be a cliff that swallows live claims. `challenge` reads
+/// `get_cert_settlement_deadline`, which returns the LATER of
+/// `expires_at + CHALLENGE_WINDOW` and the freeze the ChallengeManager writes
+/// when a window opens — so while a window is open the deadline is its
+/// `closes_at`, joining claims pass, and the collateral cannot unwind
+/// underneath it.
+#[test]
+fn a_window_opened_before_the_deadline_still_admits_claims_and_settles() {
+    let (w, cert_id) = window_world(900_0000000); // $100 short of its claim
+
+    // Filed on the last ledger second on which filing is allowed.
+    let filed_at = SETTLEMENT_DEADLINE - 1;
+    w.set_time(filed_at);
+    let first = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    let closes_at = w.cm().window_closes_at(&cert_id);
+    assert_eq!(closes_at, filed_at + CLAIM_WINDOW);
+
+    // The ordinary deadline has now passed, and the window holds everything in
+    // place regardless: the collateral cannot escape...
+    w.set_time(SETTLEMENT_DEADLINE + 1);
+    assert!(w.registry().is_frozen(&cert_id));
+    assert_eq!(
+        w.registry().get_cert_settlement_deadline(&cert_id),
+        closes_at
+    );
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+
+    // ...and a second claimant may still join, which is the case the R1 rail
+    // would break if it read the base deadline instead of the live one.
+    let second = assessed_claim(&w, cert_id, &w.challenger2, &w.victim2, 50_0000000);
+
+    w.set_time(closes_at);
+    w.cm().close_window(&cert_id);
+
+    // Both admitted, and settlement ran once over the pair.
+    assert!(w.verdict_of(first) == CmVerdict::ChallengeWins);
+    assert!(w.verdict_of(second) == CmVerdict::ChallengeWins);
+    assert_eq!(w.balance(&w.victim2), 50_0000000);
+    assert!(w.cm().is_settled(&cert_id));
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **R2 — FIXED. Sybil claims can no longer dilute an honest victim.**
+///
+/// The attack: the certificate-level shortfall was counted once and split
+/// equally between the claims standing on it, each claim paid the address it
+/// named, and an admitted claim gets its bond back in full. So `n` extra TRUE
+/// claims from throwaway addresses cost gas plus 72 hours of bond float and
+/// took `n/(n+1)` of the victim pool. Address de-duplication is not a fix — a
+/// sybil farms addresses — and neither is a filing fee or a claim cap; all
+/// three price the attack rather than removing it.
+///
+/// The fix is to stop the contract compensating victims it has no way to
+/// identify. A predicate-computed proof establishes that the covenant was
+/// broken, not that any named person was harmed — which is exactly why
+/// `BoundExceeded` and `ExpiredCertificate` already settled with no victim
+/// payment. `InsufficientReserve` now does the same: it draws the operator's
+/// reserve to the TREASURY and pays the challenger a fee, and compensation
+/// flows only from arbiter-assessed harm, the one mechanism that can name and
+/// size a victim.
+///
+/// This test now files the same sybil swarm against an arbiter-assessed victim
+/// and asserts they take nothing from them, at any `n`.
+#[test]
+fn sybil_claims_dilute_an_honest_victim_and_every_sybil_bond_comes_back() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    // Funded short by $100: a genuine, modest shortfall with plenty of reserve
+    // left to pay out of.
+    let deposited = 900_0000000i128;
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, deposited);
+
+    let shortfall = RESERVE_CLAIM - deposited;
+    assert_eq!(shortfall, 100_0000000);
+
+    // The honest victim's loss is assessed by the arbiter at $80.
+    let assessed = 80_0000000i128;
+    let honest = assessed_claim(&w, cert_id, &w.challenger, &w.victim, assessed);
+
+    // The attacker piles in with three throwaway addresses, each filing a claim
+    // that is genuinely TRUE and naming itself as both challenger and victim.
+    // Nothing about them is special: they need the bond, and that is all.
+    let sybils: [Address; 3] = [
+        Address::generate(&w.env),
+        Address::generate(&w.env),
+        Address::generate(&w.env),
+    ];
+    for s in sybils.iter() {
+        w.mint(s, MIN_CHALLENGE_STAKE);
+        w.challenge_as(
+            s,
+            s,
+            cert_id,
+            ProofType::InsufficientReserve,
+            MIN_CHALLENGE_STAKE,
+        );
+    }
+
+    w.resolve(honest);
+
+    // THE PROPERTY. The honest victim is paid the whole assessed $80. Three
+    // sybil claims took none of it, and neither would three hundred: the victim
+    // pool is divided by ASSESSED harm only, a denominator no predicate claim
+    // can enter.
+    assert_eq!(w.balance(&w.victim), assessed);
+
+    // The sybils get their bonds back — that has not changed and is not what
+    // made the attack work — plus a share of the challenger FEE, which is a
+    // bounty for surfacing a fact rather than compensation for a loss. Its
+    // total is fixed at 10% of proven harm however many of them file, so they
+    // cannot enlarge it; they can only split it. That residue is recorded in
+    // DESIGN-V2 §10.
+    let fee_pool = (assessed + shortfall) * CHALLENGER_FEE_BPS / 10_000;
+    let sybil_fee = fee_pool * (shortfall / 3) / (assessed + shortfall);
+    for s in sybils.iter() {
+        assert_eq!(w.balance(s), MIN_CHALLENGE_STAKE + sybil_fee);
+        // And nothing of the victim pool: not one stroop of compensation.
+        assert!(w.balance(s) < MIN_CHALLENGE_STAKE + assessed);
+    }
+
+    assert!(w.verdict_of(honest) == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.total_in_the_system() + sybils.iter().map(|s| w.balance(s)).sum::<i128>(),
+        FUNDING * 5 + MIN_CHALLENGE_STAKE * 3
+    );
+}
+
+/// **R2, the other half — the predicate path pays no victim at all.**
+///
+/// The counterpart to the test above, stated in its own right rather than as a
+/// comparison: a lone, true `InsufficientReserve` claim compensates nobody. The
+/// operator's reserve is still drawn — the operator does not keep money they
+/// failed to commit — and the challenger still earns their fee for surfacing
+/// it, but the named victim receives nothing, because the predicate never
+/// established that they were harmed.
+///
+/// THE COST, STATED PLAINLY: the protocol's only trustless proof no longer
+/// compensates anyone directly. Proving harm now always requires the arbiter.
+/// That narrows the trustless surface and it contradicts earlier framing;
+/// DESIGN-V2 §1 and §10 say so.
+#[test]
+fn a_predicate_proof_pays_no_victim_and_draws_the_reserve_to_the_treasury() {
+    let deposited = 900_0000000i128;
+    let (w, cert_id) = window_world(deposited);
+
+    let shortfall = RESERVE_CLAIM - deposited;
+    let fee = shortfall * CHALLENGER_FEE_BPS / 10_000;
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    assert!(w.cm().get_challenge(&id).proven);
+    assert!(!w.cm().get_challenge(&id).arbitrated);
+    w.resolve(id);
+
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
+    // The named victim gets nothing, however loudly the claim named them.
+    assert_eq!(w.balance(&w.victim), 0);
+    // The reserve draw is the full shortfall and it goes to the treasury, which
+    // is not a party to the window and cannot be sybilled into being one.
+    assert_eq!(w.balance(&w.treasury), shortfall);
+    // The challenger's bounty is unchanged.
+    assert_eq!(w.balance(&w.challenger), FUNDING + fee);
+    // The auditor's stake is untouched: the operator's own reserve covered the
+    // whole harm, so the slash is zero.
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.reserve_of(cert_id), deposited - shortfall - fee);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **R3 — STILL OPEN. A `FakeSignature` claim the arbiter ignores costs the
+/// griefer nothing but the gas.**
+///
+/// Medium, and deliberately left as filed: this is the review's own PoC,
+/// unchanged, pinning the behaviour so a future fix fails loudly here.
+///
+/// DESIGN-V2 §10 prices this griefing surface at "one minimum bond for three
+/// days of frozen reserve and allocation". That is not what the code does. A
+/// claim the arbiter never rules on resolves `Unadjudicated`, and
+/// `Unadjudicated` returns the bond **in full** — deliberately, and for a good
+/// reason ("a claim nobody judged is not a claim the challenger got wrong").
+///
+/// The bond is therefore not a price, it is a deposit. The freeze is bought
+/// with gas and 72 hours of float, and it can be re-bought the moment the last
+/// window closes. `close_window_early` does not help: it needs the arbiter to
+/// actually rule, and an unresponsive arbiter is the whole premise.
+#[test]
+fn an_ignored_fake_signature_claim_freezes_the_certificate_and_refunds_the_bond() {
+    let (w, cert_id) = window_world(RESERVE_CLAIM);
+
+    for _ in 0..2 {
+        let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+
+        // The certificate is frozen: no attestation, no reserve withdrawal, no
+        // allocation release.
+        assert!(w.registry().is_frozen(&cert_id));
+        assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+        assert!(w.staking().try_release_allocation(&cert_id).is_err());
+
+        // The arbiter never rules, so `close_window_early` is unavailable and
+        // the full 72 hours must run.
+        assert!(w.cm().try_close_window_early(&id).is_err());
+        w.settle_window(cert_id);
+
+        // Bond back in full, certificate untouched, freeze lifted — and
+        // nothing stops the next round.
+        assert!(w.verdict_of(id) == CmVerdict::Unadjudicated);
+        assert_eq!(w.balance(&w.challenger), FUNDING);
+        assert_eq!(w.cm().get_bonds_held(), 0);
+        assert_eq!(w.balance(&w.challenge_manager), 0);
+        assert!(!w.registry().is_frozen(&cert_id));
+        assert_eq!(
+            w.registry().get_certificate(&cert_id).status,
+            CertStatus::Verified
+        );
+    }
+
+    // Two full freezes bought, and the griefer is exactly as rich as they
+    // started.
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **R4 — STILL OPEN. The arbiter can overturn the one trustless proof, and it
+/// costs the honest challenger their bond.**
+///
+/// Medium, and deliberately left as filed: this is the review's own PoC,
+/// unchanged, pinning the behaviour so a future fix fails loudly here. Note
+/// that R2 sharpened the stakes rather than softening them — the arbiter is now
+/// the ONLY route to victim compensation, so their veto is a wider trust than
+/// it was when this was filed.
+///
+/// `resolve_by_arbiter` reaches *any* pending claim in an open window, not only
+/// `FakeSignature`. Its own doc-comment states what it cannot reach — "a claim
+/// whose on-chain predicate was false at filing" — and says nothing about the
+/// converse. The converse is reachable: the arbiter may set `proven = false` on
+/// an `InsufficientReserve` claim that the vault itself proved true, and then
+/// use `close_window_early` to end the window on the spot.
+///
+/// The result is that a fraudulent certificate survives with its status still
+/// `Verified`, the auditor is not slashed, no victim is paid, and the honest
+/// challenger's bond is forfeited. The arbiter gains nothing directly — the
+/// bond joins the hygiene pool — so this is censorship rather than theft. It is
+/// still a trust the docs do not claim: DESIGN-V2 calls `InsufficientReserve`
+/// the protocol's trustless proof, and it is trustless only up to the arbiter's
+/// veto.
+#[test]
+fn the_arbiter_can_veto_a_true_insufficient_reserve_proof_and_burn_the_bond() {
+    // Claims a $1,000 reserve, holds nothing. Unambiguous, arithmetic fraud.
+    let (w, cert_id) = window_world(0);
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    let filed = w.cm().get_challenge(&id);
+    assert!(filed.proven);
+    assert_eq!(filed.harm, RESERVE_CLAIM);
+    assert!(!filed.arbitrated);
+
+    // The arbiter declares the vault wrong. Nothing checks them against it.
+    w.cm().resolve_by_arbiter(&id, &false, &0i128);
+    assert!(!w.cm().get_challenge(&id).proven);
+
+    // And ends the window immediately, because the claim they just rejected is
+    // now the only one in it.
+    w.cm().close_window_early(&id);
+
+    // The fraud survives, fully advertised.
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert!(!w.registry().is_frozen(&cert_id));
+
+    // The honest challenger paid for being right.
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeFails);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_eq!(w.cm().get_bounty_pool(), MIN_CHALLENGE_STAKE);
+}
