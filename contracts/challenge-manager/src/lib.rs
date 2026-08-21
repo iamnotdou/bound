@@ -17,12 +17,19 @@ use soroban_sdk::{
 #[contracttype]
 #[derive(Clone, PartialEq)]
 pub enum ProofType {
-    // Kategori A — kontrat kendisi doğrular (trustless)
+    // Kategori A — kontrat kendisi doğrular (trustless).
+    //
+    // `InsufficientReserve` settles through the full waterfall: its harm is the
+    // shortfall, an amount the operator actually failed to commit.
+    //
+    // `BoundExceeded` and `ExpiredCertificate` are also trustless — the router
+    // is the source of truth for both — but they settle in HYGIENE MODE only.
+    // See the comment above `resolve` for why that is not a shortcut.
     InsufficientReserve,
-    // Kategori B — arbiter verdict verir (on-chain kanıtlanamaz)
     BoundExceeded,
-    FakeSignature,
     ExpiredCertificate,
+    // Kategori B — arbiter verdict verir (on-chain kanıtlanamaz).
+    FakeSignature,
 }
 
 #[contracttype]
@@ -52,6 +59,9 @@ pub enum DataKey {
     FeeEscrow,
     Token,
     Arbiter,
+    /// The PaymentRouter, source of truth for `spent` and `post_expiry_spent`.
+    /// Set once, after initialize — see `set_router`.
+    Router,
     /// Where slashed stake goes, and the only place it may go.
     Treasury,
     MinStake,
@@ -77,6 +87,47 @@ const CHALLENGER_FEE_BPS: i128 = 1_000; // 10%
 /// stake — its job is to pay for the gas of killing a dead certificate, not to
 /// fund a hunting expedition.
 const HYGIENE_BOUNTY: i128 = 10_0000000; // $10
+
+/// DESIGN-V2 §7. How long after `expires_at` a payment is still treated as
+/// ordinary business rather than evidence of an expired covenant.
+///
+/// Without it, one $1 payment a second after expiry — which a hostile
+/// counterparty can induce by simply invoicing the agent — permanently kills an
+/// honest certificate. The window is free post-expiry coverage a hostile
+/// operator can plan around, which is a real cost; it is accepted because the
+/// alternative is a cliff anybody can push an honest operator off for a dollar.
+/// 24 hours is §7's proposal, not a researched number.
+const GRACE_WINDOW_SECONDS: u64 = 24 * 60 * 60;
+
+/// DESIGN-V2 §7. The de-minimis floor, in basis points **of the certificate's
+/// own bound**: 0.1%.
+///
+/// A percentage rather than a flat amount, because a flat floor is irrelevant at
+/// a $1M bound and fatal at a $1k one. Anchoring it to the bound means the band
+/// of unprovable late payments it creates is bounded by the same number the
+/// certificate already advertises to its counterparties.
+const DE_MINIMIS_FLOOR_BPS: i128 = 10;
+
+/// A structural mirror of `payment_router::PostExpiry`.
+///
+/// The ChallengeManager reads the router over `invoke_contract`, so it needs the
+/// return type locally. A `#[contracttype]` struct is encoded as a map keyed by
+/// field **name**, so this decodes the router's value as long as the names and
+/// types match. It is duplicated rather than imported to keep the router out of
+/// this crate's dependency graph — the contracts are deployed and upgraded
+/// independently, and a compile-time dependency would not make the on-chain ABI
+/// any more coupled than it already is. If you change `PostExpiry` in the
+/// router, change it here; `expired_certificate_upholds_when_all_three_conditions_hold`
+/// in the integration harness fails loudly if the two drift.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PostExpiry {
+    pub total: i128,
+    pub count: u32,
+    pub max_payment: i128,
+    pub max_payment_at: u64,
+    pub first_at: u64,
+}
 
 #[contract]
 pub struct ChallengeManager;
@@ -118,6 +169,38 @@ impl ChallengeManager {
         env.storage()
             .instance()
             .set(&DataKey::ChallengeCount, &0u64);
+    }
+
+    /// Point this contract at the PaymentRouter.
+    ///
+    /// Separate from `initialize` for one reason: the argument list of a
+    /// `pub fn` in a `#[contractimpl]` block is the contract's ABI, and
+    /// `initialize` already has eight parameters that the deploy script and the
+    /// committed bindings pass positionally. A ninth would break both at
+    /// runtime for no gain, so the wiring is a second one-shot call instead.
+    ///
+    /// **Arbiter-authorized, and settable exactly once.** `initialize` is
+    /// unauthenticated (a known defect, tested as such), and copying that here
+    /// would be materially worse: whoever wins the race to name the router names
+    /// the contract that reports `spent`, and a lying router can invalidate any
+    /// certificate it likes. The arbiter is already a named trusted party at
+    /// `initialize`, so requiring their signature grants no new trust and closes
+    /// the race. There is no re-pointing, for the same reason the treasury
+    /// cannot be re-pointed.
+    pub fn set_router(env: Env, router: Address) {
+        let arbiter: Address = env.storage().instance().get(&DataKey::Arbiter).unwrap();
+        arbiter.require_auth();
+        if env.storage().instance().has(&DataKey::Router) {
+            panic!("router_already_set");
+        }
+        env.storage().instance().set(&DataKey::Router, &router);
+    }
+
+    pub fn get_router(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Router)
+            .expect("router_not_set")
     }
 
     // Anyone can submit a challenge — must post a bond to prevent spam.
@@ -174,15 +257,52 @@ impl ChallengeManager {
     }
 
     // Trustless resolution. The contract proves the fraud itself by reading
-    // on-chain state — no oracle, no human. Only valid for proof types that
-    // are objectively verifiable on-chain (InsufficientReserve).
+    // on-chain state — no oracle, no human.
+    //
+    // ---------------------------------------------------------------------
+    // WHY `BoundExceeded` AND `ExpiredCertificate` SETTLE IN HYGIENE MODE
+    //
+    // Read this before "fixing" either of them to slash the auditor. The
+    // hygiene settlement is the security property, not an unfinished job.
+    //
+    // Both predicates are TRUE, and both are MANUFACTURABLE AT WILL BY THE
+    // OPERATOR. `contracts/spend-probe` and the router's own shuttle test prove
+    // it for `BoundExceeded`: a $1 shuttle between two addresses the operator
+    // controls drives `spent` past any bound for the price of gas, with a net
+    // flow out of the operator's control of exactly zero. Every hop is a real,
+    // authorized, correctly recorded payment — there is nothing to detect and
+    // nothing to forge. `ExpiredCertificate` is the same shape: the operator
+    // controls whether their own agent keeps paying after expiry.
+    //
+    // So if either slashed the auditor on the counter alone, ANY OPERATOR COULD
+    // DESTROY THEIR AUDITOR'S ALLOCATION FOR THE COST OF GAS. The slash goes to
+    // the treasury, so the operator gains nothing by it — but the auditor loses
+    // everything, at will, with no defence available to them. An auditing
+    // business cannot exist under that rule, and the protocol is worthless
+    // without auditors.
+    //
+    // What these proofs establish is that THE COVENANT WAS BROKEN, not that
+    // ANYONE WAS HARMED. The certificate dying is the correct and sufficient
+    // automatic consequence: it costs the operator their own certificate, their
+    // reserve lockup and (later) their premium, and it warns every counterparty
+    // reading `verify`. Compensation and slashing require ASSESSED HARM, which
+    // is exactly what `resolve_by_arbiter(challenge_id, fraud_proven, harm)` is
+    // for — a human states the number, and the same waterfall spends it.
+    //
+    // `InsufficientReserve` is different and keeps the full waterfall: its harm
+    // is a shortfall in capital the operator promised and did not commit. That
+    // is an amount, not a counter, and it cannot be manufactured without the
+    // operator actually losing the reserve they withheld.
+    // ---------------------------------------------------------------------
     pub fn resolve(env: Env, challenge_id: u64) {
         let ch = Self::load_pending(&env, challenge_id);
 
         let fraud = match ch.proof_type {
             ProofType::InsufficientReserve => Self::verify_insufficient_reserve(&env, ch.cert_id),
-            // Everything else cannot be proven from contract state alone.
-            _ => panic!("needs_arbiter"),
+            ProofType::BoundExceeded => Self::verify_bound_exceeded(&env, ch.cert_id),
+            ProofType::ExpiredCertificate => Self::verify_expired_certificate(&env, ch.cert_id),
+            // A forged auditor signature leaves no on-chain trace to read.
+            ProofType::FakeSignature => panic!("needs_arbiter"),
         };
 
         if fraud {
@@ -311,6 +431,164 @@ impl ChallengeManager {
         actual < claimed
     }
 
+    /// On-chain proof: the router has metered more gross flow against this
+    /// certificate than the certificate's own bound allows.
+    ///
+    /// The router is the source of truth, and it is a sound one: only an
+    /// enrolled agent moves the counter, enrollment needs both the agent's and
+    /// the certificate operator's signature, and an enrollment is permanent. So
+    /// nobody can attach spend to a stranger's certificate, and an operator
+    /// cannot walk an agent off a climbing counter onto a fresh certificate.
+    ///
+    /// An agent that never enrolled meters nothing, so `spent` stays 0 and this
+    /// predicate is false — untracked agents cannot be proven against here.
+    ///
+    /// The arithmetic is unforgeable and the number is still not a loss. See the
+    /// hygiene-mode comment on `resolve`.
+    fn verify_bound_exceeded(env: &Env, cert_id: u64) -> bool {
+        let bound = Self::cert_bound(env, cert_id);
+        Self::router_spent(env, cert_id) > bound
+    }
+
+    /// On-chain proof of DESIGN-V2 §7: the router recorded a payment that
+    /// settled late enough, and was large enough, to be evidence that the
+    /// certificate's covenant outlived the certificate.
+    ///
+    /// All three §7 conditions must hold:
+    ///
+    /// 1. The payment settled after `expires_at + GRACE_WINDOW_SECONDS`.
+    /// 2. Its value was at least `DE_MINIMIS_FLOOR_BPS` of the certificate's
+    ///    bound.
+    /// 3. The certificate was not renewed, and is not already invalid.
+    ///
+    /// **Which payment.** The router records exactly one post-expiry pair for
+    /// this purpose: `max_payment` and `max_payment_at`, the largest late
+    /// payment and when it settled. Conditions 1 and 2 are applied to that one
+    /// pair. That is deliberately conservative in one direction: if the largest
+    /// late payment landed inside the grace window while a smaller, later one
+    /// cleared both tests, this returns false. Upholding fewer real breaches is
+    /// the safe error here — the cost of a false negative is a certificate that
+    /// lives out its term, and the cost of a false positive is an honest
+    /// certificate killed. Recording a per-payment history to close the gap
+    /// would put unbounded storage on the router's x402 hot path.
+    ///
+    /// **Renewal, condition 3.** This registry has no in-place extension —
+    /// `expires_at` is immutable once published — so renewing means publishing a
+    /// fresh certificate for the same agent, which re-points the agent's
+    /// mapping. If the agent's current certificate is no longer this one, the
+    /// covenant moved and this certificate's late activity is not evidence
+    /// against it. Note the timing is coarser than §7's wording: §7 says "not
+    /// renewed **before** the payment", and this asks "not renewed as of
+    /// resolution". A renewal filed after the late payment therefore also
+    /// defeats the proof, which is a cure path in the sense of §2 — and §2's
+    /// evaluate-at-filing machinery does not exist yet. It errs toward not
+    /// killing a certificate, and it is recorded as an open gap in
+    /// `docs/DESIGN-V2.md` §10 rather than silently accepted.
+    ///
+    /// An agent that never enrolled has no post-expiry record at all, so the
+    /// predicate is false for it.
+    fn verify_expired_certificate(env: &Env, cert_id: u64) -> bool {
+        // Condition 3, first, because it is the cheapest and the most decisive.
+        // Already-invalid certificates are excluded too: there is nothing left
+        // to kill, and a second hygiene bounty for the same dead certificate
+        // would be a slow drain on the forfeited-bond pool.
+        if !Self::cert_is_verified(env, cert_id) {
+            return false;
+        }
+        let agent = Self::cert_agent(env, cert_id);
+        if Self::current_cert_of_agent(env, &agent) != cert_id {
+            return false;
+        }
+
+        let pe = Self::router_post_expiry(env, cert_id);
+        if pe.count == 0 {
+            return false;
+        }
+
+        // Condition 1: after expiry PLUS the grace window. `expires_at` is read
+        // live from the Registry rather than from the router's enrollment-time
+        // snapshot, so the certificate the challenge names is the one the window
+        // is measured against.
+        let expires_at = Self::cert_expires_at(env, cert_id);
+        let deadline = expires_at.saturating_add(GRACE_WINDOW_SECONDS);
+        if pe.max_payment_at <= deadline {
+            return false;
+        }
+
+        // Condition 2: at least 0.1% of THIS certificate's bound.
+        let floor = Self::cert_bound(env, cert_id) * DE_MINIMIS_FLOOR_BPS / 10_000;
+        pe.max_payment >= floor
+    }
+
+    // ----- reads on the other contracts ----------------------------------
+
+    fn router(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Router)
+            .expect("router_not_set")
+    }
+
+    fn registry(env: &Env) -> Address {
+        env.storage().instance().get(&DataKey::Registry).unwrap()
+    }
+
+    fn router_spent(env: &Env, cert_id: u64) -> i128 {
+        env.invoke_contract(
+            &Self::router(env),
+            &Symbol::new(env, "spent"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn router_post_expiry(env: &Env, cert_id: u64) -> PostExpiry {
+        env.invoke_contract(
+            &Self::router(env),
+            &Symbol::new(env, "post_expiry_spent"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn cert_bound(env: &Env, cert_id: u64) -> i128 {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_bound"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn cert_expires_at(env: &Env, cert_id: u64) -> u64 {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_expires_at"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn cert_agent(env: &Env, cert_id: u64) -> Address {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_agent"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn cert_is_verified(env: &Env, cert_id: u64) -> bool {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "is_cert_verified"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
+    fn current_cert_of_agent(env: &Env, agent: &Address) -> u64 {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_id"),
+            Vec::from_array(env, [agent.clone().into_val(env)]),
+        )
+    }
+
     // ----- the settlement waterfall -------------------------------------
     //
     // ONE rule, applied identically to every proof type:
@@ -365,10 +643,15 @@ impl ChallengeManager {
                     0
                 }
             }
-            // Unreachable in practice: `resolve` refuses every other proof type
-            // with `needs_arbiter`, and the arbiter path supplies its own
-            // quantity. Zero is the safe answer if that ever stops being true —
-            // it settles in hygiene mode rather than inventing a payout.
+            // `BoundExceeded` and `ExpiredCertificate` reach this arm, and the
+            // zero is the whole point: both are provable from router state and
+            // both are manufacturable by the operator, so neither may size a
+            // payout. Zero routes them to `settle_hygiene` — certificate dead,
+            // flat bounty, reserve untouched, auditor not slashed. Read the
+            // comment on `resolve` before changing this to anything else.
+            //
+            // `FakeSignature` never arrives here: `resolve` refuses it and the
+            // arbiter path supplies its own quantity.
             _ => 0,
         }
     }

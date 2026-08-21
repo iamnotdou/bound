@@ -313,6 +313,49 @@ impl Registry {
         cert.expires_at.saturating_add(CHALLENGE_WINDOW_SECONDS)
     }
 
+    /// The bound the certificate advertises. The ChallengeManager reads this
+    /// for two things: the `BoundExceeded` comparison against the router's
+    /// spend counter, and the de-minimis floor of the `ExpiredCertificate`
+    /// predicate, which is a percentage of this number rather than a flat
+    /// amount.
+    pub fn get_cert_bound(env: Env, cert_id: u64) -> i128 {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.bound
+    }
+
+    /// The agent named on the certificate.
+    ///
+    /// The ChallengeManager needs it to answer "has this certificate been
+    /// superseded?": `get_cert_id(agent)` is the agent's *current* certificate,
+    /// and if that is no longer `cert_id` the operator has published a fresh one
+    /// for the same agent. That is what renewal means in this registry — there
+    /// is no in-place extension, because `expires_at` is immutable once
+    /// published.
+    pub fn get_cert_agent(env: Env, cert_id: u64) -> Address {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.agent
+    }
+
+    /// Whether the certificate is currently attested and not invalidated.
+    /// Deliberately says nothing about expiry: a predicate about post-expiry
+    /// activity has to be able to ask this question after `expires_at`.
+    pub fn is_cert_verified(env: Env, cert_id: u64) -> bool {
+        let cert: Certificate = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("certificate_not_found");
+        cert.status == CertStatus::Verified
+    }
+
     pub fn get_cert_reserve(env: Env, cert_id: u64) -> i128 {
         let cert: Certificate = env
             .storage()

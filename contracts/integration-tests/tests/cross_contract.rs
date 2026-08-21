@@ -140,6 +140,9 @@ impl BoundWorld {
             &treasury,
             &MIN_CHALLENGE_STAKE,
         );
+        // The router is wired in a second, arbiter-authorized one-shot call
+        // rather than as a ninth `initialize` argument — see `set_router`.
+        ChallengeManagerClient::new(&env, &challenge_manager).set_router(&router);
 
         let world = Self {
             env,
@@ -1586,8 +1589,13 @@ fn arbiter_resolves_subjective_proof_types_both_ways() {
     w.attest(cert_id);
 
     let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
-    // The trustless resolver refuses: this proof type is not on-chain provable.
-    assert!(w.cm().try_resolve(&id).is_err());
+    // `BoundExceeded` is now provable on-chain, but only ever settles as
+    // hygiene — the arbiter path is still the only one that can attach a
+    // quantity to it, which is what this test is about. `FakeSignature` is the
+    // remaining proof type the trustless resolver genuinely cannot touch.
+    let unprovable = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    assert!(w.cm().try_resolve(&unprovable).is_err());
+    assert!(w.cm().get_challenge(&unprovable).verdict == CmVerdict::Pending);
 
     // The arbiter rules that the agent blew through its bound, at a cost of $300.
     let stated_harm = 300_0000000i128;
@@ -2152,4 +2160,505 @@ fn router_records_post_expiry_payments_without_judging_them() {
     // Neither the grace window nor the floor has been applied by the router: a
     // one-dollar payment one second after expiry was recorded in full.
     assert_eq!(w.router().post_expiry_spent(&cert_id).total, 4_0000000);
+}
+
+// ---------------------------------------------------------------------------
+// 10. Trustless predicates: BoundExceeded and ExpiredCertificate
+//
+// Both are proven from router state alone, and both settle in HYGIENE MODE:
+// the certificate is invalidated, the challenger is paid the flat bounty out of
+// forfeited bonds, the operator's reserve is not touched, and THE AUDITOR IS
+// NOT SLASHED.
+//
+// That last clause is the security property these tests exist to pin down, not
+// a missing feature. Both predicates are manufacturable at will by the
+// operator — the shuttle test below does exactly that — so a slash on the
+// counter alone would let any operator destroy their auditor's allocation for
+// the price of gas. See the comment on `ChallengeManager::resolve`.
+// ---------------------------------------------------------------------------
+
+/// The grace window the ChallengeManager applies to post-expiry payments: 24h.
+const GRACE_WINDOW: u64 = 24 * 60 * 60;
+/// The de-minimis floor, in basis points of the certificate's own bound: 0.1%.
+const DE_MINIMIS_FLOOR_BPS: i128 = 10;
+/// A $10 bound, small enough that a handful of dollar payments clears it.
+const SMALL_BOUND: i128 = 10_0000000;
+
+fn floor_for(bound: i128) -> i128 {
+    bound * DE_MINIMIS_FLOOR_BPS / 10_000
+}
+
+/// Staked, published, funded, attested and enrolled in the router, on a
+/// caller-chosen bound. The reserve is honestly funded throughout, so no
+/// `InsufficientReserve` proof is lurking in any of these tests.
+fn predicate_world(bound: i128) -> (BoundWorld, u64) {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(bound, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+    w.mint(&w.agent, FUNDING);
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+    w.router().deposit(&w.agent, &FLOAT_CAP);
+    (w, cert_id)
+}
+
+/// The hygiene bounty comes out of forfeited bonds and nothing else, so a
+/// failed challenge has to have happened first. The certificate is honestly
+/// funded, so an `InsufficientReserve` challenge against it fails and its bond
+/// is forfeited.
+fn seed_bounty_pool(w: &BoundWorld, cert_id: u64) {
+    let dud = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(dud);
+    assert!(w.cm().get_challenge(&dud).verdict == CmVerdict::ChallengeFails);
+    assert_eq!(w.cm().get_bounty_pool(), MIN_CHALLENGE_STAKE);
+}
+
+/// Custody is never fractional: the router's internal supply always equals the
+/// underlying USDC it holds.
+fn assert_router_fully_backed(w: &BoundWorld) {
+    assert_eq!(w.router().total_supply(), w.balance(&w.router));
+}
+
+/// Everything the auditor owns, unchanged to the stroop.
+///
+/// The allocation retires to zero — that is the point of retiring it, and the
+/// capital comes straight back as free stake — so the invariant that matters is
+/// that the custodied USDC never moved and the treasury never received a
+/// stroop.
+fn assert_auditor_untouched(w: &BoundWorld) {
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.treasury), 0);
+}
+
+// --- BoundExceeded ---------------------------------------------------------
+
+/// `spent > bound` is proven by `resolve` from the router's counter alone — no
+/// arbiter — and settles as hygiene.
+#[test]
+fn bound_exceeded_is_provable_from_router_state_and_settles_as_hygiene() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+    seed_bounty_pool(&w, cert_id);
+
+    // $11 of routed flow against a $10 bound.
+    w.router().transfer(&w.agent, &w.victim, &11_0000000);
+    assert_eq!(w.router().spent(&cert_id), 11_0000000);
+    assert!(w.router().spent(&cert_id) > SMALL_BOUND);
+
+    let challenger_before = w.balance(&w.challenger);
+    let operator_before = w.balance(&w.operator);
+
+    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.resolve(id); // the trustless path, not the arbiter
+
+    // The certificate is dead.
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+    assert!(!w.registry().verify(&w.agent).valid);
+
+    // The challenger got the flat bounty and nothing proportional to anyone's
+    // stake: bond back, plus $10.
+    assert_eq!(w.balance(&w.challenger), challenger_before + HYGIENE_BOUNTY);
+
+    // The auditor is untouched, and the allocation retired rather than being
+    // stranded on a dead certificate.
+    assert_auditor_untouched(&w);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), 0);
+
+    // The reserve was never opened.
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.operator), operator_before);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_router_fully_backed(&w);
+}
+
+/// **The headline test: the $1 shuttle drives a real, trustlessly-provable
+/// `BoundExceeded`, and it costs the auditor nothing.**
+///
+/// One dollar of float shuttles between the enrolled agent and a second address
+/// the operator controls. Every hop is a real, authorized, correctly recorded
+/// payment; net flow out of the operator's control is exactly zero. The counter
+/// clears the bound, `resolve` upholds the proof with no arbiter involved, and
+/// the certificate dies.
+///
+/// And the auditor's capital does not move by one stroop. If it did, this
+/// sequence — gas and nothing else — would be a way for any operator to destroy
+/// their auditor's allocation on demand, and nobody would ever audit anything.
+#[test]
+fn the_dollar_shuttle_proves_bound_exceeded_and_costs_the_auditor_nothing() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(SMALL_BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+    seed_bounty_pool(&w, cert_id);
+
+    // `sink` is the operator's own second address. The entire float is $1.
+    let sink = w.operator2.clone();
+    w.mint(&w.agent, DOLLAR);
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+    w.router().deposit(&w.agent, &DOLLAR);
+
+    let mut hops = 0i128;
+    while w.router().spent(&cert_id) <= SMALL_BOUND {
+        if hops % 2 == 0 {
+            w.router().transfer(&w.agent, &sink, &DOLLAR);
+        } else {
+            w.router().transfer(&sink, &w.agent, &DOLLAR);
+        }
+        hops += 1;
+    }
+    assert_eq!(hops, 21);
+    assert_eq!(w.router().spent(&cert_id), 11_0000000);
+
+    // Net flow is exactly zero: the controlled pair holds what it started with,
+    // and custody never moved.
+    assert_eq!(
+        w.router().balance(&w.agent) + w.router().balance(&sink),
+        DOLLAR
+    );
+    assert_eq!(w.balance(&w.router), DOLLAR);
+    assert_eq!(w.router().balance(&w.victim), 0);
+
+    let challenger_before = w.balance(&w.challenger);
+    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    // The manufactured proof is a real proof, and it kills the certificate.
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+
+    // And it costs the auditor nothing at all.
+    assert_auditor_untouched(&w);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), 0);
+
+    // Nor the operator's reserve — the operator pays with their own dead
+    // certificate, which is the whole penalty and the correct one.
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.challenger), challenger_before + HYGIENE_BOUNTY);
+    assert_router_fully_backed(&w);
+}
+
+/// The predicate is `spent > bound`, not `spent >= bound`. Spending exactly the
+/// bound is the covenant being kept, and the challenge fails with every balance
+/// where it was.
+#[test]
+fn bound_exceeded_is_rejected_when_spend_is_within_the_bound() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+
+    w.router().transfer(&w.agent, &w.victim, &SMALL_BOUND);
+    assert_eq!(w.router().spent(&cert_id), SMALL_BOUND);
+
+    let auditor_before = w.balance(&w.auditor);
+    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeFails);
+    assert!(w.registry().verify(&w.agent).valid);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+
+    // Nothing moved but the forfeited bond.
+    assert_auditor_untouched(&w);
+    assert_eq!(w.balance(&w.auditor), auditor_before);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_router_fully_backed(&w);
+}
+
+// --- ExpiredCertificate (DESIGN-V2 §7) -------------------------------------
+
+/// All three §7 conditions hold: the payment settled after the grace window,
+/// it cleared the de-minimis floor, and the certificate was neither renewed nor
+/// already invalid. Upheld by `resolve`, settled as hygiene.
+#[test]
+fn expired_certificate_upholds_when_all_three_conditions_hold() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+    seed_bounty_pool(&w, cert_id);
+
+    // A dollar is far above 0.1% of a $10 bound.
+    assert!(DOLLAR >= floor_for(SMALL_BOUND));
+
+    w.set_time(EXPIRES_AT + GRACE_WINDOW + 1);
+    w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+
+    let pe = w.router().post_expiry_spent(&cert_id);
+    assert_eq!(pe.count, 1);
+    assert_eq!(pe.max_payment, DOLLAR);
+    assert_eq!(pe.max_payment_at, EXPIRES_AT + GRACE_WINDOW + 1);
+
+    let challenger_before = w.balance(&w.challenger);
+    let id = w.challenge(cert_id, ProofType::ExpiredCertificate, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+
+    // Hygiene, exactly as for BoundExceeded: bounty paid, reserve untouched,
+    // auditor whole.
+    assert_eq!(w.balance(&w.challenger), challenger_before + HYGIENE_BOUNTY);
+    assert_auditor_untouched(&w);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_router_fully_backed(&w);
+}
+
+/// Condition 1 fails: the late payment landed inside the grace window.
+///
+/// This is the $1-post-expiry attack §7 exists to defuse — a hostile
+/// counterparty invoicing an agent moments after expiry must not be able to
+/// kill an honest certificate.
+#[test]
+fn expired_certificate_is_rejected_inside_the_grace_window() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+
+    // Late, well above the floor, but comfortably inside 24 hours — and the
+    // boundary itself is inside: the predicate wants strictly after.
+    w.set_time(EXPIRES_AT + GRACE_WINDOW);
+    w.router().transfer(&w.agent, &w.victim, &5_0000000);
+    assert_eq!(w.router().post_expiry_spent(&cert_id).count, 1);
+
+    let id = w.challenge(cert_id, ProofType::ExpiredCertificate, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeFails);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert_auditor_untouched(&w);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_router_fully_backed(&w);
+}
+
+/// Condition 2 fails: the late payment is below 0.1% of the bound.
+#[test]
+fn expired_certificate_is_rejected_below_the_de_minimis_floor() {
+    let (w, cert_id) = predicate_world(BOUND); // $5,000 bound → a $5 floor
+    assert_eq!(floor_for(BOUND), 5_0000000);
+
+    w.set_time(EXPIRES_AT + GRACE_WINDOW + 1);
+    w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+    assert!(w.router().post_expiry_spent(&cert_id).max_payment < floor_for(BOUND));
+
+    let id = w.challenge(cert_id, ProofType::ExpiredCertificate, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeFails);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert_auditor_untouched(&w);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_router_fully_backed(&w);
+}
+
+/// **The floor scales with the bound.** The identical $1 late payment, at the
+/// identical instant, is below the floor on a $5,000 bound and above it on a
+/// $10 one. A flat floor would be irrelevant at the first and fatal at the
+/// second, which is why §7 makes it a percentage.
+#[test]
+fn the_de_minimis_floor_scales_with_the_certificates_bound() {
+    let late = |bound: i128| -> CmVerdict {
+        let (w, cert_id) = predicate_world(bound);
+        w.set_time(EXPIRES_AT + GRACE_WINDOW + 1);
+        w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+        let id = w.challenge(cert_id, ProofType::ExpiredCertificate, MIN_CHALLENGE_STAKE);
+        w.resolve(id);
+        w.cm().get_challenge(&id).verdict
+    };
+
+    assert!(DOLLAR < floor_for(BOUND));
+    assert!(DOLLAR > floor_for(SMALL_BOUND));
+    assert!(late(BOUND) == CmVerdict::ChallengeFails);
+    assert!(late(SMALL_BOUND) == CmVerdict::ChallengeWins);
+}
+
+/// Condition 3 fails: the operator renewed. In this registry renewal means
+/// publishing a fresh certificate for the same agent, which re-points the
+/// agent's mapping — so the old certificate's late activity is no longer
+/// evidence against a live covenant.
+#[test]
+fn expired_certificate_is_rejected_when_the_certificate_was_renewed() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+
+    w.set_time(EXPIRES_AT + GRACE_WINDOW + 1);
+    w.router().transfer(&w.agent, &w.victim, &DOLLAR);
+    assert!(w.router().post_expiry_spent(&cert_id).max_payment >= floor_for(SMALL_BOUND));
+
+    // The operator renews: a new certificate for the same agent.
+    let renewed = w.publish_cert(
+        SMALL_BOUND,
+        RESERVE_CLAIM,
+        EXPIRES_AT + 10 * CHALLENGE_WINDOW,
+    );
+    assert!(renewed != cert_id);
+    assert_eq!(w.registry().get_cert_id(&w.agent), renewed);
+
+    let id = w.challenge(cert_id, ProofType::ExpiredCertificate, MIN_CHALLENGE_STAKE);
+    w.resolve(id);
+
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeFails);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert_auditor_untouched(&w);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_router_fully_backed(&w);
+}
+
+// --- Neither proof is available against an unwatched agent -----------------
+
+/// §8's point, restated as a settlement property: an agent that never enrolled
+/// meters nothing, so neither predicate can ever be true against its
+/// certificate — not even when it is demonstrably spending past its bound and
+/// long past its expiry.
+///
+/// That is not a hole a challenger can exploit; it is the reason enrollment
+/// needs both signatures. Nobody can attach spend to a stranger's certificate.
+#[test]
+fn an_untracked_agent_can_produce_neither_proof() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(SMALL_BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+
+    // The agent holds routed balance and pays it away, well past expiry and far
+    // beyond the bound — but was never enrolled.
+    assert!(!w.router().is_tracked(&w.agent));
+    w.mint(&w.agent, FUNDING);
+    w.router().deposit(&w.agent, &FLOAT_CAP);
+    w.set_time(EXPIRES_AT + GRACE_WINDOW + 1);
+    w.router().transfer(&w.agent, &w.victim, &FLOAT_CAP);
+
+    assert_eq!(w.router().spent(&cert_id), 0);
+    assert_eq!(w.router().post_expiry_spent(&cert_id).count, 0);
+
+    for proof in [ProofType::BoundExceeded, ProofType::ExpiredCertificate] {
+        let id = w.challenge(cert_id, proof, MIN_CHALLENGE_STAKE);
+        w.resolve(id);
+        assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeFails);
+    }
+
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert_auditor_untouched(&w);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_router_fully_backed(&w);
+}
+
+// --- The arbiter path is unchanged -----------------------------------------
+
+/// The same `BoundExceeded` breach, on the same certificate, settles two ways.
+///
+/// Through `resolve` it is hygiene: the counter is evidence, and evidence alone
+/// never reaches the auditor's capital. Through `resolve_by_arbiter` with a
+/// stated harm it slashes exactly like an arithmetic proof, because a human has
+/// assessed what was actually lost.
+///
+/// That difference is the whole design. It is not an inconsistency to be tidied
+/// up by making `resolve` slash too.
+#[test]
+fn the_arbiter_still_slashes_the_same_breach_when_it_states_harm() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+    w.router().transfer(&w.agent, &w.victim, &11_0000000);
+    assert!(w.router().spent(&cert_id) > SMALL_BOUND);
+
+    // The arbiter assesses $1,200 of real harm: more than the $1,000 reserve,
+    // so the residual draws on the allocation.
+    let harm = 1_200_0000000i128;
+    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.cm().resolve_by_arbiter(&id, &true, &harm);
+
+    //   victim = min(1200, 1000) = $1,000  <- the operator's own reserve
+    //   fee    = min(120, 0)     = $0      <- nothing left in that reserve
+    //   slash  = 1200 - 1000     = $200    <- the treasury, within the $600 alloc
+    assert_eq!(w.balance(&w.victim), RESERVE_CLAIM);
+    assert_eq!(w.balance(&w.treasury), 200_0000000);
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(
+        w.staking().get_stake(&w.auditor),
+        AUDITOR_STAKE - 200_0000000
+    );
+    assert_eq!(w.free_stake(), ALLOCATION - 200_0000000);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+}
+
+/// `FakeSignature` leaves no on-chain trace, so it still needs the arbiter and
+/// `resolve` still refuses it.
+#[test]
+fn fake_signature_still_needs_the_arbiter() {
+    let (w, cert_id) = predicate_world(SMALL_BOUND);
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    assert!(w.cm().try_resolve(&id).is_err());
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::Pending);
+    assert_auditor_untouched(&w);
+}
+
+/// The router is named once, by the arbiter, and can never be re-pointed. A
+/// lying router could invalidate any certificate it liked, so the race that an
+/// unauthenticated setter would create is closed the same way the treasury's is.
+#[test]
+fn the_router_is_set_once_and_only_by_the_arbiter() {
+    let (w, _) = predicate_world(SMALL_BOUND);
+    assert_eq!(w.cm().get_router(), w.router);
+
+    // Already set — even the arbiter cannot re-point it.
+    assert!(w.cm().try_set_router(&w.challenger).is_err());
+    assert_eq!(w.cm().get_router(), w.router);
+
+    // And on a fresh, unwired ChallengeManager, a stranger cannot claim it.
+    let fresh = w.env.register(ChallengeManager, ());
+    let cm = ChallengeManagerClient::new(&w.env, &fresh);
+    cm.initialize(
+        &w.registry,
+        &w.staking,
+        &w.vault,
+        &w.escrow,
+        &w.token,
+        &w.arbiter,
+        &w.treasury,
+        &MIN_CHALLENGE_STAKE,
+    );
+    w.env.set_auths(&[]);
+    assert!(cm.try_set_router(&w.router).is_err());
+    w.mock_all_auths();
+    cm.set_router(&w.router);
+    assert_eq!(cm.get_router(), w.router);
 }
