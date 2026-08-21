@@ -304,12 +304,22 @@ TypeScript change, not a Rust one.** Removing the crate from the workspace means
 `scripts/deploy-all.ts` can no longer supply an address, and
 `packages/sdk/src/deployments.ts` declares `contracts.feeEscrow` as a **required**
 field of `Deployment` (with `packages/sdk/src/deployments.test.ts` asserting the
-key list). The removal is therefore: make `feeEscrow` optional in that interface
-and in `serializeDeployment`, drop the assertions that require it, then delete
-`contracts/fee-escrow`, its workspace member, its `deploy`/`initialize`/env-write
-in `deploy-all.ts`, and the `fee_escrow` argument from
-`ChallengeManager::initialize`. Do it in step 5, alongside the other SDK work —
-the wasm artifact count drops from 8 to 7 at that point. Shipping a known-broken
+key list). **It is also larger than the deployment record.** `fee_escrow` is part of the
+SDK's _public API_, not just its config: `bindings.ts` re-exports the client,
+`bound-client.ts` exposes `depositFee()`, and `tx.ts` carries a `deposit-fee`
+wallet action that `bound-web` includes in its action allowlist. Removing the
+contract removes those. That is a breaking API change — coherent only because
+step 5 is already an SDK major, and defensible because the premium vault now does
+what `deposit-fee` was for.
+
+The removal is therefore, in order: make `feeEscrow` optional in the `Deployment`
+interface and in `serializeDeployment`, and drop the assertions that require it;
+remove `depositFee`, the `deposit-fee` action and the binding re-exports from the
+SDK; then delete `contracts/fee-escrow`, its workspace member, its
+`deploy`/`initialize`/env-write in `deploy-all.ts`, and the `fee_escrow` argument
+from `ChallengeManager::initialize`. Finally drop `deposit-fee` from `bound-web`'s
+allowlist. Do it in step 5 — the wasm artifact count drops from 8 to 7 at that
+point. Shipping a known-broken
 contract that holds funds into a fresh deployment is not defensible, and there is
 no upgrade path to remove it afterwards.
 
