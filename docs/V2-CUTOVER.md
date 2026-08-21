@@ -135,6 +135,35 @@ be rewritten.
 - `get_cert_issued_at(cert_id) -> u64`. The PremiumVault reads it with
   `get_cert_expires_at` to price coverage over `expires_at - issued_at`.
 
+### Registry — `attest` verifies the reserve (DESIGN-V2 §4)
+
+- **`attest` now panics `reserve_not_funded`** when the vault holds less than
+  the certificate's claimed `reserve_amount`. Same signature; one more rejection
+  case, and a **cross-contract call `attest` did not make before.** The Registry
+  asks the ChallengeManager for its `ReserveVault` address and reads
+  `get_balance(cert_id)` from it, so attestation now depends on both the
+  ChallengeManager and the vault being live and initialized.
+- **New, additive: `ChallengeManager::get_reserve_vault() -> Address`.** Exposed
+  so the Registry measures the same vault the shortfall proof measures. The
+  comparison is `reserve_amount > balance`, exactly the one
+  `reserve_shortfall` uses — a vault holding _exactly_ the claim is attestable,
+  and has no shortfall.
+
+> **This reorders the operator's workflow, and it is client-visible.** The
+> reserve must be **funded before the auditor attests**, where it could
+> previously be funded at any time or never. The sequence is now
+> `publish` → `ReserveVault::deposit` → `attest`, and a client that attests
+> first will fail with `reserve_not_funded`. Any UI, script or agent tool that
+> presents funding as an optional or later step has to move it ahead of
+> attestation. `deposit` itself is unchanged.
+>
+> Note the knock-on: `ReserveVault::deposit` locks the reserve until the
+> certificate's settlement deadline, so requiring funding before attestation
+> means an attested certificate's reserve **cannot legitimately leave** before
+> `expires_at + CHALLENGE_WINDOW_SECONDS`. Operators lose the ability to attest
+> first and fund later, or to run a certificate on a reserve they intend to
+> move.
+
 ### ReserveVault and AuditorStaking — one behaviour change each, no signature change
 
 Both `release_to_operator(cert_id)` and `release_allocation(cert_id)` now read
@@ -291,6 +320,22 @@ The reasoning for both numbers is on the constants in
 > filing a challenge or settling all reset the clock. Certificates are expected
 > to be shorter-lived than that, but a long-dated certificate left completely
 > idle needs a touch.
+
+**DESIGN-V2 §4 is fixed.** `attest` reads the vault and refuses a certificate
+whose reserve is not funded, so an auditor can no longer be walked onto a
+certificate that is provably fraudulent the moment they sign it. See the
+Registry section above for the ABI and workflow consequences.
+
+> **What it does not fix.** It does not stop the reserve leaving _after_
+> attestation, which is what the `InsufficientReserve` proof exists for. In
+> practice the vault's own lock narrows that window hard — the money cannot be
+> released before the settlement deadline — but a post-deadline withdrawal is
+> still provable fraud against a still-slashable allocation, and
+> `a_reserve_withdrawn_after_attestation_is_still_provable_fraud` demonstrates
+> exactly that. It also does not close **collusion**: §3's allowlist of vault
+> wasm hashes was never built, so `cert.reserve_vault_contract` remains
+> operator-supplied and untrusted. That is why this check reads the
+> ChallengeManager's vault instead of the certificate's.
 
 **L3 is not fixed.** `FeeEscrow` is still a singleton whose `Released` flag never
 resets, so it pays out exactly once ever, and the ChallengeManager still stores

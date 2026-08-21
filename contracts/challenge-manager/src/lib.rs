@@ -327,6 +327,21 @@ impl ChallengeManager {
             .expect("premium_vault_not_set")
     }
 
+    /// The vault every reserve proof and every settlement payment reads.
+    ///
+    /// Exposed for the Registry, which needs it at `attest` (DESIGN-V2 §4) to
+    /// check a certificate's reserve is funded *against the same contract this
+    /// one will later measure the shortfall on*. Publishing the address rather
+    /// than letting the Registry hold its own copy is what makes the two
+    /// checks agree by construction instead of by convention: there is exactly
+    /// one `DataKey::ReserveVault` in the deployment, and it is this one.
+    pub fn get_reserve_vault(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReserveVault)
+            .expect("reserve_vault_not_set")
+    }
+
     /// Whether step 4 is live. False means a deployment that never called
     /// `set_premium_vault`, in which case settlement silently skips the premium
     /// step — see the comment on step 4 in `settle_fraud`.

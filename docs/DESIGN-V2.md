@@ -297,25 +297,85 @@ waits for attestation, then self-challenges.
 
 **Decision. `attest` verifies the reserve before recording the attestation.**
 
-`attest` performs the same reserve check `verify_insufficient_reserve` performs,
-against the certificate's vault, and rejects if the vault does not hold at least
-the claimed reserve. An auditor cannot sign a certificate that is already
-fraudulent.
+> **Status: implemented, not deployed** (branch `feat/attest-verifies-reserve`).
+> `attest` panics `reserve_not_funded` when the vault holds less than the
+> certificate's claimed `reserve_amount`. All five tests below are written, plus
+> an exact-boundary test and a per-certificate isolation test.
 
-This is the one-line fix the review identified, and it changes `attest` from a
-registry-local write into a cross-contract call. That is a real shape change —
-`attest` now depends on the vault being live and on §3's allowlist — and it must
-land in the same redeploy as both.
+`attest` performs the same reserve check `verify_insufficient_reserve` performs
+and rejects if the vault does not hold at least the claimed reserve. An auditor
+cannot sign a certificate that is already fraudulent.
+
+The comparison is `reserve_amount > balance`, character for character the one
+`ChallengeManager::reserve_shortfall` uses to decide a shortfall exists. A vault
+holding **exactly** the claimed reserve therefore has no shortfall and is
+attestable: the boundary belongs to the honest operator in both contracts.
+`test_attest_and_the_shortfall_proof_agree_at_the_exact_boundary` pins the two
+together so they cannot drift apart, because a disagreement between them would
+itself be the defect this section is about.
+
+**Which vault — not the certificate's.** This section originally said "against
+the certificate's vault", and that was decided when §3's allowlist was still
+expected to constrain `cert.reserve_vault_contract`. **§3 was never built**, so
+the operator-named address is unconstrained: an operator could point it at a
+vault they funded, or at one that simply lies, and the check would pass while
+the certificate settlement actually measures stayed empty — a check that proves
+nothing.
+
+So `attest` reads the **ChallengeManager's** vault, obtained live through a new
+additive `ChallengeManager::get_reserve_vault()`. That is the vault
+`reserve_shortfall` measures and `pay_from_reserve` settles out of, which makes
+the two checks agree by construction rather than by convention. The Registry
+holds no vault address of its own, so the two cannot drift, and `initialize`'s
+argument list — the on-chain ABI the deploy script and the committed bindings
+pass positionally — does not have to widen. That is the same reasoning
+`set_router` and `set_premium_vault` are built on.
+
+Worth recording plainly: `cert.reserve_vault_contract` is read by **nothing** in
+the deployed system. It is a field the operator fills in that no settlement path
+consults. §3 is still worth doing, but this fix does not depend on it and no
+longer needs to land with it.
+
+This changes `attest` from a registry-local write into a cross-contract call.
+That is a real shape change: attestation now depends on the ChallengeManager and
+the vault being live and initialized.
 
 **Not sufficient on its own.** It closes attestation-time griefing. It does not
 stop the operator withdrawing the reserve _after_ attestation, which is what the
 `InsufficientReserve` proof and the auditor's own monitoring are for. The
 auditor's risk is real and ongoing; this only removes the instant-loss trap.
 
+**It does not close collusion.** An operator who supplies a lying vault can
+still, in principle, walk an auditor in — this fix closes the _accident_, not
+the conspiracy. In today's wiring the check reads the protocol's own vault, so
+there is nothing for the operator to lie with; that protection comes from the
+ChallengeManager holding a single vault address, not from anything §4 enforces.
+
+**A consequence worth naming: the reserve can now barely leave.** `deposit`
+locks a certificate's reserve until its settlement deadline and there is no
+partial withdrawal, so requiring funding _before_ attestation means an attested
+certificate's reserve cannot legitimately move until
+`expires_at + CHALLENGE_WINDOW_SECONDS`. The post-attestation withdrawal this
+section says §4 does not cover is therefore reachable only after that deadline
+(or through a settlement drawing the reserve down). §4 plus the deposit lock is
+strictly stronger than §4 alone — but the proof is not vestigial: a post-deadline
+withdrawal against an allocation the auditor has not yet reclaimed still upholds,
+which `a_reserve_withdrawn_after_attestation_is_still_provable_fraud`
+demonstrates.
+
+**A workflow change, and a client-visible one.** The reserve must be funded
+before the auditor attests: `publish` → `deposit` → `attest`. A client that
+attests first now fails. See `V2-CUTOVER.md`.
+
 **Tests.**
 
 - `attest` on a fully-funded certificate → succeeds.
-- `attest` on an underfunded certificate → rejected, no attestation recorded.
+- `attest` on an underfunded certificate → rejected, and no attestation
+  recorded: the certificate is still `Pending`, has no auditor, and the
+  auditor's allocation is untouched.
+- Exactly equal balance → accepted; one stroop short → refused, asserted
+  against the shortfall function's own answer at the same boundary.
+- A sibling certificate's reserve does not fund this one.
 - Publish underfunded → attest rejected → self-challenge finds no attestation to
   slash. The full griefing sequence fails at step two.
 - Fund, attest, then withdraw → the `InsufficientReserve` proof still upholds.
@@ -903,11 +963,22 @@ demonstrates exactly this and is named for only half of what it shows: the
 colluders gain nothing **and the auditor's whole allocation goes to the
 treasury**. The attacker is not enriched; the auditor is still ruined.
 
-The minimum-reserve-funding check at `attest` (§4) partly mitigates it — an
-auditor cannot be walked into a certificate that is _already_ fraudulent — but it
-does nothing about a reserve withdrawn after attestation, which is precisely the
-case `InsufficientReserve` exists for. The residue is real, it is an open
-problem, and no fix is invented here. It needs a deliberate decision. Candidate
+The reserve check at `attest` (§4) **is now implemented**, and it closes more of
+this than the paragraph above anticipated. An auditor cannot be walked into a
+certificate that is already fraudulent; and because `deposit` locks the reserve
+until the certificate's settlement deadline, the operator cannot legitimately
+withdraw it afterwards either, until that deadline passes. The cheap version of
+this attack — publish empty, get attested, self-challenge the same day — is gone.
+
+What remains is the expensive version. The operator must genuinely post the full
+reserve and leave it locked for the certificate's whole life plus the challenge
+window, and only then withdraw it and self-challenge against an auditor who has
+not yet reclaimed their allocation. That still destroys the allocation to the
+treasury, and the operator still gains nothing by it — so the griefing residue
+survives, at a far higher cost to the griefer and with a warning the auditor can
+act on. `a_reserve_withdrawn_after_attestation_is_still_provable_fraud` is the
+test that keeps this honest. The residue is real, it is an open problem, and no
+fix is invented here. It needs a deliberate decision. Candidate
 directions, none chosen: requiring the challenger not to be the certificate's own
 operator (weak — addresses are free); routing a self-challenge's slash back to
 the auditor rather than the treasury; or treating an operator-initiated
@@ -1101,7 +1172,11 @@ guards the entries that do not exist until an auditor first allocates.
 ## Still genuinely open
 
 - §3: whether removing a vault hash from the allowlist invalidates existing
-  certificates. Leaning no; must be decided before implementation.
+  certificates. Leaning no; must be decided before implementation. Note that §4
+  no longer waits on §3 — it reads the ChallengeManager's vault rather than the
+  operator-supplied one — but `cert.reserve_vault_contract` is still an
+  unconstrained, operator-written field that nothing reads. Either §3 gives it
+  meaning or it should be removed from the struct.
 - Every numeric parameter above is a **proposal**, not a decision: the 72-hour
   claim window, the 7-day timelock, the 24-hour grace window, the 0.1% floor.
   They need to be argued individually, and each one is an attack surface.
