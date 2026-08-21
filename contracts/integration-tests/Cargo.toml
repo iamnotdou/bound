@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 # This crate ships no code of its own — it exists purely to host the
-# cross-contract harness in `tests/`. The five contracts are dev-dependencies
+# cross-contract harness in `tests/`. The contracts are dev-dependencies
 # (never plain dependencies) so that `cargo build --target wasm32-unknown-unknown`
 # never has to compile `soroban-sdk/testutils`, which does not build for wasm.
 [lib]
@@ -19,3 +19,4 @@ auditor-staking = { path = "../auditor-staking", features = ["testutils"] }
 fee-escrow = { path = "../fee-escrow", features = ["testutils"] }
 challenge-manager = { path = "../challenge-manager", features = ["testutils"] }
 payment-router = { path = "../payment-router", features = ["testutils"] }
+premium-vault = { path = "../premium-vault", features = ["testutils"] }

@@ -1,11 +1,11 @@
-// Build, deploy, and wire up all 5 Bound Protocol contracts to Stellar testnet.
+// Build, deploy, and wire up all 7 Bound Protocol contracts to Stellar testnet.
 //
 //   pnpm deploy   (→ ts-node --project scripts/tsconfig.json scripts/deploy-all.ts)
 //
 // Dependency note: the contracts reference each other (ReserveVault, AuditorStaking
 // and Registry all need the ChallengeManager address; ChallengeManager needs all
 // the others). `initialize` only stores addresses — it makes no cross-contract
-// calls — so we deploy all 5 first, then initialize once every address is known.
+// calls — so we deploy them all first, then initialize once every address is known.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { existsSync, writeFileSync } from "node:fs";
@@ -32,11 +32,17 @@ const WASM = {
   challenge_manager: "challenge_manager.wasm",
   registry: "registry.wasm",
   payment_router: "payment_router.wasm",
+  premium_vault: "premium_vault.wasm",
 } as const;
 
 // Economic parameters
 const AUDITOR_MIN_STAKE = usdc(500); // min stake to be a registered auditor
 const CHALLENGE_MIN_BOND = usdc(100); // min bond to open a challenge
+// Coverage pricing. Deliberately simple and transparent — DESIGN-V2 §10 rules
+// out actuarial models and external underwriters, so the premium is
+// `bound * rate * duration` annualised and nothing more.
+const PREMIUM_RATE_BPS = "200"; // 2% of the bound per year
+const PREMIUM_FEE_BPS = "1000"; // 10% of each premium is the protocol's
 // Reserve and allocation unlock per certificate now, derived from the
 // certificate's own expiry plus Registry::CHALLENGE_WINDOW_SECONDS, so the
 // deploy script no longer sets a global lock.
@@ -71,7 +77,7 @@ function main() {
 
   buildWasm();
 
-  // --- Phase A: deploy all 5, collect addresses ---
+  // --- Phase A: deploy them all, collect addresses ---
   console.log("\nDeploying contracts…");
   const addr = {
     reserve_vault: deploy(wasmPath(WASM.reserve_vault), operatorSecret),
@@ -80,6 +86,7 @@ function main() {
     challenge_manager: deploy(wasmPath(WASM.challenge_manager), operatorSecret),
     registry: deploy(wasmPath(WASM.registry), operatorSecret),
     payment_router: deploy(wasmPath(WASM.payment_router), operatorSecret),
+    premium_vault: deploy(wasmPath(WASM.premium_vault), operatorSecret),
   };
   for (const [name, id] of Object.entries(addr)) console.log(`  ${name.padEnd(18)} ${id}`);
 
@@ -91,6 +98,7 @@ function main() {
     CHALLENGE_MANAGER_ADDRESS: addr.challenge_manager,
     REGISTRY_ADDRESS: addr.registry,
     PAYMENT_ROUTER_ADDRESS: addr.payment_router,
+    PREMIUM_VAULT_ADDRESS: addr.premium_vault,
   });
 
   // Output of record: committed deployment data. .env.testnet still gets the
@@ -124,6 +132,12 @@ function main() {
         challengeManager: addr.challenge_manager,
         usdc: usdcAddr,
         paymentRouter: addr.payment_router,
+        // NOTE: the PremiumVault address is deliberately NOT written here yet.
+        // `serializeDeployment`'s contract map lives in `packages/sdk/src`, and
+        // this branch is Rust-and-deploy-script-only by design (see
+        // docs/V2-CUTOVER.md — the SDK change is the cutover cliff). The address
+        // is persisted to .env.testnet above, and the SDK's `contracts` map gains
+        // a `premiumVault` key in the same change that regenerates bindings.
       },
     }),
   );
@@ -210,6 +224,26 @@ function main() {
     usdcAddr,
   ]);
 
+  console.log("  premium_vault");
+  // `treasury`, `rate_bps` and `fee_bps` are frozen here: there is no admin and
+  // no setter, so re-pricing coverage means a fresh deployment. That is the same
+  // rule the ChallengeManager's treasury follows, and for the same reason — a
+  // mutable destination for forfeited money is a prize somebody can aim.
+  initialize(addr.premium_vault, operatorSecret, [
+    "--registry",
+    addr.registry,
+    "--challenge_manager",
+    addr.challenge_manager,
+    "--token",
+    usdcAddr,
+    "--treasury",
+    treasury,
+    "--rate_bps",
+    PREMIUM_RATE_BPS,
+    "--fee_bps",
+    PREMIUM_FEE_BPS,
+  ]);
+
   // THE STEP THAT MUST NOT BE SKIPPED.
   //
   // set_router is one-shot and arbiter-gated. Without it, ChallengeManager has
@@ -220,8 +254,24 @@ function main() {
   console.log("  challenge_manager.set_router");
   invoke(addr.challenge_manager, operatorSecret, "set_router", ["--router", addr.payment_router]);
 
+  // THE SECOND STEP THAT MUST NOT BE SKIPPED — same trap, different contract.
+  //
+  // set_premium_vault is one-shot and arbiter-gated, exactly like set_router.
+  // Without it the ChallengeManager has no premium vault to call, so step 4 of
+  // the settlement waterfall — forfeiting a slashed auditor's unclaimed premium
+  // to the victim and the treasury — is silently skipped on every challenge,
+  // while every contract test still passes and the premium vault happily takes
+  // operators' money it will never forfeit. It is deliberately a skip rather
+  // than a panic so that a deployment predating the premium economy can still
+  // settle; `challenge_manager.has_premium_vault()` is how you check.
+  console.log("  challenge_manager.set_premium_vault");
+  invoke(addr.challenge_manager, operatorSecret, "set_premium_vault", [
+    "--premium_vault",
+    addr.premium_vault,
+  ]);
+
   console.log(
-    `\n✓ All 6 contracts deployed, initialized, router wired, written to .env.testnet and deployments/${NETWORK}.json`,
+    `\n✓ All 7 contracts deployed, initialized, router and premium vault wired, written to .env.testnet and deployments/${NETWORK}.json`,
   );
 }
 

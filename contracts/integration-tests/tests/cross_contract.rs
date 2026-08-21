@@ -24,6 +24,7 @@ use challenge_manager::{
 };
 use fee_escrow::{FeeEscrow, FeeEscrowClient};
 use payment_router::{PaymentRouter, PaymentRouterClient};
+use premium_vault::{PremiumVault, PremiumVaultClient, SECONDS_PER_YEAR};
 use registry::{CertStatus, Registry, RegistryClient};
 use reserve_vault::{ReserveVault, ReserveVaultClient};
 
@@ -46,6 +47,11 @@ const CHALLENGER_FEE_BPS: i128 = 1_000;
 /// The flat hygiene bounty the ChallengeManager pays when a proof is true but
 /// no harm is evidenced.
 const HYGIENE_BOUNTY: i128 = 10_0000000;
+/// The annualised coverage rate the PremiumVault is deployed with: 200 bps, 2%
+/// of the bound per year.
+const RATE_BPS: i128 = 200;
+/// The protocol's share of each premium: 10%.
+const PREMIUM_FEE_BPS: i128 = 1_000;
 
 // ---------------------------------------------------------------------------
 // The harness
@@ -67,6 +73,7 @@ struct BoundWorld {
     escrow: Address,
     challenge_manager: Address,
     router: Address,
+    premium_vault: Address,
 
     // actors
     token_admin: Address,
@@ -119,6 +126,7 @@ impl BoundWorld {
         let escrow = env.register(FeeEscrow, ());
         let challenge_manager = env.register(ChallengeManager, ());
         let router = env.register(PaymentRouter, ());
+        let premium_vault = env.register(PremiumVault, ());
 
         RegistryClient::new(&env, &registry).initialize(&challenge_manager, &staking);
         ReserveVaultClient::new(&env, &vault).initialize(&registry, &challenge_manager, &token);
@@ -130,6 +138,14 @@ impl BoundWorld {
         );
         FeeEscrowClient::new(&env, &escrow).initialize(&challenge_manager, &token);
         PaymentRouterClient::new(&env, &router).initialize(&registry, &token);
+        PremiumVaultClient::new(&env, &premium_vault).initialize(
+            &registry,
+            &challenge_manager,
+            &token,
+            &treasury,
+            &RATE_BPS,
+            &PREMIUM_FEE_BPS,
+        );
         ChallengeManagerClient::new(&env, &challenge_manager).initialize(
             &registry,
             &staking,
@@ -143,6 +159,9 @@ impl BoundWorld {
         // The router is wired in a second, arbiter-authorized one-shot call
         // rather than as a ninth `initialize` argument — see `set_router`.
         ChallengeManagerClient::new(&env, &challenge_manager).set_router(&router);
+        // Same shape, same trap: step 4 of the waterfall is silently skipped on
+        // a deployment that never makes this call.
+        ChallengeManagerClient::new(&env, &challenge_manager).set_premium_vault(&premium_vault);
 
         let world = Self {
             env,
@@ -153,6 +172,7 @@ impl BoundWorld {
             escrow,
             challenge_manager,
             router,
+            premium_vault,
             token_admin,
             operator,
             agent,
@@ -196,6 +216,9 @@ impl BoundWorld {
     }
     fn router(&self) -> PaymentRouterClient<'_> {
         PaymentRouterClient::new(&self.env, &self.router)
+    }
+    fn premium(&self) -> PremiumVaultClient<'_> {
+        PremiumVaultClient::new(&self.env, &self.premium_vault)
     }
 
     // --- money -------------------------------------------------------------
@@ -270,6 +293,40 @@ impl BoundWorld {
 
     fn reserve_of(&self, cert_id: u64) -> i128 {
         self.vault().get_balance(&cert_id)
+    }
+
+    /// The operator buys coverage for a certificate. Must follow `attest`: the
+    /// premium is yield on staked capital, so there has to be an auditor with
+    /// an allocation behind the certificate first.
+    fn pay_premium(&self, cert_id: u64) {
+        self.premium().pay_premium(&cert_id);
+    }
+
+    fn premium_of(&self, cert_id: u64) -> i128 {
+        self.premium().get_premium(&cert_id)
+    }
+
+    fn accrued(&self, cert_id: u64) -> i128 {
+        self.premium().accrued(&cert_id)
+    }
+
+    fn claim_premium(&self, cert_id: u64) -> i128 {
+        self.premium().claim(&cert_id)
+    }
+
+    /// Every account that can hold money in these scenarios. Used by the
+    /// conservation checks, which now have to include the premium vault.
+    fn total_in_the_system(&self) -> i128 {
+        self.balance(&self.operator)
+            + self.balance(&self.operator2)
+            + self.balance(&self.auditor)
+            + self.balance(&self.challenger)
+            + self.balance(&self.victim)
+            + self.balance(&self.treasury)
+            + self.balance(&self.vault)
+            + self.balance(&self.staking)
+            + self.balance(&self.challenge_manager)
+            + self.balance(&self.premium_vault)
     }
 
     fn deposit_fee(&self, amount: i128) {
@@ -2661,4 +2718,441 @@ fn the_router_is_set_once_and_only_by_the_arbiter() {
     w.mock_all_auths();
     cm.set_router(&w.router);
     assert_eq!(cm.get_router(), w.router);
+}
+
+// ---------------------------------------------------------------------------
+// 10. The premium economy — PremiumVault and step 4 of the waterfall
+// ---------------------------------------------------------------------------
+//
+// The operator buys coverage priced on `bound × duration`; it accrues to the
+// auditor straight-line as yield on the capital they allocated; a configurable
+// share is the protocol's; and a slashed auditor forfeits what they have not
+// already withdrawn.
+
+/// A $1,500 bound covered for exactly one year, so the arithmetic divides
+/// evenly and every assertion below can be an exact stroop figure.
+const PREMIUM_BOUND: i128 = 1_500_0000000;
+const YEAR: u64 = SECONDS_PER_YEAR;
+/// 2% of $1,500 for one year.
+const PREMIUM: i128 = 30_0000000;
+/// 10% of the premium, taken at payment time.
+const PREMIUM_FEE: i128 = 3_0000000;
+/// What is left for the auditor to accrue.
+const PREMIUM_POT: i128 = PREMIUM - PREMIUM_FEE; // $27
+
+/// Staked, published, funded, attested, and covered — a certificate whose
+/// coverage runs from t=1,000 for a full year.
+fn premium_world(reserve_deposit: i128) -> (BoundWorld, u64) {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(PREMIUM_BOUND, RESERVE_CLAIM, 1_000 + YEAR);
+    if reserve_deposit > 0 {
+        w.deposit_reserve(cert_id, reserve_deposit);
+    }
+    w.attest(cert_id);
+    w.pay_premium(cert_id);
+    (w, cert_id)
+}
+
+/// **The pricing sanity check, end to end through the Registry.**
+///
+/// A $1,500 bound covered for 90 days at 200 bps:
+///
+///   15_000_000_000 * 200 * 7_776_000 / (10_000 * 31_536_000) = 73_972_602
+///
+/// The exact rational value is 73_972_602.7397…; integer division truncates it
+/// down, so the operator is charged no more than the exact price. Asserted as
+/// the exact integer, and confirmed against the operator's real balance.
+#[test]
+fn a_ninety_day_certificate_prices_at_exactly_73_972_602_stroops() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let ninety_days = 90 * 24 * 60 * 60;
+    assert_eq!(ninety_days, 7_776_000u64);
+    let cert_id = w.publish_cert(PREMIUM_BOUND, RESERVE_CLAIM, 1_000 + ninety_days);
+    w.attest(cert_id);
+
+    // Quoted before it is bought…
+    assert_eq!(w.premium().quote_cert(&cert_id), 73_972_602);
+    assert_eq!(w.premium().quote(&PREMIUM_BOUND, &ninety_days), 73_972_602);
+
+    // …and charged exactly, in real money.
+    let before = w.balance(&w.operator);
+    w.pay_premium(cert_id);
+    assert_eq!(w.premium_of(cert_id), 73_972_602);
+    assert_eq!(before - w.balance(&w.operator), 73_972_602);
+
+    // Linear in bound and in duration at magnitudes where the division is
+    // exact: a full year at 200 bps is exactly 2% of the bound.
+    assert_eq!(w.premium().quote(&PREMIUM_BOUND, &YEAR), PREMIUM);
+    assert_eq!(w.premium().quote(&(PREMIUM_BOUND * 2), &YEAR), PREMIUM * 2);
+    assert_eq!(w.premium().quote(&PREMIUM_BOUND, &(YEAR / 2)), PREMIUM / 2);
+
+    // A zero bound or a zero duration costs zero and does not panic.
+    assert_eq!(w.premium().quote(&0i128, &YEAR), 0);
+    assert_eq!(w.premium().quote(&PREMIUM_BOUND, &0u64), 0);
+
+    // A hostile bound errors rather than wrapping. `overflow-checks = true` is
+    // on, and the contract additionally uses `checked_mul` so this is a named
+    // failure and not a profile setting.
+    assert!(w.premium().try_quote(&i128::MAX, &YEAR).is_err());
+}
+
+/// Straight-line accrual at 0%, 50% and 100%, the protocol's share sitting in
+/// the treasury and out of the auditor's reach, and accrual capped at the pot
+/// however far past expiry the clock runs.
+#[test]
+fn premium_accrues_straight_line_and_the_protocol_share_is_never_claimable() {
+    let (w, cert_id) = premium_world(RESERVE_CLAIM);
+
+    // The fee left for the treasury the moment the premium was paid.
+    assert_eq!(w.premium_of(cert_id), PREMIUM);
+    assert_eq!(w.balance(&w.treasury), PREMIUM_FEE);
+    assert_eq!(w.balance(&w.premium_vault), PREMIUM_POT);
+    assert_eq!(w.balance(&w.operator), FUNDING - RESERVE_CLAIM - PREMIUM);
+
+    // 0% — nothing accrued yet.
+    assert_eq!(w.accrued(cert_id), 0);
+    assert_eq!(w.premium().claimable(&cert_id), 0);
+
+    // 50% — exactly half the pot.
+    w.set_time(1_000 + YEAR / 2);
+    assert_eq!(w.accrued(cert_id), PREMIUM_POT / 2);
+    assert_eq!(w.accrued(cert_id), 13_5000000);
+
+    // 100% — the whole pot, and not a stroop of the protocol's share.
+    w.set_time(1_000 + YEAR);
+    assert_eq!(w.accrued(cert_id), PREMIUM_POT);
+
+    // Accrual never exceeds the premium, however late it is read.
+    w.set_time(1_000 + YEAR * 100);
+    assert_eq!(w.accrued(cert_id), PREMIUM_POT);
+
+    // The auditor withdraws it all, and the treasury's share is still there.
+    assert_eq!(w.claim_premium(cert_id), PREMIUM_POT);
+    assert_eq!(w.balance(&w.auditor), FUNDING - AUDITOR_STAKE + PREMIUM_POT);
+    assert_eq!(w.balance(&w.premium_vault), 0);
+    assert_eq!(w.balance(&w.treasury), PREMIUM_FEE);
+
+    // Claiming again pays nothing.
+    assert_eq!(w.claim_premium(cert_id), 0);
+    assert_eq!(w.balance(&w.auditor), FUNDING - AUDITOR_STAKE + PREMIUM_POT);
+    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+}
+
+/// Claim, let more accrue, claim again: the running total is right and the
+/// vault is never over-drawn.
+#[test]
+fn claim_accrue_claim_pays_the_right_total_and_never_twice() {
+    let (w, cert_id) = premium_world(RESERVE_CLAIM);
+    let auditor_start = FUNDING - AUDITOR_STAKE;
+
+    w.set_time(1_000 + YEAR / 4);
+    assert_eq!(w.claim_premium(cert_id), PREMIUM_POT / 4);
+    assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT / 4);
+    // Immediately again — nothing new has accrued.
+    assert_eq!(w.claim_premium(cert_id), 0);
+    assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT / 4);
+
+    w.set_time(1_000 + YEAR / 2);
+    assert_eq!(w.claim_premium(cert_id), PREMIUM_POT / 4);
+    assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT / 2);
+
+    w.set_time(1_000 + YEAR);
+    assert_eq!(w.claim_premium(cert_id), PREMIUM_POT / 2);
+    assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT);
+    assert_eq!(w.balance(&w.premium_vault), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+}
+
+/// **The forfeiture rule, both halves, in real balances — and step 4 of the
+/// waterfall doing what it says.**
+///
+/// The auditor claims a quarter of their yield, then the certificate is proven
+/// under-funded and they are slashed. They keep the quarter. The accrued-but-
+/// unclaimed quarter goes to the victim as compensation — out of the operator's
+/// own premium, which is what keeps rule 1 intact — and the unaccrued half goes
+/// to the treasury.
+///
+///   claim $1,000, deposit $200 → proven harm $800
+///   victim   = min(payable, reserve)          = $200   <- operator's reserve
+///   fee      = 10% of harm, capped by what is left = $0
+///   slash    = min(harm - victim, allocation) = $600   -> treasury
+///   step 4   cap = harm - victim = $600, so the whole accrued-unclaimed
+///            $6.75 reaches the victim; the unaccrued $13.50 -> treasury
+#[test]
+fn a_slashed_auditor_forfeits_unclaimed_premium_and_keeps_what_they_claimed() {
+    let deposited = 200_0000000i128;
+    let (w, cert_id) = premium_world(deposited);
+    let auditor_start = FUNDING - AUDITOR_STAKE;
+
+    // A quarter of the way through, the auditor takes their accrued yield.
+    w.set_time(1_000 + YEAR / 4);
+    let kept = PREMIUM_POT / 4; // $6.75
+    assert_eq!(w.claim_premium(cert_id), kept);
+    assert_eq!(w.balance(&w.auditor), auditor_start + kept);
+
+    // Halfway, the shortfall is challenged and proven.
+    w.set_time(1_000 + YEAR / 2);
+    let harm = RESERVE_CLAIM - deposited;
+    assert_eq!(harm, 800_0000000);
+    let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(challenge_id);
+
+    let accrued_unclaimed = PREMIUM_POT / 2 - kept; // $6.75
+    let unaccrued = PREMIUM_POT / 2; // $13.50
+
+    // HALF ONE OF THE RULE: what the auditor already claimed is theirs. There is
+    // no clawback, and none is attempted.
+    assert_eq!(w.balance(&w.auditor), auditor_start + kept);
+    // HALF TWO: everything unclaimed is gone, permanently.
+    assert_eq!(w.premium().claimable(&cert_id), 0);
+    assert_eq!(w.claim_premium(cert_id), 0);
+    w.set_time(1_000 + YEAR * 10);
+    assert_eq!(w.claim_premium(cert_id), 0);
+    assert_eq!(w.balance(&w.auditor), auditor_start + kept);
+
+    // Step 4's split, exactly as specified.
+    assert_eq!(w.balance(&w.victim), deposited + accrued_unclaimed);
+    assert_eq!(w.balance(&w.treasury), ALLOCATION + PREMIUM_FEE + unaccrued);
+    assert_eq!(w.balance(&w.premium_vault), 0);
+
+    // The rest of the waterfall is untouched by step 4's arrival: the victim's
+    // reserve compensation, the slash and the retirement are the same numbers
+    // they would be with no premium at all.
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(
+        w.staking().get_stake(&w.auditor),
+        AUDITOR_STAKE - ALLOCATION
+    );
+    assert_eq!(w.balance(&w.challenger), FUNDING); // bond back, no fee left
+    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+
+    // Conservation across every account, the premium vault included. Nothing
+    // was created and nothing evaporated.
+    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+}
+
+/// The victim's share of a forfeited premium is capped by the harm the
+/// operator's own reserve did not already cover.
+///
+/// Here the reserve covers the harm in full, so the cap is zero and **none** of
+/// the forfeited premium reaches the victim — all of it goes to the treasury.
+/// Without the cap a large premium could pay a victim more than the harm proven
+/// against the certificate, which the waterfall forbids.
+#[test]
+fn forfeited_premium_never_pays_a_victim_more_than_the_proven_harm() {
+    let deposited = 900_0000000i128; // claim $1,000 → harm is only $100
+    let (w, cert_id) = premium_world(deposited);
+
+    w.set_time(1_000 + YEAR / 2);
+    let harm = RESERVE_CLAIM - deposited;
+    assert_eq!(harm, 100_0000000);
+    let fee = harm * CHALLENGER_FEE_BPS / 10_000;
+
+    let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(challenge_id);
+
+    // The reserve covered the harm, so victim_amount == harm and the step-4 cap
+    // is exactly zero.
+    assert_eq!(w.balance(&w.victim), harm);
+    assert_eq!(w.balance(&w.challenger), FUNDING + fee);
+    // Nothing was slashed either — and the auditor still forfeits, because the
+    // certificate was proven harmful and they vouched for it.
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.treasury), PREMIUM_FEE + PREMIUM_POT);
+    assert_eq!(w.balance(&w.premium_vault), 0);
+    assert_eq!(w.premium().claimable(&cert_id), 0);
+
+    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+}
+
+/// **Hygiene mode.** The proof is true, nobody is evidenced as harmed and the
+/// auditor is not slashed — so they keep and can still claim the yield accrued
+/// up to the kill. Only the unaccrued remainder goes to the treasury.
+///
+/// It is not refunded to the operator, deliberately: both hygiene predicates are
+/// manufacturable by the operator for the price of gas, and a refund would make
+/// killing your own certificate free.
+#[test]
+fn hygiene_mode_freezes_accrual_and_sends_only_the_unaccrued_share_to_the_treasury() {
+    let (w, cert_id) = premium_world(RESERVE_CLAIM);
+    let auditor_start = FUNDING - AUDITOR_STAKE;
+
+    // Drive the router's counter past the bound — a true, manufacturable proof.
+    w.router().enroll(&w.agent, &cert_id, &FLOAT_CAP);
+    w.mint(&w.operator, PREMIUM_BOUND * 2);
+    w.router().deposit(&w.operator, &(PREMIUM_BOUND * 2));
+    w.router()
+        .transfer(&w.operator, &w.agent, &(PREMIUM_BOUND * 2));
+    w.set_time(1_000 + YEAR / 2);
+    w.router()
+        .transfer(&w.agent, &w.victim, &(PREMIUM_BOUND + 1));
+    assert!(w.router().spent(&cert_id) > PREMIUM_BOUND);
+
+    let treasury_before = w.balance(&w.treasury);
+    let challenge_id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    w.resolve(challenge_id);
+
+    // Hygiene: certificate dead, reserve untouched, allocation retired whole.
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+
+    // The premium: the unaccrued half to the treasury…
+    let unaccrued = PREMIUM_POT / 2;
+    assert_eq!(w.balance(&w.treasury), treasury_before + unaccrued);
+    // …and the accrued half still the auditor's, still claimable.
+    assert_eq!(w.premium().claimable(&cert_id), PREMIUM_POT / 2);
+    assert_eq!(w.claim_premium(cert_id), PREMIUM_POT / 2);
+    assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT / 2);
+    assert_eq!(w.balance(&w.premium_vault), 0);
+
+    // Accrual really is frozen: the clock running on adds nothing.
+    w.set_time(1_000 + YEAR * 5);
+    assert_eq!(w.accrued(cert_id), PREMIUM_POT / 2);
+    assert_eq!(w.claim_premium(cert_id), 0);
+}
+
+/// Two certificates in one vault. Premium, accrual, claiming and forfeiture on
+/// one must not touch the other by a single stroop.
+#[test]
+fn premium_and_accrual_on_one_certificate_do_not_touch_another() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE * 2);
+
+    let cert_a = w.publish_cert(PREMIUM_BOUND, RESERVE_CLAIM, 1_000 + YEAR);
+    let cert_b = w.publish_cert_for(
+        &w.operator2,
+        &w.agent2,
+        PREMIUM_BOUND * 2, // twice the bound → twice the premium
+        RESERVE_CLAIM,
+        1_000 + YEAR,
+    );
+    w.deposit_reserve(cert_a, 200_0000000);
+    w.deposit_reserve(cert_b, RESERVE_CLAIM);
+    w.attest_with(cert_a, ALLOCATION);
+    w.attest_with(cert_b, ALLOCATION);
+    w.pay_premium(cert_a);
+    w.pay_premium(cert_b);
+
+    assert_eq!(w.premium_of(cert_a), PREMIUM);
+    assert_eq!(w.premium_of(cert_b), PREMIUM * 2);
+    assert_eq!(w.balance(&w.premium_vault), PREMIUM_POT * 3);
+    assert_eq!(
+        w.balance(&w.operator2),
+        FUNDING - RESERVE_CLAIM - PREMIUM * 2
+    );
+
+    // Accrual is independent.
+    w.set_time(1_000 + YEAR / 2);
+    assert_eq!(w.accrued(cert_a), PREMIUM_POT / 2);
+    assert_eq!(w.accrued(cert_b), PREMIUM_POT);
+
+    // A's auditor is slashed and A's premium is forfeited entirely.
+    let challenge_id = w.challenge(cert_a, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(challenge_id);
+    assert_eq!(w.premium().claimable(&cert_a), 0);
+
+    // B is untouched: same pot, same accrual, still fully claimable.
+    assert_eq!(w.premium().get_coverage(&cert_b).yield_pot, PREMIUM_POT * 2);
+    assert_eq!(w.premium().claimable(&cert_b), PREMIUM_POT);
+    assert_eq!(w.balance(&w.premium_vault), PREMIUM_POT * 2);
+    assert_eq!(w.reserve_of(cert_b), RESERVE_CLAIM);
+
+    // And B pays out in full at the end of its own term.
+    w.set_time(1_000 + YEAR);
+    assert_eq!(w.claim_premium(cert_b), PREMIUM_POT * 2);
+    assert_eq!(w.balance(&w.premium_vault), 0);
+
+    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+}
+
+/// An operator cannot buy coverage twice, and cannot buy it for a certificate
+/// nobody has vouched for — the premium is yield on *staked* capital, so there
+/// has to be an allocation behind it first.
+#[test]
+fn coverage_is_bought_once_and_only_for_an_attested_certificate() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(PREMIUM_BOUND, RESERVE_CLAIM, 1_000 + YEAR);
+
+    // Pending, not attested: no auditor to accrue to.
+    assert!(w.premium().try_pay_premium(&cert_id).is_err());
+    assert!(!w.premium().is_paid(&cert_id));
+    assert_eq!(w.balance(&w.operator), FUNDING);
+
+    w.attest(cert_id);
+    w.pay_premium(cert_id);
+    assert!(w.premium().try_pay_premium(&cert_id).is_err());
+    assert_eq!(w.balance(&w.operator), FUNDING - PREMIUM);
+}
+
+/// The premium vault is named once, by the arbiter, and can never be re-pointed
+/// — the same rule `set_router` follows, for the same reason: whoever names it
+/// names the contract that is handed the forfeited premium and told where to
+/// send it.
+#[test]
+fn the_premium_vault_is_set_once_and_only_by_the_arbiter() {
+    let w = BoundWorld::new();
+    assert!(w.cm().has_premium_vault());
+    assert_eq!(w.cm().get_premium_vault(), w.premium_vault);
+
+    // Already set — even the arbiter cannot re-point it.
+    assert!(w.cm().try_set_premium_vault(&w.challenger).is_err());
+    assert_eq!(w.cm().get_premium_vault(), w.premium_vault);
+
+    // On a fresh, unwired ChallengeManager a stranger cannot claim it…
+    let fresh = w.env.register(ChallengeManager, ());
+    let cm = ChallengeManagerClient::new(&w.env, &fresh);
+    cm.initialize(
+        &w.registry,
+        &w.staking,
+        &w.vault,
+        &w.escrow,
+        &w.token,
+        &w.arbiter,
+        &w.treasury,
+        &MIN_CHALLENGE_STAKE,
+    );
+    assert!(!cm.has_premium_vault());
+    w.env.set_auths(&[]);
+    assert!(cm.try_set_premium_vault(&w.premium_vault).is_err());
+    w.mock_all_auths();
+    cm.set_premium_vault(&w.premium_vault);
+    assert_eq!(cm.get_premium_vault(), w.premium_vault);
+}
+
+/// Only the ChallengeManager can forfeit or terminate a coverage. A challenger,
+/// a victim or the auditor themselves cannot reach either entry point — which is
+/// what keeps step 4 a settlement step rather than a withdrawal anybody can aim.
+#[test]
+fn nobody_but_the_challenge_manager_can_forfeit_a_premium() {
+    let (w, cert_id) = premium_world(RESERVE_CLAIM);
+    w.set_time(1_000 + YEAR / 2);
+
+    w.env.set_auths(&[]);
+    assert!(w
+        .premium()
+        .try_forfeit(&cert_id, &w.challenger, &1_000_0000000i128)
+        .is_err());
+    assert!(w.premium().try_terminate(&cert_id).is_err());
+    w.mock_all_auths();
+
+    // The pot is exactly where it was.
+    assert_eq!(w.balance(&w.premium_vault), PREMIUM_POT);
+    assert_eq!(w.premium().claimable(&cert_id), PREMIUM_POT / 2);
 }

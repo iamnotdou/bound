@@ -80,11 +80,54 @@ Everything below is a breaking ABI change unless marked additive.
 - `resolve_by_arbiter(challenge_id, fraud_proven, harm)` — **new third argument.**
 - New: `set_router`, `get_router`, `get_treasury`, `get_bounty_pool`,
   `get_bonds_held`.
+- New: `set_premium_vault(premium_vault)`, `get_premium_vault()`,
+  `has_premium_vault()`. `set_premium_vault` is one-shot and arbiter-gated,
+  exactly like `set_router`.
+- Settlement now has a step 4: a slashed auditor's unclaimed premium is
+  forfeited through the PremiumVault. If no vault is wired the step is skipped
+  silently — see the trap note below.
+
+### Registry — one additive getter
+
+- `get_cert_issued_at(cert_id) -> u64`. The PremiumVault reads it with
+  `get_cert_expires_at` to price coverage over `expires_at - issued_at`. Nothing
+  else changed.
 
 ### PaymentRouter — entirely new
 
 A SEP-41 token (`bUSDC`) wrapping USDC and metering spend per certificate. Needs
 its own bindings entry, its own `deployments/` key, and an SDK surface.
+
+### PremiumVault — entirely new
+
+Per-certificate coverage premiums: priced on `bound × duration`, accruing
+straight-line to the certificate's auditor as yield on their allocation, with a
+configurable protocol fee share, and forfeited to the victim and treasury when
+that auditor is slashed. It is a **new contract, not an extension of
+`fee-escrow`** — that singleton pays out once ever (defect L3) and is still off
+the settlement path.
+
+Needs its own bindings entry, its own `deployments/` key (`premiumVault`, not
+yet added — see step 5) and an SDK surface.
+
+Full ABI:
+
+| Function                                                                               | Auth                                                       | Notes                                                                                                                      |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `initialize(registry, challenge_manager, token, treasury, rate_bps, fee_bps)`          | none (known defect, same as every other `initialize` here) | Frozen: no admin, no setters.                                                                                              |
+| `quote(bound, duration_seconds) -> i128`                                               | —                                                          | `bound * rate_bps * duration / (10_000 * 31_536_000)`, truncating.                                                         |
+| `quote_cert(cert_id) -> i128`                                                          | —                                                          | The same, from the certificate's own `bound` and `expires_at - issued_at`.                                                 |
+| `pay_premium(cert_id)`                                                                 | the certificate's operator                                 | Once per certificate. Requires the certificate to be attested. Sends `fee_bps` of the premium to the treasury immediately. |
+| `accrued(cert_id) -> i128`                                                             | —                                                          | Straight-line, capped at the pot, frozen once closed.                                                                      |
+| `claimable(cert_id) -> i128`                                                           | —                                                          | `accrued - claimed`.                                                                                                       |
+| `claim(cert_id) -> i128`                                                               | the certificate's auditor                                  | Allowed at any time, including mid-coverage.                                                                               |
+| `forfeit(cert_id, victim, victim_cap) -> i128`                                         | ChallengeManager only                                      | Waterfall step 4. Returns what reached the victim.                                                                         |
+| `terminate(cert_id) -> i128`                                                           | ChallengeManager only                                      | Hygiene mode. Returns what reached the treasury.                                                                           |
+| `get_coverage(cert_id) -> Coverage`                                                    | —                                                          |                                                                                                                            |
+| `is_paid`, `get_premium`, `get_claimed`, `get_rate_bps`, `get_fee_bps`, `get_treasury` | —                                                          | Views.                                                                                                                     |
+
+`Coverage { payer, auditor, premium, protocol_fee, yield_pot, claimed, start, duration, closed, closed_at }`, and
+`pub const SECONDS_PER_YEAR: u64 = 31_536_000`.
 
 ---
 
@@ -97,26 +140,40 @@ The order matters; steps 3 and 4 are the ones that bite.
 
 2. **Update `scripts/deploy-all.ts`.** It currently deploys five contracts and
    initializes them. It must now:
-   - deploy `payment_router` as a sixth (`fee_escrow` is still deployed but is
-     not on the settlement path);
+   - deploy `payment_router` as a sixth and `premium_vault` as a seventh
+     (`fee_escrow` is still deployed but is not on the settlement path);
+   - initialize `premium_vault` with the treasury, `rate_bps` and `fee_bps` —
+     **all three are frozen at initialize**, so decide the coverage price before
+     this point;
    - pass the new `ChallengeManager.initialize` arguments — **decide the treasury
      and arbiter addresses before this point**, because there is no admin and
      nothing can be repointed afterwards;
    - call **`ChallengeManager.set_router(router)`** and
      **`PaymentRouter.initialize(registry, token)`**.
 
-   **`set_router` is the trap.** It is one-shot and arbiter-gated, and nothing
-   calls it today. A deployment that skips it resolves both `BoundExceeded` and
-   `ExpiredCertificate` into `router_not_set` — the two proofs this whole
-   milestone exists to enable, silently dead, with every other test passing.
+   - call **`ChallengeManager.set_premium_vault(premium_vault)`**.
+
+   **`set_router` is the trap.** It is one-shot and arbiter-gated. A deployment
+   that skips it resolves both `BoundExceeded` and `ExpiredCertificate` into
+   `router_not_set` — the two proofs this whole milestone exists to enable,
+   silently dead, with every other test passing.
+
+   **`set_premium_vault` is the same trap, and worse in one way.** Skipping it
+   does not error at all: settlement step 4 is simply skipped on every challenge
+   while the premium vault keeps accepting operators' money it will never
+   forfeit. `ChallengeManager.has_premium_vault()` is the check.
+
+   Both calls are made by `scripts/deploy-all.ts` on `feat/premium-economy`.
 
 3. **Regenerate `bindings/`** — this is the cliff. From here the SDK is v2-only.
 
 4. **Deploy to testnet.** New addresses; `deployments/testnet.json` is rewritten
    by the script.
 
-5. **Update `packages/sdk`** for the new shapes and add the router. Ship as
-   **0.3.0** at minimum — this is not a patch. `attest` gains an argument,
+5. **Update `packages/sdk`** for the new shapes and add the router **and the
+   premium vault**. `serializeDeployment`'s `contracts` map has no `premiumVault`
+   key yet, which is why `deploy-all.ts` writes the address to `.env.testnet`
+   only; adding the key is part of this step. Ship as **0.3.0** at minimum — this is not a patch. `attest` gains an argument,
    `depositReserve` gains a certificate, `reserveBalance()` gains a certificate.
 
 6. **Update bound-web.** `lib/bound.ts` and `lib/tx.ts` are the only two modules
@@ -142,7 +199,9 @@ The order matters; steps 3 and 4 are the ones that bite.
 - No TTL management anywhere. **L2 is not fixed.** A v2 deployment is on the same
   archival clock as v1.
 - FeeEscrow's one-shot release. **L3 is not fixed**; it is simply not on the
-  settlement path.
+  settlement path. The premium economy deliberately did **not** extend it — a
+  singleton whose `Released` flag never resets cannot serve many certificates —
+  so `premium-vault` is a separate contract and `fee-escrow` stays dead weight.
 
 Anyone reading this as "v2 fixes the five defects" should stop: it fixes L5 and
 L4-adjacent issues. L1, L2 and L3 are still open and still belong in the
