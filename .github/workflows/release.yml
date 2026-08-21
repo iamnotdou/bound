@@ -36,8 +36,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Trusted Publishing (OIDC) needs npm >= 11.5.1; Node 22.14 ships 10.x.
-      - run: npm install -g npm@latest
+      # Trusted Publishing (OIDC) needs npm >= 11.5.1 and Node 22.14 ships 10.x.
+      # Pinned to 11 rather than latest: npm 12 requires Node >= 22.22, which
+      # would silently couple releases to a .nvmrc bump.
+      - run: npm install -g npm@11
 
       - run: pnpm install --frozen-lockfile
 
