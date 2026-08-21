@@ -130,22 +130,39 @@ export class BoundClient {
   }
 
   /** Operator publishes a PENDING certificate. Returns the cert id. */
+  /**
+   * Publish a certificate. Takes BOTH keypairs because v2's `publish`
+   * authenticates the agent as well as the operator.
+   *
+   * v1 authenticated only the operator and then overwrote the agent's
+   * certificate mapping unconditionally, so anyone could publish a junk
+   * certificate naming someone else's agent and knock it offline for one
+   * transaction (defect L1). Requiring the agent's consent closes that, and
+   * matches the router's `enroll`, which already required both.
+   *
+   * Soroban permits one contract call per transaction, so the two signatures
+   * have to land in the same envelope: the operator signs the transaction and
+   * the agent signs its authorization entry. A UI cannot split this into two
+   * submissions.
+   */
   async publishCertificate(
     operator: Keypair,
-    params: { agent: string; bound: bigint; reserveAmount: bigint; expiresAt: bigint },
+    agent: Keypair,
+    params: { bound: bigint; reserveAmount: bigint; expiresAt: bigint },
   ): Promise<bigint> {
-    const { result } = await send<bigint>(() =>
-      this.registry(operator).publish({
-        operator: operator.publicKey(),
-        agent: params.agent,
-        bound: params.bound,
-        reserve_amount: params.reserveAmount,
-        expires_at: params.expiresAt,
-        reserve_vault_contract: contracts.reserveVault,
-        auditor_staking_contract: contracts.auditorStaking,
-      }),
-    );
-    return result;
+    const at = await this.registry(operator).publish({
+      operator: operator.publicKey(),
+      agent: agent.publicKey(),
+      bound: params.bound,
+      reserve_amount: params.reserveAmount,
+      expires_at: params.expiresAt,
+      reserve_vault_contract: contracts.reserveVault,
+      auditor_staking_contract: contracts.auditorStaking,
+    });
+    const { signAuthEntry } = basicNodeSigner(agent, network.passphrase);
+    await at.signAuthEntries({ address: agent.publicKey(), signAuthEntry });
+    const sent = await at.signAndSend();
+    return sent.result as bigint;
   }
 
   /** Registered auditor attests → certificate becomes VERIFIED. */

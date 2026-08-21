@@ -5,6 +5,7 @@ import { buildActionXdr, buildTrustlineXdr } from "./tx";
 
 const G = "GCPOBMCWPO5A24KJJJRD27T4TKITHQI5MYY2FCQRR3HUXUFT4LO473ZT";
 const BAD = "not-an-address";
+const OTHER = "GCBVHBXWW7CIFKZSGHOZIRYUYIS6S455EW64QK4FXZZ7WVW6R2FZN523";
 
 describe("buildActionXdr() validation", () => {
   it("rejects a wallet address that is not a G… key", async () => {
@@ -65,5 +66,12 @@ describe("buildActionXdr() validation", () => {
 describe("buildTrustlineXdr() validation", () => {
   it("rejects a wallet address that is not a G… key", async () => {
     await expect(buildTrustlineXdr(BAD)).rejects.toThrow(/wallet address must be a valid G/);
+  });
+  it("refuses to publish for an agent that is not the connected wallet", async () => {
+    // v2 authenticates the agent too, and a browser wallet has one signer. The
+    // builder refuses rather than producing an envelope the network rejects.
+    await expect(buildActionXdr("publish", G, { agent: OTHER })).rejects.toThrow(
+      /needs that agent's signature/,
+    );
   });
 });
