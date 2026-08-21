@@ -55,66 +55,94 @@ marked BUILT was checked against source, not against a design document.
 
 # Status
 
+Audited against source, not against design docs, and — where it was possible to
+run the thing — against live testnet rather than against a passing test.
+
 ## R1
 
-| Requirement                                                      | State   |
-| ---------------------------------------------------------------- | ------- |
-| PaymentRouter contract, cumulative spend per certificate         | BUILT   |
-| `BoundExceeded` provable from on-chain state alone               | BUILT   |
-| `ExpiredCertificate` trustless (ledger time vs. expiry)          | BUILT   |
-| Arbiter shrunk to a labelled edge case (`FakeSignature` only)    | BUILT   |
-| Unit + integration tests, fraud and no-fraud branch, every proof | BUILT   |
-| GitHub Actions build + test on every PR                          | BUILT   |
-| **Agent payments actually flow through the router**              | **GAP** |
+| Requirement                                                      | State                  |
+| ---------------------------------------------------------------- | ---------------------- |
+| PaymentRouter contract, cumulative spend per certificate         | BUILT                  |
+| `BoundExceeded` provable from on-chain state alone               | BUILT                  |
+| `ExpiredCertificate` trustless (ledger time vs. expiry)          | BUILT                  |
+| Arbiter shrunk to a labelled edge case (`FakeSignature` only)    | BUILT                  |
+| Unit + integration tests, fraud and no-fraud branch, every proof | BUILT (201 Rust tests) |
+| GitHub Actions build + test on every PR                          | BUILT                  |
+| Agent payments actually flow through the router                  | BUILT                  |
 
-The router is deployed and the ChallengeManager reads it, but nothing writes
-to it. `BoundClient.executePayment` calls the raw USDC SAC, and `enroll` is
-never called outside contract tests. Spend is therefore never recorded, so
-`BoundExceeded` cannot fire on anything the demo does. The mechanism is
-correct and tested; the feed is missing.
+That last row was the one real gap in this deliverable, and it was a bad one:
+the router was deployed and the ChallengeManager read its counter, but nothing
+wrote to it. `executePayment` called the raw USDC asset contract and `enroll`
+was never called outside the contract tests, so the number `BoundExceeded` is
+proven from was always zero. The mechanism was correct and tested; the feed was
+missing.
+
+`executePayment` now routes an enrolled signer through the router and returns a
+receipt saying which rail it took; `enrollAgent` is what puts an address on
+that rail. **Verified live:** certificate #5 on testnet carries $600 of routed
+spend against a $500 bound, and a `BoundExceeded` claim was admitted from that
+state alone.
 
 ## R2
 
-| Requirement                                                         | State   |
-| ------------------------------------------------------------------- | ------- |
-| PremiumVault: deposit, time-based accrual, auditor claim, fee split | BUILT   |
-| Slashed auditor forfeits unclaimed yield                            | BUILT   |
-| Tested                                                              | BUILT   |
-| Deployed to testnet                                                 | BUILT   |
-| Surfaced in the SDK                                                 | **GAP** |
-| Surfaced in the demo UI                                             | **GAP** |
+| Requirement                                                         | State |
+| ------------------------------------------------------------------- | ----- |
+| PremiumVault: deposit, time-based accrual, auditor claim, fee split | BUILT |
+| Slashed auditor forfeits unclaimed yield                            | BUILT |
+| Tested                                                              | BUILT |
+| Deployed to testnet                                                 | BUILT |
+| Surfaced in the SDK                                                 | BUILT |
+| Surfaced in the demo UI                                             | BUILT |
 
-`BoundClient` exposes no premium method at all. `premiumVault` appears in the
-SDK only as an address in `config.ts` and `deployments.ts`.
+`quotePremium`, `quotePremiumForCert`, `payPremium`, `premiumAccrued`,
+`premiumClaimable`, `premiumPaid`, `coverage`, `claimPremium`. Read live off
+certificate #5: premium 11,402 stroops, accruing at ~3.17 stroops/second in a
+straight line across the term.
+
+Panels on both the dashboard and the public certificate page. A quote is
+rendered as a quote and never as an accrual of zero — the two are different
+claims and only one of them is ever true.
 
 ## R3
 
-| Requirement                                              | State                      |
-| -------------------------------------------------------- | -------------------------- |
-| `@bound/sdk` independently installable, typed, published | BUILT (0.4.0)              |
-| Covers routed payments                                   | **GAP**                    |
-| Covers all three fraud proofs                            | PARTIAL                    |
-| Covers premiums                                          | **GAP**                    |
-| MCP connector packaged for any MCP-capable agent         | BUILT (`@bound/mcp` 0.1.0) |
-| Reproducible quickstart                                  | BUILT                      |
-| Permanently hosted demo                                  | BUILT                      |
-| Hosted demo runs the _full_ lifecycle                    | **GAP**                    |
-| Recorded walkthrough video                               | NOT STARTED                |
+| Requirement                                              | State                                |
+| -------------------------------------------------------- | ------------------------------------ |
+| `@bound/sdk` independently installable, typed, published | BUILT (0.5.0, provenance-signed)     |
+| Covers routed payments                                   | BUILT                                |
+| Covers all three fraud proofs                            | BUILT                                |
+| Covers premiums                                          | BUILT                                |
+| MCP connector packaged for any MCP-capable agent         | BUILT (`@bound/mcp` 0.1.0, 15 tools) |
+| Reproducible quickstart                                  | BUILT                                |
+| Permanently hosted demo                                  | BUILT (www.boundprotocol.dev/app)    |
+| Hosted demo shows routed spend and the coverage economy  | BUILT                                |
+| Hosted demo runs the _full_ lifecycle                    | PARTIAL — see below                  |
+| Recorded walkthrough video                               | NOT STARTED                          |
 
 ---
 
-# What is left
+# What is left, and why
 
-**The hosted demo's settlement leg, and the video.** Both are blocked on the
-same thing, and it is a real protocol property rather than missing work: the
-claim window is 72 hours. `pnpm run demo` proves everything up to and including
-a claim being admitted from on-chain state, and settles the _false_ claim in
-its own filing transaction. `pnpm run demo:settle` closes the window and pays
-out three days later. Collapsing the window so a demo finishes in one run would
-be demonstrating a protocol we deliberately do not ship — v1 settled the first
-claim to arrive and foreclosed every honest one behind it, and the window is
-what fixed that.
+**The settlement leg of the lifecycle, and the video.** Both wait on the same
+thing, and it is a real protocol property rather than missing work: the claim
+window is 72 hours.
 
-So the honest sequence is: run the demo, wait out the window on a certificate
-already filed, then record the walkthrough against a certificate whose whole
-lifecycle is finished and permanently readable on-chain.
+`pnpm run demo` drives everything up to and including a claim being admitted
+from on-chain state, and it _does_ settle one claim live — the false one, which
+is rejected and settled inside its own filing transaction with the bond forfeit,
+because a predicate the contract can evaluate itself needs no window when it
+comes out false. The true claim opens a window. `pnpm run demo:settle` closes it
+and pays out three days later.
+
+Collapsing that window so a demo finishes in one run would mean demonstrating a
+protocol we deliberately do not ship. v1 settled the first claim to arrive and
+foreclosed every honest one behind it; the window is what fixed that, and a
+claim filed in hour 71 is admitted on the same terms as one filed in hour 1.
+
+So the honest sequence is: run the demo, let the window on an already-filed
+certificate lapse, settle it, and record the walkthrough against a certificate
+whose entire lifecycle is finished and permanently readable on-chain.
+
+**One release step needs a human.** npm Trusted Publishing can only be
+configured on a package that already exists, so `@bound/mcp`'s first publish has
+to be done by hand before the release tag can take it over. The v0.5.0 tag
+published `@bound/sdk` and then failed on exactly this, as expected.
