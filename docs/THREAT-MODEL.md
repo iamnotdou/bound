@@ -1,0 +1,152 @@
+# Threat model: custody and the agent key
+
+`docs/DESIGN-V2.md` § 6 makes this document a precondition of shipping custody,
+not a follow-up to it. The PaymentRouter holds funds, so the question "what can
+someone who steals an agent's key actually reach?" has to have a written answer
+before that contract is deployed, not after someone finds out.
+
+Status: written against the router as built on `feat/payment-router`.
+Nothing is deployed.
+
+---
+
+## What custody changes
+
+Before the router, an agent key is a Stellar account key. Steal it and you drain
+that account. The blast radius is whatever the agent was holding.
+
+With the router, the agent transacts in **wrapped USDC** held in the router's
+custody and metered per certificate. Steal the key and you reach the agent's
+wrapped balance too — the operating float. That is a real increase in what a
+single compromised key is worth, and it is the reason this document exists.
+
+The mitigation is not that theft becomes impossible. It is that the reachable
+amount is **bounded, visible, and stoppable**:
+
+- **Bounded** by the per-certificate float cap, set at enrolment.
+- **Visible** because the cap is on the certificate, so a counterparty can see
+  the maximum exposure before trusting the agent.
+- **Stoppable** by the operator's kill switch, which halts routing without a
+  challenge and which the agent key cannot clear.
+
+---
+
+## What a stolen agent key can reach
+
+| Reachable                                        | Why                                                                                                               |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| The agent's wrapped balance, up to the float cap | The thief holds the key that authorizes `transfer`. This is the loss.                                             |
+| Any destination                                  | `transfer` takes an arbitrary `to`. There is no allowlist of payees, and there should not be one — see below.     |
+| The spend counter                                | Every stolen-key transfer meters against the certificate like any other. A thief can push `spent` past the bound. |
+
+## What it cannot reach
+
+| Out of reach                  | Why                                                                                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The reserve                   | `ReserveVault::deposit` and `release_to_operator` authenticate the **certificate's operator**, read from the Registry. The agent key is not the operator key. |
+| The auditor's stake           | Only a proven challenge moves it, and only through the challenge manager.                                                                                     |
+| Any other certificate's float | Balances, caps and halts are keyed by certificate id.                                                                                                         |
+| Float above the cap           | Deposits beyond the cap are rejected, so the operator cannot accidentally raise the ceiling by topping up.                                                    |
+| The kill switch               | Halt and resume authenticate the operator. A thief holding the agent key cannot resume routing after the operator halts it. This is tested explicitly.        |
+| The certificate itself        | Nothing the agent key can do invalidates or re-points a certificate.                                                                                          |
+
+**Why no payee allowlist.** It is the obvious mitigation and it is rejected on
+purpose. An agent that can only pay a fixed set of addresses is not an
+autonomous agent, and the operator maintaining that list becomes a trusted party
+in every transaction — which is what the protocol exists to remove. The float cap
+bounds the same loss without constraining who the agent may deal with.
+
+---
+
+## Who bears the loss
+
+This is the part that must not be got wrong.
+
+**A compromised agent key is not a slashable auditor fault.**
+
+The auditor attests that capital is committed and that the operator's process is
+sound. They do not attest to the operator's key hygiene, they cannot observe it,
+and they cannot price it. An auditor who can be slashed for an operator losing a
+key is underwriting a risk they have no instrument to measure — and the rational
+response to that is to not audit at all, or to demand a premium that makes the
+whole product pointless. Getting this boundary wrong makes auditing uninsurable.
+
+So:
+
+- **The operator bears float loss** from their own compromised key. The float cap
+  is the operator's own risk limit, chosen by them.
+- **The bond covers harm to counterparties**, whoever caused it. If a thief uses
+  the stolen key to take payment and not deliver, the counterparty was harmed by
+  the agent, and that is exactly the case the bond exists for. The counterparty
+  does not have to care whose fault the key loss was, and must not be asked to.
+- **The auditor is slashed only on a proven proof**, on the same terms as any
+  other challenge. Key compromise is not itself a proof type.
+
+The distinction that carries this: **the operator's own loss and a counterparty's
+loss are different things**, and only the second is covered. A thief draining the
+float harms the operator, and the protocol pays nothing. A thief harming a
+counterparty triggers the ordinary settlement waterfall.
+
+---
+
+## The consequence for the spend counter
+
+A thief can push `spent` past the bound, which makes `BoundExceeded` true without
+anyone having been harmed. That is the same result `spend-probe` proves for a
+self-dealing operator, arrived at by a different route, and it has the same
+answer: **the counter is evidence, not a payout trigger**, and compensation is
+driven by proven harm and capped by collateral.
+
+If `BoundExceeded` ever paid out on the counter alone, stealing an agent key
+would become a way to force a payout from an honest operator's collateral. It
+does not, and this is one of the reasons why.
+
+---
+
+## Compromise response
+
+The intended sequence, and why it is ordered this way:
+
+1. **Operator halts routing** for the certificate. This is deliberately the first
+   step: it requires no challenge, no proof, no counterparty, and no auditor. Any
+   response that depended on the challenge system would be too slow to matter and
+   would put a compromise on the same clock as a dispute.
+2. **Operator withdraws remaining float** — the wrapped balance is unwrappable by
+   its holder, so whatever the thief has not taken is recoverable only if the
+   operator moves before they do. Halting first is what buys that time.
+3. **The certificate remains valid.** A compromise is not a covenant breach, and
+   invalidating on compromise would give an attacker a way to destroy a
+   certificate by stealing a key.
+4. **Counterparties harmed during the window challenge normally.** They are not
+   asked to prove anything about the key.
+
+---
+
+## Known gaps
+
+Stated rather than hidden:
+
+- **Detection is out of scope.** Nothing here notices a compromise; it only
+  bounds and stops one. The operator must be watching, and step 1 above is only
+  as fast as they are.
+- **The float cap is a per-certificate constant**, not a rate limit. A thief who
+  drains a capped float, waits for the operator to refill, and drains it again
+  reaches more than the cap in total. A velocity limit is the natural answer and
+  is not designed yet.
+- **A stolen key can pay a counterparty legitimately.** Nothing distinguishes a
+  thief's honest payment from the agent's, which is correct — but it means the
+  spend counter cannot be used to date a compromise.
+- **A halted certificate's float is stuck.** Halt gates `transfer`,
+  `transfer_from`, `withdraw` and `burn` — `withdraw` included, because otherwise
+  a thief simply withdraws the float to their own wallet and the kill switch is
+  decorative. The consequence is that there is **no operator clawback path**: the
+  honest operator cannot recover their own float while halted, and resuming to
+  recover it also re-enables the thief. This needs a deliberate decision —
+  a clawback that pays only to the certificate's registered operator is the
+  obvious candidate, possibly timelocked — and it is not designed yet. It is the
+  most important open item on this page.
+- **Inbound transfers are not cap-checked.** The float cap is enforced on
+  `deposit` only. A tracked agent being _paid_ can exceed its cap, because
+  refusing inbound payment would make an honest agent unable to be paid, and
+  inbound value is not something a stolen key can conjure. The cap therefore
+  bounds what the operator commits, not the maximum the agent can ever hold.
