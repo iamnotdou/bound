@@ -98,7 +98,23 @@ impl Registry {
         reserve_vault_contract: Address,
         auditor_staking_contract: Address,
     ) -> u64 {
+        // Defect L1. `operator.require_auth()` alone let *any* funded account
+        // publish a certificate naming an agent it does not control, and the
+        // unconditional write to `AgentCert(agent)` below then made
+        // `verify(agent)` resolve to that junk `Pending` certificate instead of
+        // the real one. One transaction, repeatable, and it knocked any agent
+        // offline. Requiring the agent's signature too makes bonding consent
+        // mutual, and matches PaymentRouter::enroll, which has always required
+        // both parties for exactly this reason.
+        //
+        // WHAT THIS COSTS: publishing now needs two signatures — the operator's
+        // and the agent's. Soroban allows one contract call per transaction, so
+        // both must be collected into the *same* transaction's auth entries; a
+        // UI cannot split this into two sequential submissions. Any client that
+        // signs as the operator and submits must first obtain the agent's
+        // signed authorization entry.
         operator.require_auth();
+        agent.require_auth();
 
         if bound <= 0 {
             panic!("invalid_bound");
@@ -108,6 +124,31 @@ impl Registry {
         }
         if expires_at <= env.ledger().timestamp() {
             panic!("expiry_in_past");
+        }
+
+        // Defect L1, second half: should an existing mapping be overwritable at
+        // all? Yes — but not while it is under dispute.
+        //
+        // Overwriting is how renewal works in this registry: `expires_at` is
+        // immutable once published, so an operator renews by publishing a fresh
+        // certificate for the same agent (see `get_cert_agent`). Forbidding the
+        // overwrite outright would remove renewal, and with `agent.require_auth()`
+        // above a third party can no longer perform one anyway.
+        //
+        // The one case that must still be refused is republishing over a
+        // certificate whose claim window is open. The old certificate's
+        // collateral stays locked by cert id regardless, so no money escapes —
+        // but `verify(agent)` would start resolving to a clean `Pending`
+        // certificate and a counterparty would see no sign of the live breach.
+        // The operator and the agent can renew the moment the window closes.
+        if let Some(prev_id) = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::AgentCert(agent.clone()))
+        {
+            if env.ledger().timestamp() < Self::claim_freeze(&env, prev_id) {
+                panic!("claim_window_open");
+            }
         }
 
         let cert_count: u64 = env.storage().instance().get(&DataKey::CertCount).unwrap();
@@ -505,8 +546,8 @@ mod mock_staking_unregistered {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger as _},
-        Env,
+        testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
+        Env, IntoVal,
     };
 
     /// The slice of stake an auditor puts behind a certificate in these tests.
@@ -703,5 +744,204 @@ mod tests {
             &rv,
             &ast,
         );
+    }
+
+    // ---- Defect L1: publishing requires the agent's consent ----------------
+
+    const TEST_BOUND: i128 = 50_000_0000000;
+    const TEST_RESERVE: i128 = 10_000_0000000;
+    const TEST_EXPIRY: u64 = 9_999_999;
+
+    /// The exact argument tuple `publish` is called with in the L1 tests.
+    /// `MockAuth` matches on the arguments, so this has to mirror the call.
+    fn publish_args(
+        env: &Env,
+        operator: &Address,
+        agent: &Address,
+        rv: &Address,
+        ast: &Address,
+    ) -> soroban_sdk::Vec<soroban_sdk::Val> {
+        (
+            operator.clone(),
+            agent.clone(),
+            TEST_BOUND,
+            TEST_RESERVE,
+            TEST_EXPIRY,
+            rv.clone(),
+            ast.clone(),
+        )
+            .into_val(env)
+    }
+
+    #[test]
+    fn test_publish_without_agent_auth_is_rejected() {
+        let env = Env::default();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let rv = Address::generate(&env);
+        let ast = Address::generate(&env);
+        let args = publish_args(&env, &operator, &agent, &rv, &ast);
+
+        // Only the operator signs — exactly the pre-fix situation.
+        let res = client
+            .mock_auths(&[MockAuth {
+                address: &operator,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "publish",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_publish(
+                &operator,
+                &agent,
+                &TEST_BOUND,
+                &TEST_RESERVE,
+                &TEST_EXPIRY,
+                &rv,
+                &ast,
+            );
+
+        assert!(res.is_err(), "publish must fail without the agent's auth");
+        // And nothing was written: the agent still has no certificate.
+        assert!(!client.verify(&agent).valid);
+        assert_eq!(client.get_cert_count(), 0);
+    }
+
+    #[test]
+    fn test_publish_with_both_signatures_succeeds() {
+        let env = Env::default();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let rv = Address::generate(&env);
+        let ast = Address::generate(&env);
+        let args = publish_args(&env, &operator, &agent, &rv, &ast);
+
+        let cert_id = client
+            .mock_auths(&[
+                MockAuth {
+                    address: &operator,
+                    invoke: &MockAuthInvoke {
+                        contract: &client.address,
+                        fn_name: "publish",
+                        args: args.clone(),
+                        sub_invokes: &[],
+                    },
+                },
+                MockAuth {
+                    address: &agent,
+                    invoke: &MockAuthInvoke {
+                        contract: &client.address,
+                        fn_name: "publish",
+                        args: args.clone(),
+                        sub_invokes: &[],
+                    },
+                },
+            ])
+            .publish(
+                &operator,
+                &agent,
+                &TEST_BOUND,
+                &TEST_RESERVE,
+                &TEST_EXPIRY,
+                &rv,
+                &ast,
+            );
+
+        assert_eq!(cert_id, 1);
+        assert_eq!(client.get_cert_id(&agent), 1);
+    }
+
+    #[test]
+    fn test_third_party_cannot_hijack_an_existing_mapping() {
+        let env = Env::default();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        // The real, attested certificate.
+        env.mock_all_auths();
+        let real_id = publish_cert(&client, &env, &operator, &agent);
+        client.attest(&auditor, &real_id, &ALLOCATION);
+        assert!(client.verify(&agent).valid);
+
+        // An unrelated funded account tries to overwrite the mapping, signing
+        // only for itself. This is the whole L1 attack.
+        let attacker = Address::generate(&env);
+        let rv = Address::generate(&env);
+        let ast = Address::generate(&env);
+        let args = publish_args(&env, &attacker, &agent, &rv, &ast);
+
+        let res = client
+            .mock_auths(&[MockAuth {
+                address: &attacker,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "publish",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_publish(
+                &attacker,
+                &agent,
+                &TEST_BOUND,
+                &TEST_RESERVE,
+                &TEST_EXPIRY,
+                &rv,
+                &ast,
+            );
+
+        assert!(res.is_err(), "a third party must not be able to publish");
+        // The agent still resolves to the real, verified certificate.
+        assert_eq!(client.get_cert_id(&agent), real_id);
+        assert!(client.verify(&agent).valid);
+    }
+
+    #[test]
+    fn test_renewal_by_the_same_parties_still_works() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let first = publish_cert(&client, &env, &operator, &agent);
+        let second = publish_cert(&client, &env, &operator, &agent);
+
+        assert_ne!(first, second);
+        assert_eq!(client.get_cert_id(&agent), second);
+    }
+
+    #[test]
+    #[should_panic(expected = "claim_window_open")]
+    fn test_cannot_republish_over_a_frozen_certificate() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, cm) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        // The ChallengeManager opens a claim window on it.
+        let _ = cm;
+        client.set_claim_freeze(&cert_id, &5000u64);
+
+        // Renewal would otherwise wash the live dispute out of `verify`.
+        publish_cert(&client, &env, &operator, &agent);
     }
 }
