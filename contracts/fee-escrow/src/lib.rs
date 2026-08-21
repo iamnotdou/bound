@@ -1,6 +1,16 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     ChallengeManager,
@@ -16,6 +26,17 @@ pub struct FeeEscrow;
 
 #[contractimpl]
 impl FeeEscrow {
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    /// Every entry this contract owns lives in instance storage, so this one
+    /// helper is the whole TTL story here — there is no persistent key to
+    /// extend.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
     pub fn initialize(env: Env, challenge_manager: Address, token: Address) {
         if env.storage().instance().has(&DataKey::ChallengeManager) {
             panic!("already_initialized");
@@ -26,6 +47,7 @@ impl FeeEscrow {
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Released, &false);
         env.storage().instance().set(&DataKey::Amount, &0i128);
+        Self::bump_instance(&env);
     }
 
     // Operator deposits audit fee, specifies which auditor will receive it
@@ -42,6 +64,7 @@ impl FeeEscrow {
         env.storage().instance().set(&DataKey::Operator, &operator);
         env.storage().instance().set(&DataKey::Auditor, &auditor);
         env.storage().instance().set(&DataKey::Amount, &amount);
+        Self::bump_instance(&env);
     }
 
     // Auditor calls this after attestation — collects their fee
@@ -68,6 +91,7 @@ impl FeeEscrow {
 
         env.storage().instance().set(&DataKey::Released, &true);
         env.storage().instance().set(&DataKey::Amount, &0i128);
+        Self::bump_instance(&env);
     }
 
     // ChallengeManager slashes fee to challenger if auditor committed fraud
@@ -92,6 +116,7 @@ impl FeeEscrow {
         );
 
         env.storage().instance().set(&DataKey::Amount, &0i128);
+        Self::bump_instance(&env);
     }
 
     pub fn get_amount(env: Env) -> i128 {

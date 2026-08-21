@@ -17,6 +17,16 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     /// The bound the certificate claims, copied in at `init`.
@@ -41,6 +51,7 @@ impl SpendProbe {
         }
         env.storage().instance().set(&DataKey::Bound, &bound);
         env.storage().instance().set(&DataKey::Spent, &0i128);
+        Self::bump_instance(&env);
     }
 
     /// Seed an internal balance. Test-only: the real router mints routed balance
@@ -49,7 +60,9 @@ impl SpendProbe {
         let current = Self::balance(env.clone(), to.clone());
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(to), &(current + amount));
+            .set(&DataKey::Balance(to.clone()), &(current + amount));
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Balance(to));
     }
 
     /// The router's hot path: move internal balance, record the spend, tally the
@@ -68,6 +81,7 @@ impl SpendProbe {
         }
         let to_balance = Self::balance(env.clone(), to.clone());
 
+        let from_key = from.clone();
         env.storage()
             .persistent()
             .set(&DataKey::Balance(from), &(from_balance - amount));
@@ -83,7 +97,27 @@ impl SpendProbe {
         let received = Self::received(env.clone(), to.clone());
         env.storage()
             .persistent()
-            .set(&DataKey::Received(to), &(received + amount));
+            .set(&DataKey::Received(to.clone()), &(received + amount));
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Balance(from_key));
+        Self::bump(&env, &DataKey::Balance(to.clone()));
+        Self::bump(&env, &DataKey::Received(to));
+    }
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     pub fn balance(env: Env, who: Address) -> i128 {

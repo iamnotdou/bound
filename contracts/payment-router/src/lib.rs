@@ -107,6 +107,16 @@ pub struct CertConfig {
     pub halted: bool,
 }
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     Registry,
@@ -142,6 +152,7 @@ impl PaymentRouter {
         env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Supply, &0i128);
+        Self::bump_instance(&env);
     }
 
     // -----------------------------------------------------------------------
@@ -211,6 +222,13 @@ impl PaymentRouter {
             );
         }
 
+        // The enrollment and the certificate config are what make an agent
+        // tracked. If either archived, `is_tracked` would abort rather than
+        // answer, and with it the meter, the kill switch and the float cap.
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Enrolled(agent.clone()));
+        Self::bump(&env, &DataKey::Cert(cert_id));
+
         env.events()
             .publish((symbol_short!("enroll"), agent), (cert_id, float_cap));
     }
@@ -272,6 +290,8 @@ impl PaymentRouter {
         env.storage()
             .persistent()
             .set(&DataKey::Cert(cert_id), &cfg);
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Cert(cert_id));
         env.events()
             .publish((symbol_short!("cap_set"), cert_id), (old, float_cap));
     }
@@ -551,6 +571,12 @@ impl PaymentRouter {
             panic!("expiration_in_past");
         }
 
+        // Deliberately NOT TTL-extended (defect L2). Allowances live in
+        // temporary storage and SEP-41 gives them their own expiry: the caller
+        // names `expiration_ledger` and `allowance_value` refuses anything past
+        // it. Extending the entry's lifetime beyond the expiry the approver
+        // chose would be the contract overriding them; letting it archive early
+        // fails closed, to an allowance of zero.
         env.storage().temporary().set(
             &DataKey::Allowance(AllowanceKey {
                 from: from.clone(),
@@ -561,6 +587,7 @@ impl PaymentRouter {
                 expiration_ledger,
             },
         );
+        Self::bump_instance(&env);
 
         env.events().publish(
             (symbol_short!("approve"), from, spender),
@@ -650,6 +677,11 @@ impl PaymentRouter {
         env.storage()
             .persistent()
             .set(&DataKey::Spent(e.cert_id), &spent);
+        // The spend counter is the evidence `BoundExceeded` and
+        // `ExpiredCertificate` are proven from. It has to stay readable past
+        // the certificate's own expiry, which is exactly when those proofs get
+        // filed.
+        Self::bump(env, &DataKey::Spent(e.cert_id));
 
         let now = env.ledger().timestamp();
         if now > e.expires_at {
@@ -666,6 +698,7 @@ impl PaymentRouter {
             env.storage()
                 .persistent()
                 .set(&DataKey::PostExpiry(e.cert_id), &pe);
+            Self::bump(env, &DataKey::PostExpiry(e.cert_id));
         }
 
         env.events().publish(
@@ -686,6 +719,21 @@ impl PaymentRouter {
             .publish((symbol_short!("burn"), from.clone()), amount);
     }
 
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
     fn check_amount(amount: i128) {
         if amount <= 0 {
             panic!("invalid_amount");
@@ -700,6 +748,8 @@ impl PaymentRouter {
         env.storage()
             .persistent()
             .set(&DataKey::Balance(who.clone()), &(balance - amount));
+        Self::bump_instance(env);
+        Self::bump(env, &DataKey::Balance(who.clone()));
     }
 
     fn credit(env: &Env, who: &Address, amount: i128) {
@@ -709,6 +759,8 @@ impl PaymentRouter {
         env.storage()
             .persistent()
             .set(&DataKey::Balance(who.clone()), &balance);
+        Self::bump_instance(env);
+        Self::bump(env, &DataKey::Balance(who.clone()));
     }
 
     fn allowance_value(env: &Env, from: &Address, spender: &Address) -> AllowanceValue {
@@ -763,6 +815,8 @@ impl PaymentRouter {
         env.storage()
             .persistent()
             .set(&DataKey::Cert(cert_id), &cfg);
+        Self::bump_instance(env);
+        Self::bump(env, &DataKey::Cert(cert_id));
     }
 
     fn reject_if_halted(env: &Env, from: &Address) {
@@ -790,6 +844,8 @@ impl PaymentRouter {
         env.storage()
             .persistent()
             .set(&DataKey::Float(cert_id), &amount);
+        Self::bump_instance(env);
+        Self::bump(env, &DataKey::Float(cert_id));
     }
 
     fn raise_float(env: &Env, cert_id: u64, amount: i128) {
@@ -815,6 +871,7 @@ impl PaymentRouter {
 
     fn set_supply(env: &Env, amount: i128) {
         env.storage().instance().set(&DataKey::Supply, &amount);
+        Self::bump_instance(env);
     }
 
     fn registry(env: &Env) -> Address {

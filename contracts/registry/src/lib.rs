@@ -18,6 +18,46 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, S
 /// this constant is the one place the window is defined.
 pub const CHALLENGE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
+// ---------------------------------------------------------------------------
+// Storage lifetime — defect L2. This block is the canonical explanation; the
+// other contracts carry the same two constants and point back here.
+//
+// Soroban archives any instance or persistent entry whose TTL lapses, and
+// **reaching an archived entry aborts the transaction** rather than returning a
+// default. Nothing in this workspace extended any TTL, so two things were
+// waiting to happen: a certificate nobody touched for long enough would stop
+// being readable, and each contract *instance* is on the same clock, which
+// would take the whole contract offline rather than merely one entry.
+//
+// At the network's ~5s ledger close one day is 17,280 ledgers.
+//
+//   TTL_EXTEND_TO = 120 days. Chosen against the lifetime of the thing being
+//   protected, not picked round: a certificate's own `expires_at` plus
+//   `CHALLENGE_WINDOW_SECONDS` (7 days) is the full period during which its
+//   entries must stay reachable, and 120 days covers a quarter-long
+//   certificate and its window with room to spare. Every entry a certificate
+//   creates therefore outlives the certificate.
+//
+//   TTL_THRESHOLD = 60 days, i.e. half the runway. `extend_ttl` is a no-op
+//   when the remaining TTL is already above the threshold, so a threshold at
+//   half means at most one rent payment per 60 days of activity instead of one
+//   on every single call.
+//
+// Both sit under the 3,110,400-ledger `max_entry_ttl` the live networks
+// configure (the test host allows 6,312,000), so an extension is never
+// clamped.
+//
+// WHO PAYS: TTL extension is rent, charged to the submitter of the transaction
+// that triggers the bump. Every bump below sits on a write path, so the payer
+// is the operator, agent, auditor, arbiter or challenger who was already
+// paying for that call. The protocol never pays, and no read-only path is
+// turned into a state change — which is the deliberate residual: a certificate
+// that nobody transacts against at all for 120 days still archives. Publishing,
+// attesting, depositing, paying a premium or filing a challenge all reset it.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum CertStatus {
@@ -85,6 +125,7 @@ impl Registry {
             .instance()
             .set(&DataKey::AuditorStaking, &auditor_staking);
         env.storage().instance().set(&DataKey::CertCount, &0u64);
+        Self::bump_instance(&env);
     }
 
     // Sadece operator imzaladı → PENDING olarak yayınlanır
@@ -173,8 +214,12 @@ impl Registry {
             .set(&DataKey::Certificate(cert_id), &cert);
         env.storage()
             .persistent()
-            .set(&DataKey::AgentCert(agent), &cert_id);
+            .set(&DataKey::AgentCert(agent.clone()), &cert_id);
         env.storage().instance().set(&DataKey::CertCount, &cert_id);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Certificate(cert_id));
+        Self::bump(&env, &DataKey::AgentCert(agent));
 
         cert_id
     }
@@ -262,6 +307,10 @@ impl Registry {
         env.storage()
             .persistent()
             .set(&DataKey::Certificate(cert_id), &cert);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Certificate(cert_id));
+        Self::bump(&env, &DataKey::AgentCert(cert.agent));
     }
 
     pub fn verify(env: Env, agent: Address) -> VerifyResult {
@@ -412,6 +461,12 @@ impl Registry {
         env.storage()
             .persistent()
             .set(&DataKey::ClaimFreeze(cert_id), &until);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::ClaimFreeze(cert_id));
+        // The window outlives the freeze flag if the certificate itself lapses,
+        // so keep the certificate reachable for as long as the freeze is.
+        Self::bump(&env, &DataKey::Certificate(cert_id));
     }
 
     /// Ledger time until which an open claim window holds this certificate
@@ -423,6 +478,21 @@ impl Registry {
     /// Whether a claim window is open on this certificate right now.
     pub fn is_frozen(env: Env, cert_id: u64) -> bool {
         env.ledger().timestamp() < Self::claim_freeze(&env, cert_id)
+    }
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn claim_freeze(env: &Env, cert_id: u64) -> u64 {
@@ -502,6 +572,10 @@ impl Registry {
         env.storage()
             .persistent()
             .set(&DataKey::Certificate(cert_id), &cert);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Certificate(cert_id));
+        Self::bump(&env, &DataKey::AgentCert(cert.agent));
     }
 }
 

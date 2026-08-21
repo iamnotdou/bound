@@ -98,6 +98,16 @@ pub struct ClaimWindow {
     pub claims: Vec<u64>,
 }
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     Registry,
@@ -248,6 +258,7 @@ impl ChallengeManager {
         env.storage()
             .instance()
             .set(&DataKey::ChallengeCount, &0u64);
+        Self::bump_instance(&env);
     }
 
     /// Point this contract at the PaymentRouter.
@@ -273,6 +284,7 @@ impl ChallengeManager {
             panic!("router_already_set");
         }
         env.storage().instance().set(&DataKey::Router, &router);
+        Self::bump_instance(&env);
     }
 
     pub fn get_router(env: Env) -> Address {
@@ -305,6 +317,7 @@ impl ChallengeManager {
         env.storage()
             .instance()
             .set(&DataKey::PremiumVault, &premium_vault);
+        Self::bump_instance(&env);
     }
 
     pub fn get_premium_vault(env: Env) -> Address {
@@ -434,6 +447,10 @@ impl ChallengeManager {
         env.storage()
             .instance()
             .set(&DataKey::BondsHeld, &(Self::bonds_held(&env) + stake));
+        // The challenge record holds the bond liability. Archiving it would
+        // abort every later resolve and strand the challenger's bond.
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Challenge(challenge_id));
 
         match open_window {
             Some(mut w) => {
@@ -441,6 +458,7 @@ impl ChallengeManager {
                 env.storage()
                     .persistent()
                     .set(&DataKey::Window(cert_id), &w);
+                Self::bump(&env, &DataKey::Window(cert_id));
             }
             None => {
                 // Only a claim worth aggregating may open a window. An
@@ -461,6 +479,7 @@ impl ChallengeManager {
                         claims,
                     },
                 );
+                Self::bump(&env, &DataKey::Window(cert_id));
                 Self::freeze(&env, cert_id, closes_at);
             }
         }
@@ -540,6 +559,8 @@ impl ChallengeManager {
         env.storage()
             .persistent()
             .set(&DataKey::Challenge(challenge_id), &ch);
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Challenge(challenge_id));
     }
 
     // -----------------------------------------------------------------------
@@ -780,6 +801,9 @@ impl ChallengeManager {
         env.storage()
             .persistent()
             .set(&DataKey::Settled(cert_id), &true);
+        // `Settled` is what refuses a second window on a dead certificate. If it
+        // archived, the certificate would become challengeable all over again.
+        Self::bump(&env, &DataKey::Settled(cert_id));
         if total_harm > 0 {
             Self::settle_fraud(&env, cert_id, &admitted, &weights, total_harm);
         } else {
@@ -846,6 +870,21 @@ impl ChallengeManager {
     }
 
     // ----- internals -----
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 
     fn get(env: &Env, challenge_id: u64) -> Challenge {
         env.storage()
@@ -1543,6 +1582,7 @@ impl ChallengeManager {
         env.storage()
             .instance()
             .set(&DataKey::BondsHeld, &if held > 0 { held } else { 0 });
+        Self::bump_instance(env);
     }
 
     fn bonds_held(env: &Env) -> i128 {
@@ -1569,6 +1609,8 @@ impl ChallengeManager {
         env.storage()
             .persistent()
             .set(&DataKey::Challenge(challenge_id), &resolved);
+        Self::bump_instance(env);
+        Self::bump(env, &DataKey::Challenge(challenge_id));
     }
 }
 
