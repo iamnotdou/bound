@@ -103,6 +103,25 @@ be rewritten.
 - **`resolve_by_arbiter(challenge_id, fraud_proven, harm)` no longer settles.**
   Same signature, different meaning: it records a verdict and a quantity on one
   live claim inside an open window. It panics if the window has closed.
+- **`resolve_by_arbiter` now refuses to contradict an on-chain predicate**
+  (review R4). Same signature, two more rejection cases: on any claim whose
+  proof type is not `FakeSignature` it panics `predicate_not_overridable` if
+  `fraud_proven` differs from what the predicate recorded at filing, and
+  `harm_below_predicate` if `harm` is below the number the predicate computed.
+  The arbiter may still **raise** the harm on a true predicate claim, which is
+  what keeps DESIGN-V2 §10's "a human states a number" path working for
+  `BoundExceeded` and `ExpiredCertificate`. **Client impact:** an arbiter UI must
+  read `get_challenge(id)` and offer only the recorded verdict, with the recorded
+  harm as the minimum of any amount field. See DESIGN-V2 §10.
+- **An arbiter-gated claim no longer freezes the certificate** (review R3). Same
+  signatures throughout; what changed is which call writes the freeze.
+  `challenge` writes it only when the claim's predicate proved true at filing,
+  and `resolve_by_arbiter` writes it when it **upholds** a claim. So a
+  `FakeSignature` claim nobody has ruled on leaves the reserve and the allocation
+  free, and an ignored one buys the griefer nothing. **Client impact:** a UI must
+  not infer "a window is open" from `is_frozen(cert_id)` — `get_window(cert_id)`
+  is the question about the window, and `is_frozen` is now the narrower question
+  about the collateral. See DESIGN-V2 §10.
 - New getters: `get_window(cert_id) -> Option<ClaimWindow>`,
   `window_closes_at(cert_id) -> u64`, `is_settled(cert_id) -> bool`,
   `get_claim_window_seconds() -> u64`.
@@ -114,9 +133,12 @@ be rewritten.
 - New type `ClaimWindow { cert_id, opened_at, closes_at, claims }`.
 - **New (additive): `close_window_early(challenge_id)`.** Arbiter-only. Ends an
   open window the moment the arbiter has rejected a claim in it **and no other
-  live claim remains** — where live means un-ruled or proven. It exists because
-  a `FakeSignature` claim has no predicate and so could freeze a certificate for
-  the full 72 hours on a minimum bond. It settles through the same internal path
+  live claim remains** — where live means un-ruled or proven. It was built
+  because a `FakeSignature` claim has no predicate and so could freeze a
+  certificate for the full 72 hours on a minimum bond; review R3 has since
+  removed that freeze outright, so this call now ends a window that costs the
+  operator and the auditor nothing to leave open. It is kept because ending a
+  rejected claim's window is still the right outcome. It settles through the same internal path
   as `close_window`, so bonds are forfeited identically: rejection is not
   cheaper for being faster. Panics `not_arbitrated`, `claim_not_rejected`,
   `no_open_window`, `claim_window_closed`, or `live_claim_remains`. Purely
@@ -373,15 +395,17 @@ would only have raised that price.
 > protocol's only trustless proof no longer compensates anyone directly. The
 > reserve still covers proven harm, but **proving harm now always requires the
 > arbiter**. This contradicts earlier framing in DESIGN-V2 and in this document,
-> and it makes the still-open arbiter veto (review R4) a wider trust than it was.
-> See DESIGN-V2 §1.
+> and it made the arbiter veto (review R4) a wider trust than it was — which is
+> why R4 was fixed immediately after. See DESIGN-V2 §1.
 
-**Reviews R3 and R4 are not fixed.** An ignored `FakeSignature` claim still buys
-a 72-hour freeze for the price of gas, because an `Unadjudicated` verdict returns
-the bond in full; and `resolve_by_arbiter` can still overturn a true
-`InsufficientReserve` claim and forfeit the honest challenger's bond. Both are
-Medium, both are demonstrated in section 14 of the cross-contract harness, and
-both are deliberately left as filed.
+**Reviews R3 and R4 are fixed** (`3c5a46d`), and both changes are listed among
+the ChallengeManager entries above. R3: the freeze is now held by a claim
+something backs rather than by the window, so an ignored `FakeSignature` claim
+locks no collateral and buys nothing — `Unadjudicated` still refunds the bond in
+full, deliberately. R4: the arbiter may add to what a predicate proved and never
+contradict it, so the one trustless proof settles on its arithmetic whatever the
+arbiter does. Both PoCs in section 14 of the cross-contract harness are kept
+under their original names, converted to assert the attacks now fail.
 
 **L3 is not fixed.** `FeeEscrow` is still a singleton whose `Released` flag never
 resets, so it pays out exactly once ever, and the ChallengeManager still stores
