@@ -134,11 +134,20 @@ impl ReserveVault {
         let operator = Self::cert_operator(&env, cert_id);
         operator.require_auth();
 
-        let unlock_at: u64 = env
+        // The deposit-time snapshot is a floor, not the answer. DESIGN-V2 §1
+        // lets an open claim window push the certificate's settlement deadline
+        // out past `expires_at + CHALLENGE_WINDOW`, and a snapshot taken when
+        // the reserve was funded cannot know about a window opened later. So
+        // the live deadline is read every time and the later of the two wins:
+        // the operator cannot withdraw the collateral that a live window is
+        // about to settle against.
+        let snapshot: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::UnlockAt(cert_id))
-            .unwrap_or_else(|| Self::cert_settlement_deadline(&env, cert_id));
+            .unwrap_or(0);
+        let live = Self::cert_settlement_deadline(&env, cert_id);
+        let unlock_at = if snapshot > live { snapshot } else { live };
         if env.ledger().timestamp() < unlock_at {
             panic!("reserve_still_locked");
         }

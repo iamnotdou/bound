@@ -61,6 +61,12 @@ pub enum DataKey {
     CertCount,
     Certificate(u64),
     AgentCert(Address),
+    /// DESIGN-V2 §1. Ledger time until which an open **claim window** freezes
+    /// this certificate. Written only by the ChallengeManager, through
+    /// `set_claim_freeze`, and folded into `get_cert_settlement_deadline` so
+    /// that the freeze reuses the one locking mechanism the ReserveVault and
+    /// AuditorStaking already read, rather than inventing a second one.
+    ClaimFreeze(u64),
 }
 
 #[contract]
@@ -175,6 +181,14 @@ impl Registry {
 
         if cert.status != CertStatus::Pending {
             panic!("cert_not_pending");
+        }
+
+        // DESIGN-V2 §1. A frozen certificate takes no new attestation. Without
+        // this an operator whose certificate is under a live claim window could
+        // walk a fresh auditor onto it and put new collateral at risk for a
+        // breach that has already been filed.
+        if env.ledger().timestamp() < Self::claim_freeze(&env, cert_id) {
+            panic!("claim_window_open");
         }
 
         // The snapshot is now the amount actually at risk for *this*
@@ -327,7 +341,54 @@ impl Registry {
             .persistent()
             .get(&DataKey::Certificate(cert_id))
             .expect("certificate_not_found");
-        cert.expires_at.saturating_add(CHALLENGE_WINDOW_SECONDS)
+        let base = cert.expires_at.saturating_add(CHALLENGE_WINDOW_SECONDS);
+        // DESIGN-V2 §1: an open claim window extends the deadline. Expiry must
+        // not let the collateral escape from underneath a window that is still
+        // aggregating claims, so the later of the two always wins.
+        let freeze = Self::claim_freeze(&env, cert_id);
+        if freeze > base {
+            freeze
+        } else {
+            base
+        }
+    }
+
+    /// DESIGN-V2 §1. Freeze this certificate until `until`, or lift the freeze
+    /// by passing `0`.
+    ///
+    /// ChallengeManager-only, exactly like `invalidate`: the claim window is
+    /// the ChallengeManager's concept and nobody else may open or close one.
+    /// The freeze is expressed as a settlement deadline rather than a separate
+    /// flag so that both money contracts get it for free — they already refuse
+    /// to release before `get_cert_settlement_deadline`.
+    pub fn set_claim_freeze(env: Env, cert_id: u64, until: u64) {
+        let cm: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
+        cm.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClaimFreeze(cert_id), &until);
+    }
+
+    /// Ledger time until which an open claim window holds this certificate
+    /// frozen. `0` means no window is open.
+    pub fn get_claim_freeze(env: Env, cert_id: u64) -> u64 {
+        Self::claim_freeze(&env, cert_id)
+    }
+
+    /// Whether a claim window is open on this certificate right now.
+    pub fn is_frozen(env: Env, cert_id: u64) -> bool {
+        env.ledger().timestamp() < Self::claim_freeze(&env, cert_id)
+    }
+
+    fn claim_freeze(env: &Env, cert_id: u64) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ClaimFreeze(cert_id))
+            .unwrap_or(0)
     }
 
     /// The bound the certificate advertises. The ChallengeManager reads this
