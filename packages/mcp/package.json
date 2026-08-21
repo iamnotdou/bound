@@ -1,6 +1,6 @@
 {
   "name": "@bound/mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "MCP server exposing Bound Protocol's agent tools to any MCP-capable client.",
   "license": "MIT",
