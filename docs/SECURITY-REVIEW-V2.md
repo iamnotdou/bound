@@ -13,9 +13,10 @@ only at where they meet. In scope: `registry`, `reserve-vault`,
 non-deployable spec; neither was reviewed beyond confirming that.
 
 **Status, added after the fact.** R1 and R2 are fixed on `fix/review-r1-r2`;
-R3, R4 and the low-severity notes are open. The findings below are left as
-written so the reasoning stays checkable — each fixed one carries a status note
-at its head, and the summary table at the foot is the index.
+R3 and R4 on `fix/review-r3-r4`. Only the low-severity notes are open. The
+findings below are left as written so the reasoning stays checkable — each fixed
+one carries a status note at its head, and the summary table at the foot is the
+index.
 
 Method: read all six contracts end to end, then attack the five load-bearing
 claims — "manufacturing a true proof does not pay", "the spend counter is
@@ -271,7 +272,46 @@ picking one is a design decision, not a review decision.
 
 ## R3 — An ignored `FakeSignature` claim buys a certificate freeze for the price of gas
 
-**Severity: Medium.** Demonstrated:
+**Severity: Medium. FIXED in `3c5a46d`** — by removing the thing being bought
+rather than by pricing it.
+
+The freeze is no longer held by the **window**. It is held by a claim something
+actually backs: a predicate that evaluated true at filing (whether it opened the
+window or joined one), or the arbiter upholding a `FakeSignature` claim. An
+arbiter-gated claim nobody has ruled on locks no reserve and no allocation, so
+the grief has nothing to purchase at any price and the 72 hours cost the
+operator and the auditor nothing to wait out.
+
+**Why not the other candidate this section left open — a higher bond for
+arbiter-gated proof types.** It prices the grief rather than removing it, and an
+attacker who can afford the price still gets the freeze. On this specific attack
+the lever does not even connect: the bond is **refunded** under `Unadjudicated`,
+so raising it raises the griefer's float and not their cost. Making it bite
+would mean forfeiting the bond of a claimant whose arbiter never ruled, which is
+the one outcome the `Unadjudicated` branch exists to prevent.
+
+**`Unadjudicated` still refunds in full, and that is now a decision rather than
+a leak.** Its stated reason was always right — a claim nobody judged is not a
+claim the challenger got wrong — and it was a problem only because the claim
+bought a freeze on the way past. With the freeze gone the refund costs the
+protocol nothing, and the honest claimant abandoned by an unresponsive arbiter
+keeps the protection it was written for.
+
+**The cost, stated plainly.** An upheld `FakeSignature` finding can settle
+against collateral that has already unwound. The exposure is bounded rather than
+open-ended: the reserve and the allocation are locked until the certificate's own
+settlement deadline whatever this contract does, and R1 already refuses any
+filing from that deadline onwards — so the loss requires the arbiter to still be
+silent at a deadline the claim was necessarily filed before. That is a latency
+controlled by a party already trusted completely with the verdict itself.
+Recorded in DESIGN-V2 §10.
+
+The PoC below is kept under its own name, converted to assert the collateral was
+free the whole time; the companion
+`a_backed_claim_re_arms_the_freeze_an_arbiter_gated_one_declined_to_take`
+covers the half the fix must not break.
+
+Demonstrated:
 `an_ignored_fake_signature_claim_freezes_the_certificate_and_refunds_the_bond`.
 
 ### Mechanism
@@ -336,7 +376,51 @@ griefer unlucky enough to face a responsive arbiter.
 
 ## R4 — The arbiter can veto the one trustless proof, and the honest challenger pays for it
 
-**Severity: Medium.** Demonstrated:
+**Severity: Medium. FIXED in `3c5a46d`.** On a claim carrying an on-chain
+predicate the arbiter may **add** to what the contract proved and may never
+**contradict** it: `fraud_proven` must equal what the predicate recorded at
+filing, and `harm` may not fall below the number it computed. `FakeSignature`,
+which has no predicate to contradict, is untouched.
+
+**A ratchet rather than the ban this section suggests, and deliberately so.**
+Refusing `resolve_by_arbiter` on every predicate-backed proof type is the
+narrower-looking fix, and it costs more than it looks. DESIGN-V2 §10 designs the
+opposite on purpose: `BoundExceeded` and `ExpiredCertificate` settle in hygiene
+mode _because_ their counters are evidence and never a loss, and the documented
+route by which a real loss behind one of them reaches the waterfall is "a human
+states a number" — the test named
+`the_arbiter_still_slashes_the_same_breach_when_it_states_harm` **is** that
+design. A ban would also remove the only correctly-labelled route to
+compensating the victim of a reserve shortfall, pushing them onto
+`FakeSignature` to describe facts that are not a forged signature. The ratchet
+closes the veto without costing either.
+
+**The harm floor is part of the rule, not an extra.** Without it the veto simply
+changes units: leaving `proven = true` and writing `harm = 1` over a $1,000
+shortfall drops the claim out of the predicate group and shrinks the slash to
+nothing. A quantitative veto is the same veto. Raising the number stays open
+because a shortfall is a **floor** on what was lost and not a ceiling.
+
+**Does the arbiter still need to state harm on a predicate-backed claim?**
+The premise that R2 made their quantity irrelevant does not hold. R2 gates
+victim compensation on `ch.arbitrated`, and `resolve_by_arbiter` is what sets
+that flag — so arbitrating a predicate claim is precisely what converts it from
+paying no victim into paying one. Their quantity is not irrelevant to predicate
+claims; it is the switch. That is why the fix constrains the arbiter's number
+rather than removing their access to it.
+
+**What this also closes, unasked.** `resolve_by_arbiter`'s doc-comment claimed
+"no human may declare a breach they say did not happen". That was true only of a
+claim filed while no window was open — one that **joins** an open window is
+stored `proven = false` rather than rejected on the spot, and the arbiter could
+flip it to true. Requiring equality refuses that direction too.
+
+The PoC below is kept under its own name, converted to assert the veto now dies
+at the call; the companion
+`the_arbiter_may_raise_a_predicate_harm_but_never_invent_or_erase_one` covers
+the half the fix must not break.
+
+Demonstrated:
 `the_arbiter_can_veto_a_true_insufficient_reserve_proof_and_burn_the_bond`.
 
 ### Mechanism
@@ -588,7 +672,7 @@ number is `resolve_by_arbiter`, which is the documented and intended trust. The
 on the arbiter and one-shot, deposits and withdrawals on the certificate's live
 operator read from the Registry. `initialize` being unauthenticated everywhere is
 the known, deliberate defect and I found nothing worse of that shape. The one
-authority that is broader than its documentation is R4.
+authority that is broader than its documentation is R4, and it no longer is.
 
 ---
 
@@ -598,8 +682,8 @@ authority that is broader than its documentation is R4.
 | --- | --------------------------------------------------------------- | -------- | ----------------- | ------------------- |
 | R1  | Lawful reserve withdrawal manufactures a free total slash       | High     | yes               | **fixed** `f2de15b` |
 | R2  | Sybil claims dilute an honest victim; admitted bonds refunded   | High     | yes               | **fixed** `f2de15b` |
-| R3  | Ignored `FakeSignature` claim freezes for gas, bond refunded    | Medium   | yes               | open                |
-| R4  | Arbiter can veto the trustless proof and burn the honest bond   | Medium   | yes               | open                |
+| R3  | Ignored `FakeSignature` claim freezes for gas, bond refunded    | Medium   | yes               | **fixed** `3c5a46d` |
+| R4  | Arbiter can veto the trustless proof and burn the honest bond   | Medium   | yes               | **fixed** `3c5a46d` |
 | D1  | `attest` reserve check documented in two places, absent in code | Medium   | by existing tests | **fixed** `35ec04b` |
 | T1  | No TTL management anywhere                                      | Medium   | no — suspicion    | not reproduced      |
 

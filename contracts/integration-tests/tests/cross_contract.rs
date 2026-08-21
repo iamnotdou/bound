@@ -4171,16 +4171,17 @@ fn an_arbiter_rejection_closes_a_lone_claim_window_immediately() {
     let opened_at = 1_000u64;
     let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
 
-    // The freeze is real, and it runs 72 hours past the filing.
+    // The window runs 72 hours past the filing — but R3 means it freezes
+    // nothing, because no predicate and no arbiter has backed it yet.
     let closes_at = w.cm().window_closes_at(&cert_id);
     assert_eq!(closes_at, opened_at + CLAIM_WINDOW);
-    assert!(w.registry().is_frozen(&cert_id));
+    assert!(!w.registry().is_frozen(&cert_id));
     assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
 
     // The arbiter rules it false, then ends the window. Not one second of the
-    // 72 hours has elapsed.
+    // 72 hours has elapsed. A rejection never freezes.
     w.cm().resolve_by_arbiter(&id, &false, &0i128);
-    assert!(w.registry().is_frozen(&cert_id));
+    assert!(!w.registry().is_frozen(&cert_id));
     w.cm().close_window_early(&id);
     assert_eq!(w.env.ledger().timestamp(), opened_at);
 
@@ -4291,7 +4292,11 @@ fn an_unruled_claim_keeps_the_window_open() {
     // `a` is rejected; `b` has not been ruled on at all.
     w.cm().resolve_by_arbiter(&a, &false, &0i128);
     assert!(w.cm().try_close_window_early(&a).is_err());
-    assert!(w.registry().is_frozen(&cert_id));
+    // R3: neither claim is arbiter-UPHELD, so neither freezes the certificate.
+    // The window is still open and still holds `b`; what it no longer does is
+    // lock the collateral while it waits.
+    assert!(!w.registry().is_frozen(&cert_id));
+    assert!(w.cm().get_window(&cert_id).is_some());
 
     // Once `b` is rejected as well, either rejected claim opens the door.
     w.cm().resolve_by_arbiter(&b, &false, &0i128);
@@ -4347,7 +4352,9 @@ fn a_non_arbiter_cannot_close_a_window_early() {
     assert!(w.cm().try_close_window_early(&id).is_err());
 
     w.mock_all_auths();
-    assert!(w.registry().is_frozen(&cert_id));
+    // R3: an arbiter-gated claim no longer freezes anything. The window is what
+    // survives the unauthorized calls, and the window is what this test is about.
+    assert!(!w.registry().is_frozen(&cert_id));
     assert!(w.cm().get_window(&cert_id).is_some());
 
     // A claim the arbiter UPHELD is not a key to this door either.
@@ -4360,7 +4367,7 @@ fn a_non_arbiter_cannot_close_a_window_early() {
     let (w3, cert3) = window_world(RESERVE_CLAIM);
     let unruled = w3.challenge(cert3, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
     assert!(w3.cm().try_close_window_early(&unruled).is_err());
-    assert!(w3.registry().is_frozen(&cert3));
+    assert!(w3.cm().get_window(&cert3).is_some());
 }
 
 /// **After an early close the collateral unwinds on its normal schedule.**
@@ -4690,22 +4697,37 @@ fn a_predicate_proof_pays_no_victim_and_draws_the_reserve_to_the_treasury() {
     assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
-/// **R3 — STILL OPEN. A `FakeSignature` claim the arbiter ignores costs the
-/// griefer nothing but the gas.**
+/// **R3 — FIXED. A `FakeSignature` claim the arbiter ignores now buys nothing
+/// at all.**
 ///
-/// Medium, and deliberately left as filed: this is the review's own PoC,
-/// unchanged, pinning the behaviour so a future fix fails loudly here.
+/// The attack: `FakeSignature` has no predicate, so it could not be rejected at
+/// filing the way a false `InsufficientReserve` claim is. It opened a window and
+/// FROZE the certificate — no attestation, no reserve withdrawal, no allocation
+/// release. If the arbiter then never ruled, the close took the `Unadjudicated`
+/// branch, which returns the bond **in full**. DESIGN-V2 §10 priced this surface
+/// at "one minimum bond for three days of frozen reserve and allocation"; the
+/// real price was gas plus 72 hours of float, repeatable in 72-hour blocks.
+/// `close_window_early` was the mitigation §10 chose and it needs the arbiter to
+/// actually rule, so it was unavailable in exactly the scenario that defines the
+/// attack.
 ///
-/// DESIGN-V2 §10 prices this griefing surface at "one minimum bond for three
-/// days of frozen reserve and allocation". That is not what the code does. A
-/// claim the arbiter never rules on resolves `Unadjudicated`, and
-/// `Unadjudicated` returns the bond **in full** — deliberately, and for a good
-/// reason ("a claim nobody judged is not a claim the challenger got wrong").
+/// **The fix removes the thing being bought rather than pricing it.** An
+/// arbiter-gated claim no longer freezes anything: the freeze is now held by a
+/// claim something actually backs — a predicate that proved true at filing, or
+/// the arbiter upholding one. A claim nobody has ruled on locks no collateral,
+/// so the grief has nothing to purchase at any price.
 ///
-/// The bond is therefore not a price, it is a deposit. The freeze is bought
-/// with gas and 72 hours of float, and it can be re-bought the moment the last
-/// window closes. `close_window_early` does not help: it needs the arbiter to
-/// actually rule, and an unresponsive arbiter is the whole premise.
+/// The alternative — a higher bond for arbiter-gated proof types — was rejected
+/// twice over: it prices the grief rather than removing it, and on this attack
+/// the lever does not even connect, because `Unadjudicated` refunds the bond.
+/// Raising it would raise the griefer's float, not their cost.
+///
+/// **`Unadjudicated` still refunds in full**, and that is now a decision rather
+/// than a leak: a claimant whose arbiter never ruled did nothing wrong, and with
+/// the freeze gone their refund costs the protocol nothing.
+///
+/// This test walks the same two cycles and asserts the collateral was free the
+/// whole time.
 #[test]
 fn an_ignored_fake_signature_claim_freezes_the_certificate_and_refunds_the_bond() {
     let (w, cert_id) = window_world(RESERVE_CLAIM);
@@ -4713,19 +4735,24 @@ fn an_ignored_fake_signature_claim_freezes_the_certificate_and_refunds_the_bond(
     for _ in 0..2 {
         let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
 
-        // The certificate is frozen: no attestation, no reserve withdrawal, no
-        // allocation release.
-        assert!(w.registry().is_frozen(&cert_id));
-        assert!(w.vault().try_release_to_operator(&cert_id).is_err());
-        assert!(w.staking().try_release_allocation(&cert_id).is_err());
+        // THE ATTACK IS GONE: the window is open, and the certificate is not
+        // frozen. Neither side of the collateral is locked by this claim.
+        assert!(w.cm().get_window(&cert_id).is_some());
+        assert!(!w.registry().is_frozen(&cert_id));
+        assert_eq!(
+            w.registry().get_cert_settlement_deadline(&cert_id),
+            SETTLEMENT_DEADLINE
+        );
 
-        // The arbiter never rules, so `close_window_early` is unavailable and
-        // the full 72 hours must run.
+        // The arbiter still never rules, so `close_window_early` is still
+        // unavailable and the full 72 hours still runs. It simply costs the
+        // operator and the auditor nothing to wait it out.
         assert!(w.cm().try_close_window_early(&id).is_err());
         w.settle_window(cert_id);
 
-        // Bond back in full, certificate untouched, freeze lifted — and
-        // nothing stops the next round.
+        // The bond still comes back in full — deliberately. A claim nobody
+        // judged is not a claim the challenger got wrong, and now that the claim
+        // froze nothing, refunding it gives the griefer nothing either.
         assert!(w.verdict_of(id) == CmVerdict::Unadjudicated);
         assert_eq!(w.balance(&w.challenger), FUNDING);
         assert_eq!(w.cm().get_bonds_held(), 0);
@@ -4737,35 +4764,88 @@ fn an_ignored_fake_signature_claim_freezes_the_certificate_and_refunds_the_bond(
         );
     }
 
-    // Two full freezes bought, and the griefer is exactly as rich as they
-    // started.
+    // Two full cycles bought exactly nothing: the reserve and the allocation
+    // were never once out of reach, and the griefer is as rich as they started.
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
     assert_eq!(w.balance(&w.challenger), FUNDING);
     assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
-/// **R4 — STILL OPEN. The arbiter can overturn the one trustless proof, and it
-/// costs the honest challenger their bond.**
+/// **R3 — the freeze still attaches the moment anything actually backs a
+/// claim.**
 ///
-/// Medium, and deliberately left as filed: this is the review's own PoC,
-/// unchanged, pinning the behaviour so a future fix fails loudly here. Note
-/// that R2 sharpened the stakes rather than softening them — the arbiter is now
-/// the ONLY route to victim compensation, so their veto is a wider trust than
-/// it was when this was filed.
+/// The R3 fix must not become "arbiter-gated claims are toothless". Two paths
+/// re-arm the freeze, and this test walks both:
 ///
-/// `resolve_by_arbiter` reaches *any* pending claim in an open window, not only
-/// `FakeSignature`. Its own doc-comment states what it cannot reach — "a claim
-/// whose on-chain predicate was false at filing" — and says nothing about the
-/// converse. The converse is reachable: the arbiter may set `proven = false` on
-/// an `InsufficientReserve` claim that the vault itself proved true, and then
-/// use `close_window_early` to end the window on the spot.
+///   * a predicate claim that proves true at filing and JOINS the window an
+///     arbiter-gated claim opened — the window did not freeze, so the joining
+///     claim has to; and
+///   * the arbiter UPHOLDING a `FakeSignature` claim, which is the instant a
+///     finding exists to settle.
+#[test]
+fn a_backed_claim_re_arms_the_freeze_an_arbiter_gated_one_declined_to_take() {
+    // --- Path 1: a proven predicate claim joins an unfrozen window ----------
+    let (w, cert_id) = window_world(900_0000000); // $100 short of its claim
+    let _grief = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    assert!(!w.registry().is_frozen(&cert_id));
+    let closes_at = w.cm().window_closes_at(&cert_id);
+
+    // The shortfall is real and the vault proves it. Joining the window freezes
+    // the certificate to that window's close.
+    let honest = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    assert!(w.cm().get_challenge(&honest).proven);
+    assert!(w.registry().is_frozen(&cert_id));
+    assert!(closes_at > w.env.ledger().timestamp());
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+
+    // And it settles on its arithmetic, with the griefing claim beside it
+    // resolving `Unadjudicated` and taking nothing.
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(honest) == CmVerdict::ChallengeWins);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+
+    // --- Path 2: the arbiter upholds a `FakeSignature` claim ---------------
+    let (w2, cert2) = window_world(RESERVE_CLAIM);
+    let id = w2.challenge(cert2, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    assert!(!w2.registry().is_frozen(&cert2));
+
+    w2.cm().resolve_by_arbiter(&id, &true, &300_0000000i128);
+    assert!(w2.registry().is_frozen(&cert2));
+    assert!(w2.vault().try_release_to_operator(&cert2).is_err());
+    assert!(w2.staking().try_release_allocation(&cert2).is_err());
+
+    // The upheld finding settles against collateral that was held for it.
+    w2.settle_window(cert2);
+    assert!(w2.verdict_of(id) == CmVerdict::ChallengeWins);
+    assert_eq!(w2.balance(&w2.victim), 300_0000000);
+    assert_eq!(w2.total_in_the_system(), FUNDING * 5);
+}
+
+/// **R4 — FIXED. The arbiter can no longer overturn the one trustless proof.**
 ///
-/// The result is that a fraudulent certificate survives with its status still
-/// `Verified`, the auditor is not slashed, no victim is paid, and the honest
-/// challenger's bond is forfeited. The arbiter gains nothing directly — the
-/// bond joins the hygiene pool — so this is censorship rather than theft. It is
-/// still a trust the docs do not claim: DESIGN-V2 calls `InsufficientReserve`
-/// the protocol's trustless proof, and it is trustless only up to the arbiter's
-/// veto.
+/// The attack: `resolve_by_arbiter` reached *any* pending claim in an open
+/// window and never read `ch.proof_type`. So the arbiter could take an
+/// `InsufficientReserve` claim the VAULT ITSELF proved true and write
+/// `proven = false, harm = 0` over it. That claim was then "rejected", which
+/// made it a valid key to `close_window_early`, so the arbiter could end the
+/// window on the spot too: the fraudulent certificate survived reading
+/// `Verified`, the auditor went unslashed, and the honest challenger forfeited
+/// their bond for being demonstrably right. R2 widened it — the arbiter became
+/// the ONLY route to victim compensation, so one party could both withhold
+/// compensation and veto the arithmetic that would have slashed.
+///
+/// **The fix: on a claim carrying an on-chain predicate the arbiter may ADD to
+/// what the contract proved, never CONTRADICT it.** `fraud_proven` must equal
+/// what the predicate recorded at filing, and `harm` may not fall below the
+/// number the predicate computed. Raising the harm stays open, because a
+/// shortfall is a floor on what was lost and not a ceiling — which is what
+/// keeps DESIGN-V2 §10's deliberate "a human states a number" path alive for
+/// `BoundExceeded` and `ExpiredCertificate`.
+///
+/// This test walks the same sequence and asserts the veto dies at the call,
+/// leaving the arithmetic to settle exactly as it would have.
 #[test]
 fn the_arbiter_can_veto_a_true_insufficient_reserve_proof_and_burn_the_bond() {
     // Claims a $1,000 reserve, holds nothing. Unambiguous, arithmetic fraud.
@@ -4777,26 +4857,119 @@ fn the_arbiter_can_veto_a_true_insufficient_reserve_proof_and_burn_the_bond() {
     assert_eq!(filed.harm, RESERVE_CLAIM);
     assert!(!filed.arbitrated);
 
-    // The arbiter declares the vault wrong. Nothing checks them against it.
-    w.cm().resolve_by_arbiter(&id, &false, &0i128);
-    assert!(!w.cm().get_challenge(&id).proven);
+    // THE VETO IS REFUSED. The arbiter cannot declare the vault wrong.
+    assert!(w.cm().try_resolve_by_arbiter(&id, &false, &0i128).is_err());
+    // Nor can they veto it in units instead of in words: leaving the verdict
+    // alone and writing a token harm over the shortfall would drop the claim out
+    // of the predicate group and shrink the slash to nothing. Same veto.
+    assert!(w.cm().try_resolve_by_arbiter(&id, &true, &1i128).is_err());
 
-    // And ends the window immediately, because the claim they just rejected is
-    // now the only one in it.
-    w.cm().close_window_early(&id);
+    // Nothing was written by either attempt.
+    let after = w.cm().get_challenge(&id);
+    assert!(after.proven);
+    assert_eq!(after.harm, RESERVE_CLAIM);
+    assert!(!after.arbitrated);
 
-    // The fraud survives, fully advertised.
+    // And with the claim still proven, `close_window_early` has no key either.
+    assert!(w.cm().try_close_window_early(&id).is_err());
+
+    // The window runs its course and settles on the arithmetic, exactly as it
+    // would have without an arbiter in the room at all.
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
     assert_eq!(
         w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+
+    // The fraud is dead, the auditor is slashed, and the honest challenger did
+    // not pay for being right. R2: a predicate proof pays no victim, so the
+    // whole slash goes to the treasury — the arbiter cannot withhold that either.
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    assert_eq!(w.cm().get_bounty_pool(), 0);
+    assert!(!w.registry().is_frozen(&cert_id));
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **R4 — the arbiter keeps everything they were designed to have.**
+///
+/// The fix is a ratchet, not a ban, and this pins the three things that must
+/// still work:
+///
+///   * `FakeSignature` end to end through the arbiter, both ways;
+///   * an arbiter RAISING the harm on a true predicate claim — the shortfall is
+///     a floor on what was lost, not a ceiling; and
+///   * the arbiter still unable to manufacture a breach out of a predicate claim
+///     that was FALSE at filing and joined an open window. `resolve_by_arbiter`
+///     always claimed "no human may declare a breach they say did not happen",
+///     and until now that was true only of a claim filed with no window open.
+#[test]
+fn the_arbiter_may_raise_a_predicate_harm_but_never_invent_or_erase_one() {
+    // --- Raising a true predicate's harm is allowed ------------------------
+    // Claims a $1,000 reserve, holds $200: an $800 shortfall the vault proves.
+    let deposit = 200_0000000i128;
+    let (w, cert_id) = window_world(deposit);
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    assert_eq!(w.cm().get_challenge(&id).harm, RESERVE_CLAIM - deposit);
+
+    // The victim lost more than the operator failed to commit. The arbiter may
+    // say so, and saying so makes the claim compensable.
+    let assessed = 1_400_0000000i128;
+    w.cm().resolve_by_arbiter(&id, &true, &assessed);
+    let raised = w.cm().get_challenge(&id);
+    assert!(raised.arbitrated);
+    assert_eq!(raised.harm, assessed);
+
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
+    //   payable = min(1400, 200 + 600)  = $800
+    //   victim  = min(800, 200)         = $200  <- the operator's own reserve
+    //   slash   = 800 - 200             = $600  <- the treasury, the whole alloc
+    //
+    // And the raise is what made the victim compensable at all: R2 pays a
+    // predicate claim nothing, so without the arbiter's number this $200 would
+    // have gone to the treasury with the rest.
+    assert_eq!(w.balance(&w.victim), deposit);
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+
+    // --- Manufacturing a breach out of a false predicate claim is refused ---
+    let (w2, cert2) = window_world(RESERVE_CLAIM); // fully funded, nothing wrong
+                                                   // An arbiter-gated claim opens a window...
+    w2.challenge(cert2, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    // ...so a FALSE `InsufficientReserve` claim can now JOIN rather than be
+    // rejected on the spot. It is recorded `proven = false`.
+    let joined = w2.challenge_as(
+        &w2.challenger2,
+        &w2.victim2,
+        cert2,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    assert!(!w2.cm().get_challenge(&joined).proven);
+
+    // The arbiter cannot flip it true. The vault is the source of truth for what
+    // it holds, in both directions.
+    assert!(w2
+        .cm()
+        .try_resolve_by_arbiter(&joined, &true, &500_0000000i128)
+        .is_err());
+    assert!(!w2.cm().get_challenge(&joined).proven);
+
+    // Confirming the predicate is all that is left, and it changes nothing.
+    w2.cm().resolve_by_arbiter(&joined, &false, &0i128);
+    w2.settle_window(cert2);
+    assert!(w2.verdict_of(joined) == CmVerdict::ChallengeFails);
+    assert_eq!(
+        w2.registry().get_certificate(&cert2).status,
         CertStatus::Verified
     );
-    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
-    assert_eq!(w.balance(&w.treasury), 0);
-    assert_eq!(w.balance(&w.victim), 0);
-    assert!(!w.registry().is_frozen(&cert_id));
-
-    // The honest challenger paid for being right.
-    assert!(w.verdict_of(id) == CmVerdict::ChallengeFails);
-    assert_eq!(w.balance(&w.challenger), FUNDING - MIN_CHALLENGE_STAKE);
-    assert_eq!(w.cm().get_bounty_pool(), MIN_CHALLENGE_STAKE);
+    assert_eq!(w2.allocation_of(cert2), ALLOCATION);
+    assert_eq!(w2.balance(&w2.victim2), 0);
+    assert_eq!(w2.total_in_the_system(), FUNDING * 5);
 }

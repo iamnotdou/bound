@@ -1067,6 +1067,13 @@ slashes the identical breach when a human states a number.
 in capital the operator promised and did not commit, which cannot be
 manufactured without actually losing that capital.
 
+**Since R4, that human may only ever raise the number, never lower it, and may
+not touch the verdict at all.** A predicate's finding is the contract's own, and
+nothing about "the counter is evidence, not a loss" requires the arbiter to be
+able to say the counter is wrong. Stating a harm on top of a true predicate is
+the whole of the trust being granted here; overturning the predicate was never
+part of it and is now refused.
+
 **Wiring.** The ChallengeManager learns the router's address through
 `set_router`, a one-shot call authorized by the arbiter, rather than a ninth
 `initialize` argument that would break the committed bindings and the deploy
@@ -1174,12 +1181,43 @@ hygiene) are no longer needed for this and are dropped.
   same internal `settle_window` a natural close uses, so the griefer's bond is
   forfeited exactly as it would have been at `closes_at`. No discount.
 
-  Residue, and it is the reason the heading no longer says "72 hours": the
-  freeze now lasts **as long as the arbiter takes to rule**, which is an
-  off-chain latency with no on-chain bound. That is strictly better than a fixed
-  72 hours only if the arbiter is responsive. The two mitigations not chosen
-  remain available and are not built — a higher bond for arbiter-gated proof
-  types, and arbiter-gated claims not freezing at all.
+  **That was not enough, and review R3 is why.** `close_window_early` needs the
+  arbiter to actually rule, so it is unavailable in exactly the scenario that
+  defines the attack — an arbiter who says nothing. Worse, this section priced
+  the surface at "one minimum bond", and the code never charged it: a claim
+  nobody ruled on resolves `Unadjudicated`, which returns the bond **in full**.
+  The freeze cost gas and 72 hours of float, repeatable in 72-hour blocks.
+
+  **Fixed (`3c5a46d`) by the third mitigation listed here as unchosen:
+  arbiter-gated claims do not freeze at all.** The freeze is no longer held by
+  the **window**; it is held by a claim something actually backs — a predicate
+  that evaluated true at filing, whether it opened the window or joined one, or
+  the arbiter **upholding** a `FakeSignature` claim. A claim nobody has ruled on
+  locks no reserve and no allocation, so the grief has nothing to buy at any
+  price, and the 72 hours cost the operator and the auditor nothing to wait out.
+
+  **Why not the other candidate — a higher bond for arbiter-gated proof types.**
+  It prices the grief rather than removing it, and an attacker who can afford the
+  price still gets the freeze. On this attack the lever does not even connect:
+  the bond is refunded, so raising it raises the griefer's float and not their
+  cost. Making it bite would mean forfeiting the bond of a claimant whose arbiter
+  never ruled — punishing the innocent for the arbiter's silence, which is the
+  one outcome `Unadjudicated` exists to prevent.
+
+  **`Unadjudicated` still refunds in full, now as a decision rather than a
+  leak.** Its stated reason was always right; it was a problem only because the
+  claim bought a freeze on the way past. With the freeze gone the refund costs
+  the protocol nothing.
+
+  Residue: an upheld `FakeSignature` finding can settle against collateral that
+  has already unwound. The exposure is bounded rather than open-ended — the
+  reserve and the allocation are locked until the certificate's own settlement
+  deadline whatever the ChallengeManager does, and R1 already refuses any filing
+  from that deadline onwards, so the loss requires the arbiter to still be silent
+  at a deadline the claim was necessarily filed before. That is a latency
+  controlled by a party already trusted completely with the verdict itself.
+  `close_window_early` is kept: ending a rejected claim's window is still the
+  right outcome, it is simply no longer load-bearing.
 
 - **Nobody is paid to close a window.** `close_window` is permissionless and
   unrewarded. The claimants' own money is the incentive, which is sound but is
@@ -1204,11 +1242,36 @@ hygiene) are no longer needed for this and are dropped.
   makes on purpose ("one flat bounty for the window, split equally, not one
   bounty each"). Removing it would need an identity the predicate does not have,
   and the exposure is bounded at 10% of harm rather than 100% of it.
-- **R2 widened the arbiter's power, and therefore R4's.** Victim compensation
-  now flows only through `resolve_by_arbiter`, and `resolve_by_arbiter` can
-  still overturn a true `InsufficientReserve` claim (R4, still open). The two
-  should be read together: the arbiter was already trusted to state harm, and is
-  now the only route to being paid for it.
+- **R2 widened the arbiter's power, and therefore R4's — so R4 was fixed**
+  (`3c5a46d`). Victim compensation flows only through `resolve_by_arbiter`, and
+  `resolve_by_arbiter` could overturn a true `InsufficientReserve` claim
+  outright, which meant one party could both withhold compensation and veto the
+  arithmetic that would have slashed. It now may **add** to what an on-chain
+  predicate proved and may never **contradict** it: on any proof type but
+  `FakeSignature`, the verdict must match what the predicate recorded at filing
+  and the harm may not fall below the number it computed.
+
+  A ratchet rather than a ban, because a ban would delete the "a human states a
+  number" path two paragraphs up — the only way a real loss behind a
+  `BoundExceeded` or `ExpiredCertificate` counter reaches the waterfall — and
+  would leave the victim of a reserve shortfall with no correctly-labelled route
+  to compensation at all. The harm **floor** is part of the same rule rather than
+  an extra: leaving the verdict alone and writing $1 over a $1,000 shortfall
+  drops the claim out of the predicate group and shrinks the slash to nothing, so
+  a quantitative veto is the same veto. Raising the number stays open, because a
+  shortfall is a floor on what was lost and not a ceiling.
+
+  It also closes a direction nobody had noticed: a predicate claim that was
+  **false** at filing and **joined** an open window was stored `proven = false`
+  rather than rejected on the spot, and the arbiter could flip it true. The
+  equality rule refuses that too, which is what finally makes
+  `resolve_by_arbiter`'s long-standing claim — "no human may declare a breach
+  they say did not happen" — actually true.
+
+  What is unchanged: the arbiter is still the only route to victim compensation,
+  and their number is still unbounded above and unappealable. R4 was never about
+  the size of that trust, only about it reaching further than the docs claimed.
+
 - **An arbiter who overstates harm now dilutes the honest claimants sharing the
   window,** as well as enlarging the slash. The waterfall's rails still hold —
   nothing reaches anyone who could have bribed them — but the dilution is a new

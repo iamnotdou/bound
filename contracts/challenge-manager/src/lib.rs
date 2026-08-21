@@ -517,6 +517,59 @@ impl ChallengeManager {
         Self::bump_instance(&env);
         Self::bump(&env, &DataKey::Challenge(challenge_id));
 
+        // ---- R3. THE FREEZE IS HELD BY A PROVEN CLAIM, NOT BY THE WINDOW ---
+        //
+        // The finding: `FakeSignature` has no predicate, so it cannot be
+        // rejected at filing the way a false `InsufficientReserve` claim is. It
+        // opened a window and froze the certificate — no attestation, no reserve
+        // withdrawal, no allocation release — and if the arbiter simply never
+        // ruled, the close took the `Unadjudicated` branch and returned the bond
+        // IN FULL. DESIGN-V2 §10 priced this griefing surface at "one minimum
+        // bond for three days of frozen reserve and allocation"; the actual
+        // price was gas plus 72 hours of float, repeatable in 72-hour blocks.
+        // `close_window_early`, the mitigation §10 chose, needs the arbiter to
+        // actually rule and is therefore unavailable in exactly the scenario
+        // that defines the attack.
+        //
+        // THE FIX: an arbiter-gated claim does not freeze anything. A claim
+        // still opens a window, still waits for the arbiter, and still settles
+        // normally — it simply does not lock the operator's reserve or the
+        // auditor's allocation while it does so. The grief then BUYS NOTHING,
+        // which is the only durable answer: there is no longer a thing to
+        // purchase, at any price.
+        //
+        // WHY NOT THE OTHER CANDIDATE — a higher bond for arbiter-gated proof
+        // types. It prices the grief instead of removing it, and an attacker who
+        // can afford the price still gets the freeze. Worse, on this specific
+        // attack the lever does not even connect: the bond is REFUNDED under
+        // `Unadjudicated`, so raising it raises the griefer's float and not
+        // their cost. Making it bite would mean forfeiting the bond of a
+        // claimant whose arbiter never ruled — punishing the innocent for the
+        // arbiter's silence — which is the one thing the `Unadjudicated` branch
+        // exists to avoid.
+        //
+        // AND SO `Unadjudicated` STILL REFUNDS IN FULL, now as a decision rather
+        // than as a leak. Its stated reason was always right — "a claim nobody
+        // judged is not a claim the challenger got wrong" — and it was only ever
+        // a problem because the claim bought a freeze on the way past. With the
+        // freeze gone the refund costs the protocol nothing.
+        //
+        // THE FREEZE STILL ATTACHES THE MOMENT ANYTHING BACKS THE CLAIM: a
+        // predicate that proved true at filing (below, in both branches, because
+        // a proven claim may open a window OR join one an arbiter-gated claim
+        // opened), or the arbiter upholding a `FakeSignature` claim
+        // (`resolve_by_arbiter`). So the collateral is held whenever there is
+        // something to hold it for, and only then.
+        //
+        // THE COST, STATED PLAINLY. An upheld `FakeSignature` finding can settle
+        // against collateral that has already unwound. The exposure is bounded
+        // and nameable rather than open-ended: the reserve and the allocation are
+        // locked until the certificate's own settlement deadline whatever this
+        // contract does, and R1 already refuses any filing from that deadline
+        // onwards — so the loss requires the arbiter to still be silent at a
+        // deadline the claim was necessarily filed before. That is a latency the
+        // arbiter controls, on a party the protocol already trusts completely
+        // with the verdict itself. Recorded in DESIGN-V2 §10.
         match open_window {
             Some(mut w) => {
                 w.claims.push_back(challenge_id);
@@ -524,6 +577,13 @@ impl ChallengeManager {
                     .persistent()
                     .set(&DataKey::Window(cert_id), &w);
                 Self::bump(&env, &DataKey::Window(cert_id));
+                // A proven claim joining a window an arbiter-gated claim opened
+                // has to freeze it now — the window itself did not. Re-freezing
+                // an already-frozen certificate to the same `closes_at` is
+                // idempotent, and `closes_at` never moves once a window is open.
+                if proven {
+                    Self::freeze(&env, cert_id, w.closes_at);
+                }
             }
             None => {
                 // Only a claim worth aggregating may open a window. An
@@ -545,7 +605,12 @@ impl ChallengeManager {
                     },
                 );
                 Self::bump(&env, &DataKey::Window(cert_id));
-                Self::freeze(&env, cert_id, closes_at);
+                // `proven` here means "a predicate evaluated it true at filing".
+                // The only other claim that reaches this line is an
+                // arbiter-gated one, which deliberately freezes nothing.
+                if proven {
+                    Self::freeze(&env, cert_id, closes_at);
+                }
             }
         }
 
@@ -562,12 +627,17 @@ impl ChallengeManager {
     /// given an assessed harm and settle through the full waterfall instead of
     /// hygiene mode.
     ///
-    /// WHAT IT CANNOT REACH, and this is DESIGN-V2 §2 working in both
-    /// directions: a claim whose on-chain predicate was **false at filing**
-    /// never opened a window and was rejected on the spot, so there is nothing
-    /// here for the arbiter to overturn. The router and the vault are the
-    /// source of truth for what they measure, and no human may declare a breach
-    /// they say did not happen.
+    /// WHAT IT CANNOT REACH — **R4**, and this is DESIGN-V2 §2 working in both
+    /// directions. On a claim carrying an on-chain predicate the arbiter may
+    /// ADD to what the contract proved and may never CONTRADICT it: the verdict
+    /// must match what the predicate recorded at filing, and the harm may not
+    /// fall below the number it computed. The router and the vault are the
+    /// source of truth for what they measure — no human may declare a breach
+    /// they say did not happen, and none may deny one that did. The rule is
+    /// enforced in the body, where the reasoning is written out in full.
+    ///
+    /// Only `FakeSignature` is fully the arbiter's to decide, which is the
+    /// point: it is the proof type with nothing on-chain to read.
     ///
     /// **This no longer settles anything.** Under the claim window it records a
     /// verdict and a quantity on one claim; the money moves in `close_window`,
@@ -617,6 +687,67 @@ impl ChallengeManager {
             panic!("claim_window_closed");
         }
 
+        // ---- R4. The arbiter may ADD to what the contract proved. They may
+        // never CONTRADICT it. ------------------------------------------------
+        //
+        // The finding: nothing here read `ch.proof_type`, so the arbiter could
+        // take an `InsufficientReserve` claim the VAULT ITSELF proved true and
+        // write `proven = false, harm = 0` over it. That claim is then
+        // "rejected", which makes it a valid key to `close_window_early`, so the
+        // arbiter could also end the window on the spot. The fraudulent
+        // certificate survives reading `Verified`, the auditor is not slashed,
+        // and the honest challenger's bond is forfeited for being demonstrably
+        // right. R2 widened this: the arbiter is now the ONLY route to victim
+        // compensation, so the same party could both withhold compensation and
+        // veto the arithmetic that would have slashed.
+        //
+        // THE RULE, IN ONE SENTENCE. On a claim carrying an on-chain predicate,
+        // the arbiter may not move the verdict and may not move the harm
+        // downwards. `fraud_proven` must equal what the predicate recorded at
+        // filing, and `harm` may not fall below the number the predicate
+        // computed. Everything the arbiter is trusted for still works; the one
+        // thing they can no longer do is disagree with arithmetic.
+        //
+        // WHY NOT SIMPLY REFUSE THE ARBITER ON PREDICATE CLAIMS ALTOGETHER,
+        // which is the narrower-looking fix. Because that would delete a
+        // capability DESIGN-V2 §10 designs for on purpose: `BoundExceeded` and
+        // `ExpiredCertificate` settle in HYGIENE MODE precisely because their
+        // counters are evidence and never a loss, and the documented way a real
+        // loss behind one of them reaches the waterfall is "a human states a
+        // number" — `the_arbiter_still_slashes_the_same_breach_when_it_states_harm`
+        // is that design, not an oversight. Blocking the arbiter outright would
+        // also remove the only correctly-labelled route to compensating a victim
+        // of a reserve shortfall, pushing them onto `FakeSignature` to describe
+        // facts that are not a forged signature. The monotone rule closes the
+        // veto without costing either.
+        //
+        // WHY THE HARM FLOOR IS PART OF THE SAME RULE AND NOT AN EXTRA. Without
+        // it the veto simply changes units: leaving `proven = true` and writing
+        // `harm = 1` over a $1,000 shortfall drops the claim out of the
+        // predicate group and shrinks the slash to nothing. A quantitative veto
+        // is the same veto. Raising the number stays open because the shortfall
+        // is a FLOOR on what was lost, not a ceiling — a victim may well have
+        // lost more than the operator failed to commit.
+        //
+        // WHAT THIS ALSO CLOSES, unasked. `resolve_by_arbiter`'s own doc-comment
+        // claimed "no human may declare a breach they say did not happen", and
+        // that was only true of a claim filed while NO window was open — one
+        // that joins an OPEN window is stored `proven = false` rather than
+        // rejected on the spot, and the arbiter could flip it to true. Requiring
+        // equality refuses that direction too.
+        //
+        // `FakeSignature` is untouched: it has no predicate to contradict, it is
+        // filed `adjudicated = false`, and adjudicating it is the entire reason
+        // this entry point exists.
+        if ch.proof_type != ProofType::FakeSignature {
+            if fraud_proven != ch.proven {
+                panic!("predicate_not_overridable");
+            }
+            if harm < ch.harm {
+                panic!("harm_below_predicate");
+            }
+        }
+
         ch.proven = fraud_proven;
         ch.harm = harm;
         ch.adjudicated = true;
@@ -626,6 +757,21 @@ impl ChallengeManager {
             .set(&DataKey::Challenge(challenge_id), &ch);
         Self::bump_instance(&env);
         Self::bump(&env, &DataKey::Challenge(challenge_id));
+
+        // ---- R3. An upheld claim freezes the certificate from here ----------
+        //
+        // An arbiter-gated claim no longer freezes anything at filing, so that
+        // an ignored one buys the griefer nothing. The instant the arbiter
+        // UPHOLDS it, though, there is a finding to settle and the collateral
+        // must stay put until the window closes. This is that moment.
+        //
+        // Idempotent by construction: `closes_at` is fixed when the window opens
+        // and a predicate-proven claim in the same window has already written
+        // exactly this value. A rejection writes nothing — there is nothing to
+        // hold the collateral for, and the window may be closed early anyway.
+        if fraud_proven {
+            Self::freeze(&env, ch.cert_id, w.closes_at);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -674,12 +820,19 @@ impl ChallengeManager {
     ///
     /// `FakeSignature` has **no predicate**. A claim carrying it cannot be
     /// evaluated at filing the way a false `InsufficientReserve` claim is, so
-    /// it cannot be rejected on the spot — it opens a window and freezes the
-    /// certificate for 72 hours: no attestation, no reserve withdrawal, no
-    /// allocation release. Anyone could buy that freeze against any
-    /// certificate for the price of the minimum bond, and an arbiter ruling
-    /// the claim false did nothing to shorten it. The griefer's cost was one
-    /// bond; the target's cost was three days of frozen collateral.
+    /// it cannot be rejected on the spot — it opens a window and waits for the
+    /// arbiter. It used to freeze the certificate for those 72 hours as well:
+    /// no attestation, no reserve withdrawal, no allocation release. Anyone
+    /// could buy that freeze against any certificate for the price of the
+    /// minimum bond, and an arbiter ruling the claim false did nothing to
+    /// shorten it.
+    ///
+    /// **R3 has since removed the freeze from arbiter-gated claims entirely**,
+    /// so the abuse this call was built for no longer has anything to buy. This
+    /// call is not thereby redundant: an open window still blocks a second
+    /// window on the same certificate and still holds the claimants' bonds, and
+    /// ending it on the arbiter's rejection is the right outcome rather than
+    /// merely the cheap one.
     ///
     /// The fix is to make the arbiter's rejection *end* the window rather than
     /// merely annotate it. The freeze lifts, the certificate survives, and the
@@ -1796,8 +1949,21 @@ mod tests {
         Env,
     };
 
+    /// The freeze is a cross-contract call into the Registry, and
+    /// `resolve_by_arbiter` now makes it when it upholds a claim (R3). These
+    /// unit tests are not the cross-contract harness, so the Registry is a stub
+    /// that accepts `set_claim_freeze` and records nothing. What a freeze
+    /// actually does to the collateral is asserted in `integration-tests`.
+    #[contract]
+    struct RegistryStub;
+
+    #[contractimpl]
+    impl RegistryStub {
+        pub fn set_claim_freeze(_env: Env, _cert_id: u64, _until: u64) {}
+    }
+
     fn init_client(env: &Env) -> (ChallengeManagerClient<'_>, Address) {
-        let registry = Address::generate(env);
+        let registry = env.register(RegistryStub, ());
         let auditor_staking = Address::generate(env);
         let reserve_vault = Address::generate(env);
         let fee_escrow = Address::generate(env);
@@ -1841,8 +2007,9 @@ mod tests {
 
     /// Seed a pending arbiter-gated claim and its open window directly,
     /// bypassing the token transfer in `challenge()`. `FakeSignature` is the
-    /// only proof type `resolve_by_arbiter` accepts, and it touches no other
-    /// contract on this path.
+    /// proof type the arbiter is free to decide either way — a predicate-backed
+    /// one may only be confirmed (R4) — and it reads no other contract at
+    /// filing.
     fn seed_pending(env: &Env, contract_id: &Address) {
         let challenger = Address::generate(env);
         let victim = Address::generate(env);
