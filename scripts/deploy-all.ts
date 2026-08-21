@@ -13,7 +13,7 @@ import { readEnv, writeEnvValues, deploy, initialize, invoke, usdc, NETWORK } fr
 import { serializeDeployment } from "@bound/sdk";
 
 const ROOT = resolve(__dirname, "..");
-const WASM_DIR = resolve(ROOT, "target", "wasm32-unknown-unknown", "release");
+const WASM_DIR = resolve(ROOT, "target", "wasm32v1-none", "release");
 const DEPLOYMENTS_DIR = resolve(ROOT, "deployments");
 
 /** Current HEAD — recorded as deploy provenance in deployments/<network>.json. */
@@ -49,10 +49,12 @@ const PREMIUM_FEE_BPS = "1000"; // 10% of each premium is the protocol's
 
 function buildWasm(): void {
   console.log("Building contracts (release wasm)…");
-  execFileSync("cargo", ["build", "--release", "--target", "wasm32-unknown-unknown"], {
-    cwd: ROOT,
-    stdio: "inherit",
-  });
+  // `stellar contract build`, not a raw `cargo build`. It targets wasm32v1-none,
+  // which is the Soroban target. Building for wasm32-unknown-unknown with any
+  // modern Rust emits the reference-types proposal, which the Soroban host
+  // rejects at upload with a bare `Error(WasmVm, InvalidAction)` — a failure
+  // that only appears at deploy time, long after every test has passed.
+  execFileSync("stellar", ["contract", "build"], { cwd: ROOT, stdio: "inherit" });
 }
 
 function wasmPath(file: string): string {
