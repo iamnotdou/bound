@@ -5,6 +5,7 @@ members = [
     "contracts/fee-escrow",
     "contracts/challenge-manager",
     "contracts/registry",
+    "contracts/payment-router",
     "contracts/spend-probe",
     "contracts/integration-tests",
 ]
