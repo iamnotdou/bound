@@ -11,7 +11,7 @@ vi.mock("../../../bindings/registry/src", () => ({
   },
 }));
 
-import { listCertificates } from "./discovery";
+import { listCertificates, getCertificate as readCertificate } from "./discovery";
 
 const AGENT = "GCPOBMCWPO5A24KJJJRD27T4TKITHQI5MYY2FCQRR3HUXUFT4LO473ZT";
 const AUDITOR = "GCBVHBXWW7CIFKZSGHOZIRYUYIS6S455EW64QK4FXZZ7WVW6R2FZN523";
@@ -108,5 +108,26 @@ describe("listCertificates()", () => {
     const [item] = await listCertificates();
     expect(item.status).toBe("Verified");
     expect(item.valid).toBe(false);
+  });
+});
+
+describe("getCertificate", () => {
+  it("reads one certificate by id and carries the id through", async () => {
+    const got = await readCertificate(7);
+    expect(getCertificate).toHaveBeenCalledWith({ cert_id: 7n });
+    expect(got?.certId).toBe(7);
+    expect(got?.agent).toBe(AGENT);
+  });
+
+  it("returns null for a missing certificate rather than throwing", async () => {
+    getCertificate.mockRejectedValueOnce(new Error("certificate_not_found"));
+    await expect(readCertificate(999)).resolves.toBeNull();
+  });
+
+  it("rejects non-positive and non-integer ids without touching the chain", async () => {
+    for (const bad of [0, -1, 1.5, NaN]) {
+      await expect(readCertificate(bad)).resolves.toBeNull();
+    }
+    expect(getCertificate).not.toHaveBeenCalled();
   });
 });

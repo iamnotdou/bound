@@ -95,3 +95,17 @@ export async function listCertificates(opts?: {
   }
   return items;
 }
+
+/**
+ * Read a single certificate by its id. Returns null when no certificate is
+ * stored under that id, so a detail page can render a 404 rather than a 500.
+ */
+export async function getCertificate(certId: number): Promise<CertListItem | null> {
+  if (!Number.isInteger(certId) || certId < 1) return null;
+  try {
+    const cert = (await registry().get_certificate({ cert_id: BigInt(certId) })).result;
+    return { ...toCertView(cert.agent, asVerifyResult(cert), certId), certId };
+  } catch {
+    return null;
+  }
+}
