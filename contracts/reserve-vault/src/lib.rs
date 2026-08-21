@@ -3,6 +3,16 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
 };
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     Registry,
@@ -40,6 +50,7 @@ impl ReserveVault {
             .instance()
             .set(&DataKey::ChallengeManager, &challenge_manager);
         env.storage().instance().set(&DataKey::Token, &token);
+        Self::bump_instance(&env);
     }
 
     pub fn deposit(env: Env, cert_id: u64, amount: i128) {
@@ -73,6 +84,12 @@ impl ReserveVault {
             &DataKey::UnlockAt(cert_id),
             &Self::cert_settlement_deadline(&env, cert_id),
         );
+
+        // The lock and its deadline must stay readable for at least as long as
+        // the balance they guard: an archived `UnlockAt` would abort every
+        // later `release_to_operator`, stranding the reserve permanently.
+        Self::bump(&env, &DataKey::Locked(cert_id));
+        Self::bump(&env, &DataKey::UnlockAt(cert_id));
     }
 
     pub fn get_balance(env: Env, cert_id: u64) -> i128 {
@@ -168,9 +185,26 @@ impl ReserveVault {
         env.storage()
             .persistent()
             .set(&DataKey::Locked(cert_id), &false);
+        Self::bump(&env, &DataKey::Locked(cert_id));
+        Self::bump(&env, &DataKey::UnlockAt(cert_id));
     }
 
     // ----- internals -----
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 
     fn balance_of(env: &Env, cert_id: u64) -> i128 {
         env.storage()
@@ -179,10 +213,14 @@ impl ReserveVault {
             .unwrap_or(0)
     }
 
+    /// Every path that moves this certificate's reserve goes through here, so
+    /// it is also the one place the balance entry's TTL needs bumping.
     fn set_balance(env: &Env, cert_id: u64, amount: i128) {
         env.storage()
             .persistent()
             .set(&DataKey::Balance(cert_id), &amount);
+        Self::bump_instance(env);
+        Self::bump(env, &DataKey::Balance(cert_id));
     }
 
     fn registry(env: &Env) -> Address {

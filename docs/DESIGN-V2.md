@@ -645,6 +645,15 @@ calls it. That is known defect **L3**, and building a premium economy on top of
 it would inherit the defect rather than fix it. `fee-escrow` is untouched and
 stays off the settlement path.
 
+**`fee-escrow` should now be deleted rather than merely bypassed.** Nothing
+depends on it, and dead code that holds funds is worse than no code — especially
+into a redeploy with no upgrade path, where anything shipped can only be removed
+by another redeploy. The deletion is blocked on TypeScript, not Rust:
+`packages/sdk/src/deployments.ts` declares `contracts.feeEscrow` as a required
+field, so `scripts/deploy-all.ts` cannot stop producing an address until that
+field becomes optional. See `docs/V2-CUTOVER.md` for the exact sequence. Until
+it lands, **L3 stays open**.
+
 #### Pricing
 
 ```
@@ -1034,7 +1043,10 @@ a way for an operator to escape a real reserve shortfall.
 - **Certificate struct** gains: float cap (§6), and whatever the claim window and
   tracking flags require (§1, §8). All at publish time — none retrofittable.
 - **`attest`** becomes a cross-contract call (§4).
-- **`publish`** gains vault-allowlist validation (§3).
+- **`publish`** gains vault-allowlist validation (§3), and **requires the agent's
+  signature as well as the operator's** (defect L1). Two signatures, one
+  transaction — Soroban permits one contract call per transaction, so a client
+  must collect the agent's authorization entry rather than submitting twice.
 - **Challenge lifecycle** grows from two states to four: `Open`, `Upheld`,
   `Rejected`, `Cured` (§2), with an aggregating claim window (§1).
 - **A new admin/governance surface** with a timelock and a seal (§5).
@@ -1042,6 +1054,49 @@ a way for an operator to escape a real reserve shortfall.
 
 Four of these are storage-layout changes to the certificate itself, which is why
 this is a redeploy and not a patch.
+
+## Storage lifetime — defect L2
+
+**Status: fixed across all eight contracts.**
+
+Soroban archives instance and persistent entries once their TTL lapses, and
+**reaching an archived entry aborts the transaction** rather than returning a
+default. Nothing in the workspace extended any TTL, so two failures were waiting:
+a certificate nobody touched would stop being readable, and each contract
+_instance_ is on the same clock — an archived instance takes the whole contract
+offline, not one entry. The registry's unit tests demonstrate both halves against
+the real host rather than asserting them in prose.
+
+Every write path now bumps the instance entry, and every persistent entry a
+contract creates is extended. Two named constants, defined per contract with the
+full reasoning on the registry's copy:
+
+| Constant        | Value                | Why                                                                                                                                                              |
+| --------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TTL_EXTEND_TO` | 120 days (2,073,600) | Chosen against the lifetime of the thing protected: a certificate's `expires_at` plus the 7-day challenge window. Every entry a certificate creates outlives it. |
+| `TTL_THRESHOLD` | 60 days (1,036,800)  | Half the runway. `extend_ttl` is a no-op above the threshold, so this is at most one rent payment per 60 days of activity rather than one per call.              |
+
+Both sit under the 3,110,400-ledger `max_entry_ttl` the live networks configure,
+so an extension is never clamped.
+
+**Who pays, stated plainly.** TTL extension is rent, charged to the submitter of
+the transaction that triggers it. Every bump sits on a write path, so the payer
+is the operator, agent, auditor, arbiter or challenger already paying for that
+call. The protocol never pays.
+
+**The deliberate residual.** No read-only path was turned into a state change, so
+a certificate that nobody transacts against at all for 120 days still archives.
+Making `verify` bump TTLs would fix that and would also make a counterparty's
+read a fee-bearing write — which is the wrong trade for the protocol's most-used
+call. Any transaction against the certificate resets the clock.
+
+**SEP-41 allowances are deliberately excluded.** They live in the router's
+temporary storage with an expiry the approver names. Extending them past that
+would be the contract overriding the approver; letting them archive fails closed,
+to an allowance of zero.
+
+**`extend_ttl` on a missing key is a host error, not a no-op.** `auditor-staking`
+guards the entries that do not exist until an auditor first allocates.
 
 ## Still genuinely open
 

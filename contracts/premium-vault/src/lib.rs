@@ -59,6 +59,16 @@ pub struct Coverage {
     pub closed_at: u64,
 }
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     Registry,
@@ -117,6 +127,7 @@ impl PremiumVault {
         env.storage().instance().set(&DataKey::Treasury, &treasury);
         env.storage().instance().set(&DataKey::RateBps, &rate_bps);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        Self::bump_instance(&env);
     }
 
     // ----- pricing -------------------------------------------------------
@@ -243,6 +254,13 @@ impl PremiumVault {
                 closed_at: 0,
             },
         );
+
+        // The coverage record has to stay reachable for the whole period it
+        // covers plus settlement: an archived `Coverage` would abort `claim`,
+        // `forfeit` and `terminate` alike, and step 4 of the waterfall with
+        // them.
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Coverage(cert_id));
     }
 
     /// Total yield accrued to this certificate's auditor so far, capped at
@@ -316,6 +334,8 @@ impl PremiumVault {
         env.storage()
             .persistent()
             .set(&DataKey::Coverage(cert_id), &c);
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Coverage(cert_id));
         amount
     }
 
@@ -390,6 +410,8 @@ impl PremiumVault {
         env.storage()
             .persistent()
             .set(&DataKey::Coverage(cert_id), &c);
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Coverage(cert_id));
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let client = token::Client::new(&env, &token_addr);
@@ -439,6 +461,8 @@ impl PremiumVault {
         env.storage()
             .persistent()
             .set(&DataKey::Coverage(cert_id), &c);
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Coverage(cert_id));
 
         if unaccrued > 0 {
             let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
@@ -454,6 +478,21 @@ impl PremiumVault {
     }
 
     // ----- views ---------------------------------------------------------
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 
     pub fn get_coverage(env: Env, cert_id: u64) -> Coverage {
         Self::coverage_of(&env, cert_id).expect("no_coverage")

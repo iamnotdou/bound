@@ -3,6 +3,16 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
 };
 
+// Storage lifetime — defect L2. Soroban archives instance and persistent
+// entries whose TTL lapses, and reaching an archived entry aborts the
+// transaction rather than returning a default. Nothing here extended any TTL.
+// 17,280 ledgers is one day at the ~5s close; the full reasoning for 120 days
+// of runway, a threshold at half of it, and who pays the rent lives on the same
+// two constants in `contracts/registry/src/lib.rs`.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 pub enum DataKey {
     ChallengeManager,
@@ -53,6 +63,7 @@ impl AuditorStaking {
         // (on attest).
         env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage().instance().set(&DataKey::Token, &token);
+        Self::bump_instance(&env);
         env.storage()
             .instance()
             .set(&DataKey::MinRegistrationStake, &min_stake);
@@ -77,7 +88,11 @@ impl AuditorStaking {
         let current = Self::stake_of(&env, &auditor);
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(auditor), &(current + amount));
+            .set(&DataKey::Stake(auditor.clone()), &(current + amount));
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Stake(auditor.clone()));
+        Self::bump_if_present(&env, &DataKey::Allocated(auditor));
     }
 
     /// Total capital custodied for this auditor: free + allocated.
@@ -178,8 +193,21 @@ impl AuditorStaking {
         if until > current {
             env.storage()
                 .persistent()
-                .set(&DataKey::LockedUntil(auditor), &until);
+                .set(&DataKey::LockedUntil(auditor.clone()), &until);
         }
+
+        // All five entries have to outlive the certificate together. An
+        // archived `AllocationAuditor` would abort every slash and every
+        // release, freezing the allocation for good; an archived `Allocated`
+        // would silently read back as zero the next time it was written from
+        // scratch, handing the auditor free stake they never had.
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Allocation(cert_id));
+        Self::bump(&env, &DataKey::AllocationAuditor(cert_id));
+        Self::bump(&env, &DataKey::AllocationUnlockAt(cert_id));
+        Self::bump(&env, &DataKey::Allocated(auditor.clone()));
+        Self::bump(&env, &DataKey::Stake(auditor.clone()));
+        Self::bump_if_present(&env, &DataKey::LockedUntil(auditor));
     }
 
     pub fn get_allocation(env: Env, cert_id: u64) -> i128 {
@@ -259,6 +287,12 @@ impl AuditorStaking {
             &DataKey::Stake(auditor.clone()),
             &(Self::stake_of(&env, &auditor) - amount),
         );
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Allocation(cert_id));
+        Self::bump(&env, &DataKey::AllocationAuditor(cert_id));
+        Self::bump(&env, &DataKey::Allocated(auditor.clone()));
+        Self::bump(&env, &DataKey::Stake(auditor));
     }
 
     /// Retire an allocation at settlement: whatever was not slashed goes back
@@ -330,9 +364,40 @@ impl AuditorStaking {
             &DataKey::Stake(auditor.clone()),
             &(Self::stake_of(&env, &auditor) - free),
         );
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Stake(auditor.clone()));
+        Self::bump_if_present(&env, &DataKey::Allocated(auditor));
     }
 
     // ----- internals -----
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump a persistent entry that may not exist yet.
+    ///
+    /// `extend_ttl` on a missing key is a host error, not a no-op, and several
+    /// of this contract's keys are genuinely absent until the auditor first
+    /// allocates: `Allocated` and `LockedUntil` are only written by `allocate`.
+    /// A blind bump would turn a plain `stake()` into a failed transaction.
+    fn bump_if_present(env: &Env, key: &DataKey) {
+        if env.storage().persistent().has(key) {
+            Self::bump(env, key);
+        }
+    }
 
     fn stake_of(env: &Env, auditor: &Address) -> i128 {
         env.storage()
@@ -384,6 +449,9 @@ impl AuditorStaking {
                 &(Self::allocated_of(env, &auditor) - remainder),
             );
         }
+        Self::bump_instance(env);
+        Self::bump_if_present(env, &DataKey::Allocated(auditor.clone()));
+        Self::bump_if_present(env, &DataKey::Stake(auditor));
         env.storage()
             .persistent()
             .remove(&DataKey::Allocation(cert_id));

@@ -18,6 +18,46 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, S
 /// this constant is the one place the window is defined.
 pub const CHALLENGE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
+// ---------------------------------------------------------------------------
+// Storage lifetime — defect L2. This block is the canonical explanation; the
+// other contracts carry the same two constants and point back here.
+//
+// Soroban archives any instance or persistent entry whose TTL lapses, and
+// **reaching an archived entry aborts the transaction** rather than returning a
+// default. Nothing in this workspace extended any TTL, so two things were
+// waiting to happen: a certificate nobody touched for long enough would stop
+// being readable, and each contract *instance* is on the same clock, which
+// would take the whole contract offline rather than merely one entry.
+//
+// At the network's ~5s ledger close one day is 17,280 ledgers.
+//
+//   TTL_EXTEND_TO = 120 days. Chosen against the lifetime of the thing being
+//   protected, not picked round: a certificate's own `expires_at` plus
+//   `CHALLENGE_WINDOW_SECONDS` (7 days) is the full period during which its
+//   entries must stay reachable, and 120 days covers a quarter-long
+//   certificate and its window with room to spare. Every entry a certificate
+//   creates therefore outlives the certificate.
+//
+//   TTL_THRESHOLD = 60 days, i.e. half the runway. `extend_ttl` is a no-op
+//   when the remaining TTL is already above the threshold, so a threshold at
+//   half means at most one rent payment per 60 days of activity instead of one
+//   on every single call.
+//
+// Both sit under the 3,110,400-ledger `max_entry_ttl` the live networks
+// configure (the test host allows 6,312,000), so an extension is never
+// clamped.
+//
+// WHO PAYS: TTL extension is rent, charged to the submitter of the transaction
+// that triggers the bump. Every bump below sits on a write path, so the payer
+// is the operator, agent, auditor, arbiter or challenger who was already
+// paying for that call. The protocol never pays, and no read-only path is
+// turned into a state change — which is the deliberate residual: a certificate
+// that nobody transacts against at all for 120 days still archives. Publishing,
+// attesting, depositing, paying a premium or filing a challenge all reset it.
+const LEDGERS_PER_DAY: u32 = 17_280;
+pub const TTL_THRESHOLD: u32 = 60 * LEDGERS_PER_DAY;
+pub const TTL_EXTEND_TO: u32 = 120 * LEDGERS_PER_DAY;
+
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum CertStatus {
@@ -85,6 +125,7 @@ impl Registry {
             .instance()
             .set(&DataKey::AuditorStaking, &auditor_staking);
         env.storage().instance().set(&DataKey::CertCount, &0u64);
+        Self::bump_instance(&env);
     }
 
     // Sadece operator imzaladı → PENDING olarak yayınlanır
@@ -98,7 +139,23 @@ impl Registry {
         reserve_vault_contract: Address,
         auditor_staking_contract: Address,
     ) -> u64 {
+        // Defect L1. `operator.require_auth()` alone let *any* funded account
+        // publish a certificate naming an agent it does not control, and the
+        // unconditional write to `AgentCert(agent)` below then made
+        // `verify(agent)` resolve to that junk `Pending` certificate instead of
+        // the real one. One transaction, repeatable, and it knocked any agent
+        // offline. Requiring the agent's signature too makes bonding consent
+        // mutual, and matches PaymentRouter::enroll, which has always required
+        // both parties for exactly this reason.
+        //
+        // WHAT THIS COSTS: publishing now needs two signatures — the operator's
+        // and the agent's. Soroban allows one contract call per transaction, so
+        // both must be collected into the *same* transaction's auth entries; a
+        // UI cannot split this into two sequential submissions. Any client that
+        // signs as the operator and submits must first obtain the agent's
+        // signed authorization entry.
         operator.require_auth();
+        agent.require_auth();
 
         if bound <= 0 {
             panic!("invalid_bound");
@@ -108,6 +165,31 @@ impl Registry {
         }
         if expires_at <= env.ledger().timestamp() {
             panic!("expiry_in_past");
+        }
+
+        // Defect L1, second half: should an existing mapping be overwritable at
+        // all? Yes — but not while it is under dispute.
+        //
+        // Overwriting is how renewal works in this registry: `expires_at` is
+        // immutable once published, so an operator renews by publishing a fresh
+        // certificate for the same agent (see `get_cert_agent`). Forbidding the
+        // overwrite outright would remove renewal, and with `agent.require_auth()`
+        // above a third party can no longer perform one anyway.
+        //
+        // The one case that must still be refused is republishing over a
+        // certificate whose claim window is open. The old certificate's
+        // collateral stays locked by cert id regardless, so no money escapes —
+        // but `verify(agent)` would start resolving to a clean `Pending`
+        // certificate and a counterparty would see no sign of the live breach.
+        // The operator and the agent can renew the moment the window closes.
+        if let Some(prev_id) = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::AgentCert(agent.clone()))
+        {
+            if env.ledger().timestamp() < Self::claim_freeze(&env, prev_id) {
+                panic!("claim_window_open");
+            }
         }
 
         let cert_count: u64 = env.storage().instance().get(&DataKey::CertCount).unwrap();
@@ -132,8 +214,12 @@ impl Registry {
             .set(&DataKey::Certificate(cert_id), &cert);
         env.storage()
             .persistent()
-            .set(&DataKey::AgentCert(agent), &cert_id);
+            .set(&DataKey::AgentCert(agent.clone()), &cert_id);
         env.storage().instance().set(&DataKey::CertCount, &cert_id);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Certificate(cert_id));
+        Self::bump(&env, &DataKey::AgentCert(agent));
 
         cert_id
     }
@@ -221,6 +307,10 @@ impl Registry {
         env.storage()
             .persistent()
             .set(&DataKey::Certificate(cert_id), &cert);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Certificate(cert_id));
+        Self::bump(&env, &DataKey::AgentCert(cert.agent));
     }
 
     pub fn verify(env: Env, agent: Address) -> VerifyResult {
@@ -371,6 +461,12 @@ impl Registry {
         env.storage()
             .persistent()
             .set(&DataKey::ClaimFreeze(cert_id), &until);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::ClaimFreeze(cert_id));
+        // The window outlives the freeze flag if the certificate itself lapses,
+        // so keep the certificate reachable for as long as the freeze is.
+        Self::bump(&env, &DataKey::Certificate(cert_id));
     }
 
     /// Ledger time until which an open claim window holds this certificate
@@ -382,6 +478,21 @@ impl Registry {
     /// Whether a claim window is open on this certificate right now.
     pub fn is_frozen(env: Env, cert_id: u64) -> bool {
         env.ledger().timestamp() < Self::claim_freeze(&env, cert_id)
+    }
+
+    /// Defect L2. Bump the instance entry (which carries the contract's own
+    /// code reference) so the contract cannot archive out from under its users.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Defect L2. Bump one persistent entry.
+    fn bump(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn claim_freeze(env: &Env, cert_id: u64) -> u64 {
@@ -461,6 +572,10 @@ impl Registry {
         env.storage()
             .persistent()
             .set(&DataKey::Certificate(cert_id), &cert);
+
+        Self::bump_instance(&env);
+        Self::bump(&env, &DataKey::Certificate(cert_id));
+        Self::bump(&env, &DataKey::AgentCert(cert.agent));
     }
 }
 
@@ -505,8 +620,11 @@ mod mock_staking_unregistered {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger as _},
-        Env,
+        testutils::{
+            storage::{Instance as _, Persistent as _},
+            Address as _, Ledger as _, MockAuth, MockAuthInvoke,
+        },
+        Env, IntoVal,
     };
 
     /// The slice of stake an auditor puts behind a certificate in these tests.
@@ -702,6 +820,308 @@ mod tests {
             &1000u64,
             &rv,
             &ast,
+        );
+    }
+
+    // ---- Defect L1: publishing requires the agent's consent ----------------
+
+    const TEST_BOUND: i128 = 50_000_0000000;
+    const TEST_RESERVE: i128 = 10_000_0000000;
+    const TEST_EXPIRY: u64 = 9_999_999;
+
+    /// The exact argument tuple `publish` is called with in the L1 tests.
+    /// `MockAuth` matches on the arguments, so this has to mirror the call.
+    fn publish_args(
+        env: &Env,
+        operator: &Address,
+        agent: &Address,
+        rv: &Address,
+        ast: &Address,
+    ) -> soroban_sdk::Vec<soroban_sdk::Val> {
+        (
+            operator.clone(),
+            agent.clone(),
+            TEST_BOUND,
+            TEST_RESERVE,
+            TEST_EXPIRY,
+            rv.clone(),
+            ast.clone(),
+        )
+            .into_val(env)
+    }
+
+    #[test]
+    fn test_publish_without_agent_auth_is_rejected() {
+        let env = Env::default();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let rv = Address::generate(&env);
+        let ast = Address::generate(&env);
+        let args = publish_args(&env, &operator, &agent, &rv, &ast);
+
+        // Only the operator signs — exactly the pre-fix situation.
+        let res = client
+            .mock_auths(&[MockAuth {
+                address: &operator,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "publish",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_publish(
+                &operator,
+                &agent,
+                &TEST_BOUND,
+                &TEST_RESERVE,
+                &TEST_EXPIRY,
+                &rv,
+                &ast,
+            );
+
+        assert!(res.is_err(), "publish must fail without the agent's auth");
+        // And nothing was written: the agent still has no certificate.
+        assert!(!client.verify(&agent).valid);
+        assert_eq!(client.get_cert_count(), 0);
+    }
+
+    #[test]
+    fn test_publish_with_both_signatures_succeeds() {
+        let env = Env::default();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let rv = Address::generate(&env);
+        let ast = Address::generate(&env);
+        let args = publish_args(&env, &operator, &agent, &rv, &ast);
+
+        let cert_id = client
+            .mock_auths(&[
+                MockAuth {
+                    address: &operator,
+                    invoke: &MockAuthInvoke {
+                        contract: &client.address,
+                        fn_name: "publish",
+                        args: args.clone(),
+                        sub_invokes: &[],
+                    },
+                },
+                MockAuth {
+                    address: &agent,
+                    invoke: &MockAuthInvoke {
+                        contract: &client.address,
+                        fn_name: "publish",
+                        args: args.clone(),
+                        sub_invokes: &[],
+                    },
+                },
+            ])
+            .publish(
+                &operator,
+                &agent,
+                &TEST_BOUND,
+                &TEST_RESERVE,
+                &TEST_EXPIRY,
+                &rv,
+                &ast,
+            );
+
+        assert_eq!(cert_id, 1);
+        assert_eq!(client.get_cert_id(&agent), 1);
+    }
+
+    #[test]
+    fn test_third_party_cannot_hijack_an_existing_mapping() {
+        let env = Env::default();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        // The real, attested certificate.
+        env.mock_all_auths();
+        let real_id = publish_cert(&client, &env, &operator, &agent);
+        client.attest(&auditor, &real_id, &ALLOCATION);
+        assert!(client.verify(&agent).valid);
+
+        // An unrelated funded account tries to overwrite the mapping, signing
+        // only for itself. This is the whole L1 attack.
+        let attacker = Address::generate(&env);
+        let rv = Address::generate(&env);
+        let ast = Address::generate(&env);
+        let args = publish_args(&env, &attacker, &agent, &rv, &ast);
+
+        let res = client
+            .mock_auths(&[MockAuth {
+                address: &attacker,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "publish",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            }])
+            .try_publish(
+                &attacker,
+                &agent,
+                &TEST_BOUND,
+                &TEST_RESERVE,
+                &TEST_EXPIRY,
+                &rv,
+                &ast,
+            );
+
+        assert!(res.is_err(), "a third party must not be able to publish");
+        // The agent still resolves to the real, verified certificate.
+        assert_eq!(client.get_cert_id(&agent), real_id);
+        assert!(client.verify(&agent).valid);
+    }
+
+    #[test]
+    fn test_renewal_by_the_same_parties_still_works() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let first = publish_cert(&client, &env, &operator, &agent);
+        let second = publish_cert(&client, &env, &operator, &agent);
+
+        assert_ne!(first, second);
+        assert_eq!(client.get_cert_id(&agent), second);
+    }
+
+    #[test]
+    #[should_panic(expected = "claim_window_open")]
+    fn test_cannot_republish_over_a_frozen_certificate() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, cm) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        // The ChallengeManager opens a claim window on it.
+        let _ = cm;
+        client.set_claim_freeze(&cert_id, &5000u64);
+
+        // Renewal would otherwise wash the live dispute out of `verify`.
+        publish_cert(&client, &env, &operator, &agent);
+    }
+
+    // ---- Defect L2: entries survive long enough to be archived -------------
+
+    /// A contract that writes a persistent entry and never extends anything —
+    /// the state every contract in this workspace was in before defect L2 was
+    /// fixed. It exists so the test below proves archival is real in this host
+    /// rather than assuming it.
+    #[contract]
+    pub struct Unbumped;
+
+    #[contractimpl]
+    impl Unbumped {
+        pub fn put(env: Env) {
+            env.storage()
+                .persistent()
+                .set(&Symbol::new(&env, "k"), &1i128);
+        }
+        pub fn get(env: Env) -> i128 {
+            env.storage()
+                .persistent()
+                .get(&Symbol::new(&env, "k"))
+                .unwrap_or(-1)
+        }
+    }
+
+    /// The control. Without a TTL extension the test host's default persistent
+    /// minimum is 4,096 ledgers, and once that lapses the entry is archived and
+    /// the *call* fails — it does not read back as a default. This is the
+    /// failure mode L2 was about, demonstrated rather than asserted in prose.
+    #[test]
+    #[should_panic(expected = "Storage, InternalError")]
+    fn test_an_unbumped_entry_really_does_archive() {
+        let env = Env::default();
+        let id = env.register(Unbumped, ());
+        let client = UnbumpedClient::new(&env, &id);
+        client.put();
+
+        env.as_contract(&id, || {
+            assert!(
+                env.storage().persistent().get_ttl(&Symbol::new(&env, "k")) < 4_096,
+                "the host's default persistent TTL should be the 4,096-ledger minimum"
+            );
+        });
+
+        // Past the TTL. The host aborts the whole call — note it names the
+        // *instance* key, so an un-bumped contract does not merely lose one
+        // entry, it stops answering at all. This escalates to a host error
+        // rather than a contract error, so `try_get` cannot catch it either;
+        // hence `should_panic` rather than an `is_err` assertion.
+        env.ledger().set_sequence_number(100_000);
+        client.get();
+    }
+
+    /// The fix. Same clock, same host, but the Registry extends its TTLs on the
+    /// write path, so everything the certificate needs is still live.
+    #[test]
+    fn test_published_certificate_survives_the_archival_horizon() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        client.attest(&auditor, &cert_id, &ALLOCATION);
+
+        // The TTLs were actually extended, not merely written. `extend_ttl`
+        // reports the remaining lifetime, which is `extend_to` counted from the
+        // current ledger.
+        env.as_contract(&client.address, || {
+            assert!(
+                env.storage().instance().get_ttl() >= TTL_EXTEND_TO - 1,
+                "instance TTL was not extended"
+            );
+            assert!(
+                env.storage()
+                    .persistent()
+                    .get_ttl(&DataKey::Certificate(cert_id))
+                    >= TTL_EXTEND_TO - 1,
+                "certificate TTL was not extended"
+            );
+            assert!(
+                env.storage()
+                    .persistent()
+                    .get_ttl(&DataKey::AgentCert(agent.clone()))
+                    >= TTL_EXTEND_TO - 1,
+                "agent mapping TTL was not extended"
+            );
+        });
+
+        // Past the horizon that archived the control contract's entry, and then
+        // some. Both the instance and the two persistent entries are still
+        // reachable, so `verify` still answers.
+        env.ledger().set_sequence_number(100_000);
+        assert_eq!(client.get_cert_id(&agent), cert_id);
+        assert!(client.verify(&agent).valid);
+        assert_eq!(
+            client.get_certificate(&cert_id).status,
+            CertStatus::Verified
         );
     }
 }

@@ -209,6 +209,22 @@ Stated rather than hidden:
   enrolled agents and the router keeps no certificate → agents index, so a
   compromise of two keys is two calls. An operator who has lost track of which
   addresses they enrolled will not be rescued by this function.
+- **An idle certificate can still archive.** All eight contracts now extend
+  storage TTLs on their write paths (defect L2), to 120 days, so an archived
+  entry can no longer abort a transaction under normal use. No read-only path
+  bumps anything, deliberately — making `verify` a fee-bearing write would be the
+  wrong trade for the protocol's most-used call — so a certificate that nobody
+  transacts against at all for 120 days does still archive. Any transaction
+  against it resets the clock. TTL rent is paid by whoever submits the triggering
+  transaction, never by the protocol.
+- **`fee-escrow` is still deployed and still broken.** It is a singleton whose
+  `Released` flag never resets, so it pays out exactly once ever, and the
+  ChallengeManager stores its address without ever calling it (defect L3).
+  Nothing on the settlement path reaches it, so it cannot misdirect protocol
+  money — but it is a live contract that will accept a `deposit` and then be
+  unable to release it a second time. **Do not deposit into it.** It should be
+  deleted before the v2 redeploy; `docs/V2-CUTOVER.md` has the sequence and why
+  that is blocked on an SDK change.
 - **Inbound transfers are not cap-checked.** The float cap is enforced on
   `deposit` only. A tracked agent being _paid_ can exceed its cap, because
   refusing inbound payment would make an honest agent unable to be paid, and
