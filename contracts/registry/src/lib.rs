@@ -277,6 +277,78 @@ impl Registry {
             panic!("claim_window_open");
         }
 
+        // DESIGN-V2 §4. Refuse to record an attestation against a reserve that
+        // is not actually there.
+        //
+        // Before this, `attest` never read the vault, so an operator could
+        // publish an underfunded certificate, wait for an auditor to sign it,
+        // and then challenge it themselves. The `InsufficientReserve` proof is
+        // true the instant the auditor signs, and under the settlement
+        // waterfall the operator gains nothing — but the auditor's whole
+        // allocation goes to the treasury for the price of gas. This closes
+        // the *accident*: an auditor can no longer be walked onto a
+        // certificate that is already fraudulent.
+        //
+        // It does **not** stop the operator withdrawing the reserve *after*
+        // attestation. That is exactly what the `InsufficientReserve` proof and
+        // the auditor's own monitoring exist for, and it stays slashable.
+        //
+        // WHICH VAULT: the ChallengeManager's, read live from the
+        // ChallengeManager rather than from `cert.reserve_vault_contract`.
+        //
+        // The point of this check is that the auditor is not signing something
+        // already provable as fraud, so it has to measure the *same balance the
+        // proof will measure*. `ChallengeManager::reserve_shortfall` reads
+        // `DataKey::ReserveVault` — the vault named at the ChallengeManager's
+        // own `initialize` — and `pay_from_reserve` settles out of that same
+        // one. `cert.reserve_vault_contract` is operator-supplied and, as of
+        // today, read by nothing at all: no settlement path consults it.
+        // Checking the balance there would let an operator point at a vault
+        // they funded (or one that simply lies) while the certificate that
+        // settlement actually measures stays empty — a check that passes and
+        // proves nothing. §3's allowlist of vault wasm hashes, which was
+        // supposed to constrain the operator-supplied address, does not exist,
+        // so the operator-named field cannot be trusted and is deliberately
+        // not the thing read here.
+        //
+        // The Registry does not store the vault address of its own. It asks the
+        // ChallengeManager, which it already holds from `initialize`, so the
+        // two can never drift apart into two different addresses — and so
+        // `initialize`'s argument list, which is the on-chain ABI the deploy
+        // script and the committed bindings pass positionally, does not have to
+        // widen. That is the same reasoning `ChallengeManager::set_router` and
+        // `set_premium_vault` are built on.
+        //
+        // This does turn `attest` into a cross-contract call, and therefore
+        // makes attestation depend on the ChallengeManager and the vault being
+        // live. That is a real shape change and it is the point: the reserve
+        // is what the auditor is underwriting.
+        let challenge_manager: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::ChallengeManager)
+            .unwrap();
+        let reserve_vault: Address = env.invoke_contract(
+            &challenge_manager,
+            &Symbol::new(&env, "get_reserve_vault"),
+            Vec::new(&env),
+        );
+        let funded: i128 = env.invoke_contract(
+            &reserve_vault,
+            &Symbol::new(&env, "get_balance"),
+            Vec::from_array(&env, [cert_id.into_val(&env)]),
+        );
+        // Exactly `ChallengeManager::reserve_shortfall`'s comparison, inverted.
+        // There a shortfall exists when `claimed > actual`; here attestation is
+        // refused on precisely that condition. A vault holding *exactly* the
+        // claimed reserve has no shortfall and is therefore attestable — the
+        // boundary belongs to the honest operator in both contracts, and
+        // `attest_and_the_shortfall_proof_agree_at_the_exact_boundary` pins the
+        // two together so they cannot drift.
+        if cert.reserve_amount > funded {
+            panic!("reserve_not_funded");
+        }
+
         // The snapshot is now the amount actually at risk for *this*
         // certificate, not the auditor's whole book. A counterparty reading
         // `verify` sees the collateral that would actually be drawn on if this
@@ -611,6 +683,71 @@ mod mock_staking_unregistered {
     }
 }
 
+/// DESIGN-V2 §4. `attest` now asks the ChallengeManager which vault settlement
+/// measures, so the Registry's own unit tests need a ChallengeManager that can
+/// answer and a vault that can hold a balance.
+#[cfg(test)]
+mod mock_challenge_manager {
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+    #[contracttype]
+    pub enum Key {
+        Vault,
+    }
+
+    #[contract]
+    pub struct MockChallengeManager;
+
+    #[contractimpl]
+    impl MockChallengeManager {
+        pub fn set_reserve_vault(env: Env, vault: Address) {
+            env.storage().instance().set(&Key::Vault, &vault);
+        }
+        pub fn get_reserve_vault(env: Env) -> Address {
+            env.storage()
+                .instance()
+                .get(&Key::Vault)
+                .expect("reserve_vault_not_set")
+        }
+    }
+}
+
+#[cfg(test)]
+mod mock_vault {
+    use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+    #[contracttype]
+    pub enum Key {
+        /// What every certificate reads unless it has been given its own
+        /// balance. It exists so the tests that are not *about* reserve
+        /// funding do not each have to fund a certificate they never mention;
+        /// the tests that are about it set an explicit per-certificate balance.
+        Default,
+        Balance(u64),
+    }
+
+    #[contract]
+    pub struct MockVault;
+
+    #[contractimpl]
+    impl MockVault {
+        pub fn set_default(env: Env, amount: i128) {
+            env.storage().instance().set(&Key::Default, &amount);
+        }
+        pub fn set_balance(env: Env, cert_id: u64, amount: i128) {
+            env.storage()
+                .persistent()
+                .set(&Key::Balance(cert_id), &amount);
+        }
+        pub fn get_balance(env: Env, cert_id: u64) -> i128 {
+            env.storage()
+                .persistent()
+                .get(&Key::Balance(cert_id))
+                .unwrap_or_else(|| env.storage().instance().get(&Key::Default).unwrap_or(0))
+        }
+    }
+}
+
 #[cfg(test)]
 // USDC amounts are written as <dollars>_<7 decimals>, e.g. 50_000_0000000 is
 // $50,000. Clippy reads that as inconsistent grouping and suggests
@@ -630,19 +767,37 @@ mod tests {
     /// The slice of stake an auditor puts behind a certificate in these tests.
     const ALLOCATION: i128 = 500_0000000;
 
-    fn setup_with_mock(env: &Env, registered: bool) -> (RegistryClient<'_>, Address) {
-        let cm = Address::generate(env);
+    /// Every certificate in these tests claims this reserve — see `publish_cert`
+    /// and `TEST_RESERVE`, which are the same number.
+    const CERT_RESERVE: i128 = 10_000_0000000;
 
+    /// DESIGN-V2 §4. `attest` reads the vault, so the fixture returns the mock
+    /// vault too. The default balance is set high enough that every certificate
+    /// reads as fully funded, which keeps the tests that are not about reserve
+    /// funding saying exactly what they said before; the §4 tests below set an
+    /// explicit per-certificate balance instead.
+    fn setup_with_mock(
+        env: &Env,
+        registered: bool,
+    ) -> (RegistryClient<'_>, Address, mock_vault::MockVaultClient<'_>) {
         let mock_staking_id = if registered {
             env.register(mock_staking_registered::MockStaking, ())
         } else {
             env.register(mock_staking_unregistered::MockStaking, ())
         };
 
+        let vault_id = env.register(mock_vault::MockVault, ());
+        let vault = mock_vault::MockVaultClient::new(env, &vault_id);
+        vault.set_default(&CERT_RESERVE);
+
+        let cm_id = env.register(mock_challenge_manager::MockChallengeManager, ());
+        mock_challenge_manager::MockChallengeManagerClient::new(env, &cm_id)
+            .set_reserve_vault(&vault_id);
+
         let registry_id = env.register(Registry, ());
         let client = RegistryClient::new(env, &registry_id);
-        client.initialize(&cm, &mock_staking_id);
-        (client, cm)
+        client.initialize(&cm_id, &mock_staking_id);
+        (client, cm_id, vault)
     }
 
     fn publish_cert(
@@ -668,7 +823,7 @@ mod tests {
     fn test_verify_unknown_agent_returns_invalid() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         let result = client.verify(&Address::generate(&env));
         assert!(!result.valid);
@@ -678,7 +833,7 @@ mod tests {
     fn test_publish_creates_pending_cert() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         env.ledger().set_timestamp(1000);
         let operator = Address::generate(&env);
@@ -699,7 +854,7 @@ mod tests {
     fn test_attest_makes_cert_verified() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         env.ledger().set_timestamp(1000);
         let operator = Address::generate(&env);
@@ -721,7 +876,7 @@ mod tests {
     fn test_unregistered_auditor_cannot_attest() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, false); // unregistered mock
+        let (client, _, _vault) = setup_with_mock(&env, false); // unregistered mock
 
         env.ledger().set_timestamp(1000);
         let operator = Address::generate(&env);
@@ -737,7 +892,7 @@ mod tests {
     fn test_cannot_attest_twice() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         env.ledger().set_timestamp(1000);
         let operator = Address::generate(&env);
@@ -753,7 +908,7 @@ mod tests {
     fn test_expired_cert_not_valid() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         env.ledger().set_timestamp(1000);
         let operator = Address::generate(&env);
@@ -783,7 +938,7 @@ mod tests {
     fn test_invalidate_sets_invalid() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         env.ledger().set_timestamp(1000);
         let operator = Address::generate(&env);
@@ -804,7 +959,7 @@ mod tests {
     fn test_publish_past_expiry_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
 
         env.ledger().set_timestamp(5000);
         let operator = Address::generate(&env);
@@ -853,7 +1008,7 @@ mod tests {
     #[test]
     fn test_publish_without_agent_auth_is_rejected() {
         let env = Env::default();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
         env.ledger().set_timestamp(1000);
 
         let operator = Address::generate(&env);
@@ -892,7 +1047,7 @@ mod tests {
     #[test]
     fn test_publish_with_both_signatures_succeeds() {
         let env = Env::default();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
         env.ledger().set_timestamp(1000);
 
         let operator = Address::generate(&env);
@@ -939,7 +1094,7 @@ mod tests {
     #[test]
     fn test_third_party_cannot_hijack_an_existing_mapping() {
         let env = Env::default();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
         env.ledger().set_timestamp(1000);
 
         let operator = Address::generate(&env);
@@ -989,7 +1144,7 @@ mod tests {
     fn test_renewal_by_the_same_parties_still_works() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
         env.ledger().set_timestamp(1000);
 
         let operator = Address::generate(&env);
@@ -1007,7 +1162,7 @@ mod tests {
     fn test_cannot_republish_over_a_frozen_certificate() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, cm) = setup_with_mock(&env, true);
+        let (client, cm, _vault) = setup_with_mock(&env, true);
         env.ledger().set_timestamp(1000);
 
         let operator = Address::generate(&env);
@@ -1020,6 +1175,141 @@ mod tests {
 
         // Renewal would otherwise wash the live dispute out of `verify`.
         publish_cert(&client, &env, &operator, &agent);
+    }
+
+    // ---- DESIGN-V2 §4: attest verifies the reserve is funded ---------------
+
+    /// The mirror of `ChallengeManager::reserve_shortfall`, written out here so
+    /// the boundary test below can assert the two agree without the Registry
+    /// crate depending on the ChallengeManager crate. If that function's
+    /// comparison ever changes, this one has to change with it, and the test
+    /// that uses it is the thing that notices.
+    fn shortfall(claimed: i128, actual: i128) -> i128 {
+        if claimed > actual {
+            claimed - actual
+        } else {
+            0
+        }
+    }
+
+    #[test]
+    fn test_attest_on_a_funded_certificate_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, vault) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        vault.set_balance(&cert_id, &CERT_RESERVE);
+
+        client.attest(&auditor, &cert_id, &ALLOCATION);
+        assert_eq!(
+            client.get_certificate(&cert_id).status,
+            CertStatus::Verified
+        );
+    }
+
+    #[test]
+    fn test_attest_on_an_underfunded_certificate_records_nothing() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, vault) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        // One stroop short is still short.
+        vault.set_balance(&cert_id, &(CERT_RESERVE - 1));
+
+        let res = client.try_attest(&auditor, &cert_id, &ALLOCATION);
+        assert!(res.is_err(), "attest must reject an underfunded reserve");
+
+        // The whole point: *nothing* was recorded. The certificate is still
+        // waiting for an auditor and the auditor still owns their stake.
+        let cert = client.get_certificate(&cert_id);
+        assert_eq!(cert.status, CertStatus::Pending);
+        assert!(cert.auditor.is_none());
+        assert_eq!(cert.auditor_stake_snapshot, 0);
+        assert!(!client.verify(&agent).valid);
+    }
+
+    #[test]
+    fn test_an_empty_vault_cannot_be_attested_against() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, vault) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        let cert_id = publish_cert(&client, &env, &operator, &agent);
+        vault.set_balance(&cert_id, &0i128);
+
+        assert!(client.try_attest(&auditor, &cert_id, &ALLOCATION).is_err());
+        assert_eq!(client.get_certificate(&cert_id).status, CertStatus::Pending);
+    }
+
+    /// The boundary belongs to the honest operator, and it has to belong to
+    /// them in *both* contracts. A vault holding exactly the claimed reserve
+    /// has no shortfall, so the `InsufficientReserve` proof would fail — which
+    /// means `attest` must accept it. One stroop less and both flip together.
+    #[test]
+    fn test_attest_and_the_shortfall_proof_agree_at_the_exact_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, vault) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let agent2 = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        // Exactly equal: no shortfall, and attestation is allowed.
+        assert_eq!(shortfall(CERT_RESERVE, CERT_RESERVE), 0);
+        let exact = publish_cert(&client, &env, &operator, &agent);
+        vault.set_balance(&exact, &CERT_RESERVE);
+        client.attest(&auditor, &exact, &ALLOCATION);
+        assert_eq!(client.get_certificate(&exact).status, CertStatus::Verified);
+
+        // One stroop under: a shortfall exists, and attestation is refused.
+        assert_eq!(shortfall(CERT_RESERVE, CERT_RESERVE - 1), 1);
+        let short = publish_cert(&client, &env, &operator, &agent2);
+        vault.set_balance(&short, &(CERT_RESERVE - 1));
+        assert!(client.try_attest(&auditor, &short, &ALLOCATION).is_err());
+        assert_eq!(client.get_certificate(&short).status, CertStatus::Pending);
+    }
+
+    /// Funding is checked per certificate, exactly as the shortfall proof
+    /// measures it. A sibling certificate's reserve is not this one's.
+    #[test]
+    fn test_another_certificates_reserve_does_not_fund_this_one() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, vault) = setup_with_mock(&env, true);
+        env.ledger().set_timestamp(1000);
+
+        let operator = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let agent2 = Address::generate(&env);
+        let auditor = Address::generate(&env);
+
+        let funded = publish_cert(&client, &env, &operator, &agent);
+        let unfunded = publish_cert(&client, &env, &operator, &agent2);
+        vault.set_balance(&funded, &(CERT_RESERVE * 10));
+        vault.set_balance(&unfunded, &0i128);
+
+        assert!(client.try_attest(&auditor, &unfunded, &ALLOCATION).is_err());
+        client.attest(&auditor, &funded, &ALLOCATION);
     }
 
     // ---- Defect L2: entries survive long enough to be archived -------------
@@ -1080,7 +1370,7 @@ mod tests {
     fn test_published_certificate_survives_the_archival_horizon() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, _) = setup_with_mock(&env, true);
+        let (client, _, _vault) = setup_with_mock(&env, true);
         env.ledger().set_timestamp(1000);
 
         let operator = Address::generate(&env);

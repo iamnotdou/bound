@@ -306,6 +306,69 @@ impl BoundWorld {
         self.vault().deposit(&cert_id, &amount);
     }
 
+    /// Take money back out of a certificate's reserve, to its operator.
+    ///
+    /// DESIGN-V2 §4. `attest` now refuses a certificate whose reserve is not
+    /// funded, so a scenario that needs an underfunded *attested* certificate
+    /// can no longer simply skip the deposit — it has to reach that state the
+    /// way the real world does: fund honestly, get attested, then pull the
+    /// money back out. Attestation-time fraud is exactly what §4 closed;
+    /// post-attestation drawdown is exactly what it did **not**, and is what
+    /// `InsufficientReserve` exists to catch. Every shortfall scenario below
+    /// therefore now models the case that is still live rather than the one
+    /// that is not.
+    ///
+    /// The drawdown goes through `pay_from_reserve`, which is
+    /// ChallengeManager-only on the live network and is reachable here only
+    /// because the harness mocks auths. It stands in for the slower real
+    /// sequence — wait out the settlement deadline, then `release_to_operator`
+    /// — because that sequence would move every scenario's clock past expiry
+    /// and change what the rest of each test is measuring. The end state is
+    /// identical: the certificate is attested and its vault is short.
+    fn withdraw_reserve(&self, cert_id: u64, amount: i128) {
+        self.withdraw_reserve_to(cert_id, &self.operator, amount);
+    }
+
+    fn withdraw_reserve_to(&self, cert_id: u64, to: &Address, amount: i128) {
+        if amount > 0 {
+            self.vault().pay_from_reserve(&cert_id, to, &amount);
+        }
+    }
+
+    /// Fund a certificate's reserve in full, attest it, then leave exactly
+    /// `remaining` behind — the post-§4 way to build a certificate that is
+    /// attested and short. `claim` is the reserve the certificate advertises.
+    fn attest_with_reserve(&self, cert_id: u64, claim: i128, remaining: i128) {
+        self.attest_with_reserve_and(cert_id, claim, remaining, ALLOCATION);
+    }
+
+    /// As `attest_with_reserve`, naming the allocation explicitly.
+    fn attest_with_reserve_and(
+        &self,
+        cert_id: u64,
+        claim: i128,
+        remaining: i128,
+        allocation: i128,
+    ) {
+        self.attest_with_reserve_for(cert_id, &self.operator, claim, remaining, allocation);
+    }
+
+    /// The general form: the certificate's own operator funds it and takes the
+    /// surplus back, so a second operator's certificate nets out against the
+    /// right account and the conservation checks stay exact.
+    fn attest_with_reserve_for(
+        &self,
+        cert_id: u64,
+        operator: &Address,
+        claim: i128,
+        remaining: i128,
+        allocation: i128,
+    ) {
+        self.deposit_reserve(cert_id, claim);
+        self.attest_with(cert_id, allocation);
+        self.withdraw_reserve_to(cert_id, operator, claim - remaining);
+    }
+
     fn reserve_of(&self, cert_id: u64) -> i128 {
         self.vault().get_balance(&cert_id)
     }
@@ -433,7 +496,12 @@ fn staked_and_attested() -> (BoundWorld, u64) {
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    w.attest(cert_id);
+    // Funded, attested, and then emptied. DESIGN-V2 §4 means the reserve has to
+    // be there at attestation, so the empty vault these scenarios rely on is
+    // now reached by the operator withdrawing it afterwards — see
+    // `withdraw_reserve`. The end state is what it always was: an attested
+    // certificate with nothing behind it.
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, 0);
     (w, cert_id)
 }
 
@@ -549,8 +617,7 @@ fn insufficient_reserve_fraud_pays_victim_and_fee_from_the_operators_own_reserve
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
 
     let deposited = 900_0000000i128;
-    w.deposit_reserve(cert_id, deposited);
-    w.attest(cert_id);
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, deposited);
 
     let harm = RESERVE_CLAIM - deposited;
     assert_eq!(harm, 100_0000000);
@@ -639,8 +706,7 @@ fn insufficient_reserve_fraud_draws_the_reserve_first_then_the_allocation() {
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
 
     let deposited = 400_0000000i128;
-    w.deposit_reserve(cert_id, deposited);
-    w.attest(cert_id);
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, deposited);
 
     let challenger_before = w.balance(&w.challenger);
     let bond = MIN_CHALLENGE_STAKE;
@@ -712,8 +778,7 @@ fn self_dealing_operator_extracts_nothing_from_a_manufactured_proof() {
     let sink = w.operator2.clone();
 
     let deposited = 900_0000000i128;
-    w.deposit_reserve(cert_id, deposited);
-    w.attest(cert_id);
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, deposited);
 
     // --- before ---
     let operator_before = w.balance(&w.operator);
@@ -834,7 +899,7 @@ fn slash_is_capped_by_the_certificates_allocation() {
     // allocation.
     let claim = 5_000_0000000i128;
     let cert_id = w.publish_cert(BOUND, claim, EXPIRES_AT);
-    w.attest_with(cert_id, ALLOCATION);
+    w.attest_with_reserve_and(cert_id, claim, 0, ALLOCATION);
     assert_eq!(w.free_stake(), big_stake - ALLOCATION);
 
     let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
@@ -867,8 +932,7 @@ fn slash_is_capped_by_proven_harm() {
     // Claim $1,000, deposit $990: a $10 harm.
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
     let deposited = 990_0000000i128;
-    w.deposit_reserve(cert_id, deposited);
-    w.attest_with(cert_id, big_allocation);
+    w.attest_with_reserve_and(cert_id, RESERVE_CLAIM, deposited, big_allocation);
     assert_eq!(w.allocation_of(cert_id), big_allocation);
 
     let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
@@ -900,7 +964,7 @@ fn slash_is_capped_by_harm_even_with_no_reserve_to_draw_on() {
     // A certificate claiming only $10 of reserve, and funded with nothing.
     let tiny_claim = 10_0000000i128;
     let cert_id = w.publish_cert(BOUND, tiny_claim, EXPIRES_AT);
-    w.attest_with(cert_id, big_allocation);
+    w.attest_with_reserve_and(cert_id, tiny_claim, 0, big_allocation);
 
     let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
     w.resolve(id);
@@ -929,8 +993,8 @@ fn slashing_one_certificate_leaves_the_other_certificates_allocation_untouched()
 
     let cert_a = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
     let cert_b = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    w.attest_with(cert_a, alloc_a);
-    w.attest_with(cert_b, alloc_b);
+    w.attest_with_reserve_and(cert_a, RESERVE_CLAIM, 0, alloc_a);
+    w.attest_with_reserve_for(cert_b, &w.operator2, RESERVE_CLAIM, 0, alloc_b);
 
     assert_eq!(w.allocation_of(cert_a), alloc_a);
     assert_eq!(w.allocation_of(cert_b), alloc_b);
@@ -1560,11 +1624,10 @@ fn fraud_settlement_against_one_certificate_leaves_the_others_reserve_untouched(
 
     let cert_a = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
     let cert_b = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    w.attest(cert_a);
-
-    // A is under-funded (the fraud); B is fully funded and innocent.
+    // A is under-funded (the fraud); B is fully funded and innocent. A is
+    // attested against a full reserve and then drawn down — DESIGN-V2 §4.
     let a_funding = 400_0000000i128;
-    w.deposit_reserve(cert_a, a_funding);
+    w.attest_with_reserve(cert_a, RESERVE_CLAIM, a_funding);
     w.deposit_reserve(cert_b, RESERVE_CLAIM);
 
     let b_before = w.reserve_of(cert_b);
@@ -1707,8 +1770,7 @@ fn arbiter_resolves_subjective_proof_types_both_ways() {
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
     let deposited = 100_0000000i128; // $100 of reserve, honestly declared or not
-    w.deposit_reserve(cert_id, deposited);
-    w.attest(cert_id);
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, deposited);
 
     // `FakeSignature` is the proof type no contract can verify: it is filed
     // un-adjudicated and waits for the arbiter. A `BoundExceeded` claim on a
@@ -1795,8 +1857,8 @@ fn arbiter_stated_harm_beyond_the_collateral_is_still_capped_by_payable() {
 
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
     let deposited = 400_0000000i128;
-    w.deposit_reserve(cert_id, deposited);
-    w.attest_with(cert_id, ALLOCATION); // $600 behind this certificate
+    // $600 behind this certificate, against a reserve funded then drawn down.
+    w.attest_with_reserve_and(cert_id, RESERVE_CLAIM, deposited, ALLOCATION);
     let unrelated = w.publish_cert_for(&w.operator2, &w.agent2, BOUND, RESERVE_CLAIM, EXPIRES_AT);
     w.deposit_reserve(unrelated, RESERVE_CLAIM);
 
@@ -2845,10 +2907,9 @@ fn premium_world(reserve_deposit: i128) -> (BoundWorld, u64) {
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(PREMIUM_BOUND, RESERVE_CLAIM, 1_000 + YEAR);
-    if reserve_deposit > 0 {
-        w.deposit_reserve(cert_id, reserve_deposit);
-    }
-    w.attest(cert_id);
+    // DESIGN-V2 §4: fully funded to get attested, then drawn back down to the
+    // deposit this scenario wants behind it.
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, reserve_deposit);
     w.pay_premium(cert_id);
     (w, cert_id)
 }
@@ -2870,7 +2931,7 @@ fn a_ninety_day_certificate_prices_at_exactly_73_972_602_stroops() {
     let ninety_days = 90 * 24 * 60 * 60;
     assert_eq!(ninety_days, 7_776_000u64);
     let cert_id = w.publish_cert(PREMIUM_BOUND, RESERVE_CLAIM, 1_000 + ninety_days);
-    w.attest(cert_id);
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, 0);
 
     // Quoted before it is bought…
     assert_eq!(w.premium().quote_cert(&cert_id), 73_972_602);
@@ -3142,9 +3203,8 @@ fn premium_and_accrual_on_one_certificate_do_not_touch_another() {
         RESERVE_CLAIM,
         1_000 + YEAR,
     );
-    w.deposit_reserve(cert_a, 200_0000000);
+    w.attest_with_reserve_and(cert_a, RESERVE_CLAIM, 200_0000000, ALLOCATION);
     w.deposit_reserve(cert_b, RESERVE_CLAIM);
-    w.attest_with(cert_a, ALLOCATION);
     w.attest_with(cert_b, ALLOCATION);
     w.pay_premium(cert_a);
     w.pay_premium(cert_b);
@@ -3198,7 +3258,9 @@ fn coverage_is_bought_once_and_only_for_an_attested_certificate() {
     assert!(!w.premium().is_paid(&cert_id));
     assert_eq!(w.balance(&w.operator), FUNDING);
 
-    w.attest(cert_id);
+    // DESIGN-V2 §4: attestation needs the reserve funded, and the operator gets
+    // it straight back out, so their balance below is still purely the premium.
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, 0);
     w.pay_premium(cert_id);
     assert!(w.premium().try_pay_premium(&cert_id).is_err());
     assert_eq!(w.balance(&w.operator), FUNDING - PREMIUM);
@@ -3281,10 +3343,9 @@ fn window_world(deposit: i128) -> (BoundWorld, u64) {
     w.set_time(1_000);
     w.stake_auditor(AUDITOR_STAKE);
     let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
-    if deposit > 0 {
-        w.deposit_reserve(cert_id, deposit);
-    }
-    w.attest(cert_id);
+    // DESIGN-V2 §4: attested against a full reserve, then drawn down to the
+    // shortfall this scenario is about.
+    w.attest_with_reserve(cert_id, RESERVE_CLAIM, deposit);
     (w, cert_id)
 }
 
