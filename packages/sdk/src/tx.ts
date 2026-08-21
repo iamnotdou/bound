@@ -108,11 +108,32 @@ export async function buildActionXdr(
       return at.toXDR();
     }
     case "publish": {
+      // v2 authenticates the AGENT as well as the operator, so publishing needs
+      // two signatures in one envelope (Soroban permits one contract call per
+      // transaction, so they cannot be split across two submissions).
+      //
+      // A browser wallet has exactly one signer, so the only shape it can
+      // produce unaided is the operator bonding ITSELF as the agent: both
+      // require_auth calls then resolve to the same address and the envelope
+      // signature covers both. Naming a different agent needs that agent's
+      // signature too, which this builder has no way to collect — so it is
+      // refused with an explanation rather than built into something the
+      // network will reject.
+      // Format first, so a malformed address still reports as malformed rather
+      // than as a self-bonding violation.
+      const agent = requireG(p.agent ?? address, "agent");
+      if (agent !== address) {
+        throw new Error(
+          "publishing for a different agent needs that agent's signature too — " +
+            "connect the agent's wallet and bond it directly, or use the SDK's " +
+            "publishCertificate with both keypairs",
+        );
+      }
       const c = new RegistryClient(buildOpts(contracts.registry, address));
       const expiresAt = BigInt(Math.floor(Date.now() / 1000) + (p.expiryDays ?? 30) * 24 * 3600);
       const at = await c.publish({
         operator: address,
-        agent: requireG(p.agent, "agent"),
+        agent,
         bound: usdc(p.boundUsd ?? 50_000),
         reserve_amount: usdc(p.reserveUsd ?? 10_000),
         expires_at: expiresAt,

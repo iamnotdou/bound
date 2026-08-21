@@ -65,8 +65,8 @@ export async function POST(req: Request) {
         return Response.json({ action, feeUsd: formatUsdc(usdc(500)) });
       }
       case "publish": {
-        const certId = await bound.publishCertificate(accounts.operator, {
-          agent: accounts.agent.publicKey(),
+        // v2 authenticates the agent as well as the operator.
+        const certId = await bound.publishCertificate(accounts.operator, accounts.agent, {
           bound: BOUND,
           reserveAmount: RESERVE_CLAIMED,
           expiresAt: expiresAt(),

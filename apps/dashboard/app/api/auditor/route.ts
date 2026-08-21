@@ -86,8 +86,9 @@ export async function POST(req: Request) {
     }
 
     // 1 — operator publishes a PENDING certificate (claims the reserve)
-    const certId = await bound.publishCertificate(accounts.operator, {
-      agent,
+    // v2 authenticates the agent too, so the agent's key signs the auth entry
+    // in the same envelope. This lane only works for the demo agent.
+    const certId = await bound.publishCertificate(accounts.operator, accounts.agent, {
       bound: BOUND,
       reserveAmount: RESERVE_CLAIMED,
       expiresAt: expiresAt(),
