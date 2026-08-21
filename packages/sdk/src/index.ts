@@ -22,6 +22,12 @@ export type { VerifyResult, ProofType } from "./bound-client";
 // JSON-safe certificate projection for HTTP and UI boundaries.
 export * from "./cert-view";
 
+// Unsigned-XDR builders for the connected-wallet path (server-only).
+export * from "./tx";
+
+// Marketplace discovery — enumerate published certificates by cert id.
+export * from "./discovery";
+
 // x402 — autonomous payment for an HTTP resource.
 export * from "./payments";
 
