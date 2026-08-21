@@ -325,10 +325,6 @@ impl BoundWorld {
     /// — because that sequence would move every scenario's clock past expiry
     /// and change what the rest of each test is measuring. The end state is
     /// identical: the certificate is attested and its vault is short.
-    fn withdraw_reserve(&self, cert_id: u64, amount: i128) {
-        self.withdraw_reserve_to(cert_id, &self.operator, amount);
-    }
-
     fn withdraw_reserve_to(&self, cert_id: u64, to: &Address, amount: i128) {
         if amount > 0 {
             self.vault().pay_from_reserve(&cert_id, to, &amount);
@@ -1572,6 +1568,128 @@ fn unrelated_deposit_does_not_rescue_an_unfunded_certificate() {
     // The unrelated certificate's reserve was neither spent nor counted.
     assert_eq!(w.reserve_of(other_id), RESERVE_CLAIM);
     assert_eq!(w.balance(&w.vault), RESERVE_CLAIM);
+}
+
+// ---------------------------------------------------------------------------
+// DESIGN-V2 §4 — attest verifies the reserve
+// ---------------------------------------------------------------------------
+
+/// **The griefing sequence fails at step two.**
+///
+/// This is the whole of §4, run end to end. The operator publishes a
+/// certificate claiming a reserve it has not posted, and waits for an auditor.
+/// Before this fix the auditor could sign it, and the operator could then
+/// challenge its own certificate and burn the auditor's entire allocation to
+/// the treasury for the price of gas.
+///
+/// Now attestation is refused, and every later step has nothing to work with:
+/// the certificate is still `Pending`, no allocation was ever taken from the
+/// auditor, and the self-challenge finds no attestation to slash.
+#[test]
+fn an_underfunded_certificate_cannot_be_attested_and_so_cannot_grief_an_auditor() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+
+    // Step one: publish a certificate claiming $1,000 of reserve, and post
+    // nothing at all behind it.
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    assert_eq!(w.reserve_of(cert_id), 0);
+
+    // Step two: the auditor is walked onto it — and the Registry refuses.
+    assert!(
+        w.registry()
+            .try_attest(&w.auditor, &cert_id, &ALLOCATION)
+            .is_err(),
+        "attest must refuse a certificate whose reserve is not funded"
+    );
+
+    // Nothing was recorded. The certificate never became `Verified`, it never
+    // acquired an auditor, and — the part that matters — the auditor's stake is
+    // entirely free. There is no allocation to lose.
+    let cert = w.registry().get_certificate(&cert_id);
+    assert!(cert.status == CertStatus::Pending);
+    assert!(cert.auditor.is_none());
+    assert_eq!(cert.auditor_stake_snapshot, 0);
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert!(!w.registry().verify(&w.agent).valid);
+
+    // Step three: the operator self-challenges anyway. The shortfall is real —
+    // the vault is empty against a $1,000 claim — so the claim is true at
+    // filing and opens a window. It settles against an unattested certificate,
+    // which is to say against nothing: there is no allocation to slash.
+    let auditor_before = w.staking().get_stake(&w.auditor);
+    let treasury_before = w.balance(&w.treasury);
+    let challenge_id = w.challenge_as(
+        &w.operator,
+        &w.operator2,
+        cert_id,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    w.resolve(challenge_id);
+
+    // The auditor is untouched — the entire point of §4.
+    assert_eq!(w.staking().get_stake(&w.auditor), auditor_before);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.treasury), treasury_before);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE);
+}
+
+/// **Post-attestation withdrawal remains slashable.**
+///
+/// §4 closes the attestation-time trap and nothing more. The operator funds the
+/// reserve honestly, the auditor attests against a full vault, and then the
+/// operator takes the money back out through the only legitimate route there
+/// is: waiting out the certificate's settlement deadline and calling
+/// `release_to_operator`. The `InsufficientReserve` proof still upholds against
+/// what is left, and the auditor's allocation is still slashed.
+///
+/// This is the residue §4 explicitly does not cover, demonstrated rather than
+/// asserted in prose — and it is why the proof and the auditor's own monitoring
+/// still have work to do after this change.
+#[test]
+fn a_reserve_withdrawn_after_attestation_is_still_provable_fraud() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+
+    // Funded in full, and attested against a vault that really holds the claim.
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM);
+    w.attest(cert_id);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert!(w.registry().verify(&w.agent).valid);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+
+    // The reserve is locked until the settlement deadline, so the operator has
+    // to wait it out. That lock is the reason this is the *only* way the money
+    // leaves, and it is what makes §4 stronger in practice than §4 claims.
+    assert!(w.vault().is_locked(&cert_id));
+    w.set_time(SETTLEMENT_DEADLINE);
+    w.vault().release_to_operator(&cert_id);
+    assert_eq!(w.reserve_of(cert_id), 0);
+
+    // The certificate still advertises a $1,000 reserve it no longer holds.
+    assert_eq!(w.registry().get_cert_reserve(&cert_id), RESERVE_CLAIM);
+
+    // The proof upholds, and the auditor pays for it. The allocation has passed
+    // its unlock instant but the auditor never withdrew it, so it is still
+    // there to be slashed — which is precisely the exposure §4 leaves open.
+    let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.resolve(challenge_id);
+    assert!(w.cm().get_challenge(&challenge_id).verdict == CmVerdict::ChallengeWins);
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+    assert_eq!(
+        w.staking().get_stake(&w.auditor),
+        AUDITOR_STAKE - ALLOCATION
+    );
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert!(
+        w.registry().get_certificate(&cert_id).status == CertStatus::Invalid,
+        "the certificate is dead"
+    );
 }
 
 /// Two certificates share one vault contract. Funding one must not back the
