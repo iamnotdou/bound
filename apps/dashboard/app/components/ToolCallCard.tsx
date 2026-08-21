@@ -4,7 +4,7 @@
 // a spinner; a settled result is green (executed cleanly), amber (a challenge
 // that didn't slash), or red (a slash / an invalidated certificate) — so the
 // climax reads at a glance. The result shapes mirror exactly what each tool's
-// execute() returns in app/lib/agent-tools.ts.
+// execute() returns in `@bound/mcp` (packages/mcp/src/tools.ts).
 import {
   ShieldCheck,
   Banknote,

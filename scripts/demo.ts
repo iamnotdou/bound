@@ -1,14 +1,38 @@
-// Bound Protocol — 8-step end-to-end demo against live testnet.
+// Bound Protocol — the full v2 lifecycle, against live Stellar testnet.
 //
-//   pnpm run demo   (→ ts-node --project scripts/tsconfig.json scripts/demo.ts)
+//   pnpm run demo          — acts 1-6: issue, insure, route, meter, prove
+//   pnpm run demo:settle   — act 7: close the claim window and pay out
 //
-// The story: an auditor vouches (with their own staked capital) for a certificate
-// that claims a $10k reserve — but the operator only funded $4k. A counterparty
-// trusts the vouch and gets paid. Then a challenger calls resolve(): the contract
-// itself reads the claim ($10k) against the live vault balance ($4k), proves the
-// auditor's vouch false BY ARITHMETIC, and in one transaction slashes the auditor's
-// stake, compensates the counterparty, and invalidates the cert. No oracle.
-import { readEnv, invoke, usdc } from "./lib";
+// Two commands rather than one because the claim window is 72 hours and that
+// is not a placeholder. A challenge does not settle when it is filed; it opens
+// a window that every other claimant against the same certificate may join, and
+// the whole set is priced together when the window lapses. v1 settled the first
+// claim to arrive and foreclosed every honest one behind it. Collapsing the
+// window to make a demo finish in one run would be demonstrating a protocol we
+// deliberately do not ship.
+//
+// The story this run tells:
+//
+//   An operator publishes a certificate bounding an agent's counterparty losses
+//   at $500, funds the reserve in full, and an auditor bonds their own slashable
+//   capital behind it. The operator buys coverage; the premium starts accruing
+//   to the auditor as yield. The agent is enrolled in the PaymentRouter and
+//   every payment it makes is metered against the certificate.
+//
+//   Then the agent routes $600 through it. Nobody is defrauded and nothing is
+//   stolen — but the operator promised a counterparty's exposure was capped at
+//   $500, and the router's own counter now says otherwise. That is a covenant
+//   broken, it is visible in on-chain state, and ANYONE can prove it by
+//   arithmetic. No arbiter, no oracle, no referee.
+//
+// Everything here goes through @bound/sdk. That is the point: the SDK a third
+// party installs is the same surface this demo drives, so a lifecycle this
+// script cannot express is a lifecycle the SDK does not really cover.
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { Keypair } from "@stellar/stellar-sdk";
+import { bound, contracts, formatUsdc, usdc } from "@bound/sdk";
+import { readEnv, changeTrust } from "./lib";
 
 const env = readEnv();
 const need = (k: string): string => {
@@ -17,157 +41,271 @@ const need = (k: string): string => {
   return v;
 };
 
-// Addresses + secrets
-const USDC = need("USDC_ADDRESS");
-const RESERVE_VAULT = need("RESERVE_VAULT_ADDRESS");
-const AUDITOR_STAKING = need("AUDITOR_STAKING_ADDRESS");
-const FEE_ESCROW = need("FEE_ESCROW_ADDRESS");
-const REGISTRY = need("REGISTRY_ADDRESS");
-const CHALLENGE_MANAGER = need("CHALLENGE_MANAGER_ADDRESS");
+const operator = Keypair.fromSecret(need("OPERATOR_SECRET"));
+const auditor = Keypair.fromSecret(need("AUDITOR_SECRET"));
+const challenger = Keypair.fromSecret(need("CHALLENGER_SECRET"));
+const counterparty = need("COUNTERPARTY_ADDRESS");
 
-const OPERATOR = need("OPERATOR_ADDRESS");
-const OPERATOR_SK = need("OPERATOR_SECRET");
-const AGENT = need("AGENT_ADDRESS");
-const AGENT_SK = need("AGENT_SECRET");
-const AUDITOR = need("AUDITOR_ADDRESS");
-const AUDITOR_SK = need("AUDITOR_SECRET");
-const CHALLENGER = need("CHALLENGER_ADDRESS");
-const CHALLENGER_SK = need("CHALLENGER_SECRET");
-const COUNTERPARTY = need("COUNTERPARTY_ADDRESS");
+// A fresh agent every run, for a reason the router enforces rather than
+// suggests: an enrollment is permanent. An operator may not walk an agent off a
+// certificate whose spend counter is climbing and onto a clean one, because a
+// counter you can escape is not evidence. So a second run needs a second agent,
+// and the demo generates one rather than failing on `already_enrolled`.
+const agent = Keypair.random();
 
-// Amounts (USDC, 7 decimals)
+// Amounts (USDC, 7 decimals). Small on purpose: every one of these is real
+// testnet money moving through real contracts, and the numbers are chosen so a
+// reader can do the arithmetic in their head.
 const AUDITOR_STAKE = usdc(1_500);
-const RESERVE_DEPOSIT = usdc(4_000); // ← only $4k actually funded
-const RESERVE_CLAIMED = usdc(10_000); // ← but the certificate claims $10k (the lie)
-const FEE = usdc(500);
-const BOUND = usdc(50_000);
-const PAYMENT = usdc(500);
-const CHALLENGE_BOND = usdc(100);
+const ALLOCATION = usdc(500); // the auditor's slice bonded to THIS certificate
+const BOUND = usdc(500);
+const RESERVE = usdc(500); // funded in full — this operator is not lying about money
+const FLOAT_CAP = usdc(200); // the most a stolen agent key can reach at any moment
+const PAYMENT = usdc(200);
+const PAYMENTS = 3; // 3 x $200 = $600 > the $500 bound
+// The ChallengeManager enforces a minimum bond, and it is not small. That is
+// the point: a challenge is an accusation backed by the challenger's own money,
+// and a bond you would not miss is not a deterrent to filing a false one.
+const CHALLENGE_BOND = usdc(500);
+const AGENT_FUNDING = usdc(1_000);
 
-const EXPIRES_AT = String(Math.floor(Date.now() / 1000) + 30 * 24 * 3600);
+// A one-hour term. The premium is priced on bound x duration, so a short term
+// keeps the demo honest about accrual: yield you can watch arrive in a minute
+// is yield the contract is really paying, not a number printed for effect.
+const TERM_SECONDS = 3_600;
 
-let stepNo = 0;
-function step(title: string) {
-  stepNo += 1;
-  console.log(`\n\x1b[1mStep ${stepNo}/8  ${title}\x1b[0m`);
+const STATE_PATH = resolve(__dirname, "..", ".demo-run.json");
+const FRIENDBOT = "https://friendbot.stellar.org";
+
+let actNo = 0;
+function act(title: string) {
+  actNo += 1;
+  console.log(`\n\x1b[1mAct ${actNo}/6  ${title}\x1b[0m`);
 }
-const money = (stroops: string) => `$${(Number(stroops) / 1e7).toLocaleString()}`;
+const ok = (line: string) => console.log(`  \x1b[32m✓\x1b[0m ${line}`);
+const note = (line: string) => console.log(`    ${line}`);
 
-function usdcBalance(addr: string): string {
-  return JSON.parse(invoke(USDC, OPERATOR_SK, "balance", ["--id", addr]));
+/** Stroops read as dollars round to nothing at these sizes; show both. */
+const money = (stroops: bigint) => `${formatUsdc(stroops)} (${stroops.toLocaleString()} stroops)`;
+
+async function friendbotFund(publicKey: string): Promise<void> {
+  const res = await fetch(`${FRIENDBOT}?addr=${encodeURIComponent(publicKey)}`);
+  if (!res.ok) {
+    throw new Error(`friendbot failed for ${publicKey}: ${res.status} ${await res.text()}`);
+  }
 }
 
-function main() {
-  console.log("══════════════════════════════════════════════");
-  console.log("  Bound Protocol — E2E demo (Stellar testnet)");
-  console.log("══════════════════════════════════════════════");
+async function main() {
+  console.log("═".repeat(62));
+  console.log("  Bound Protocol — full lifecycle (Stellar testnet)");
+  console.log("═".repeat(62));
 
-  // 1 — Auditor stakes their own capital (skin in the game)
-  step(`Auditor stakes ${money(AUDITOR_STAKE)}`);
-  invoke(AUDITOR_STAKING, AUDITOR_SK, "stake", ["--auditor", AUDITOR, "--amount", AUDITOR_STAKE]);
-  console.log(
-    `  ✓ auditor stake: ${money(invoke(AUDITOR_STAKING, OPERATOR_SK, "get_stake", ["--auditor", AUDITOR]).replace(/"/g, ""))}`,
+  if (!contracts.paymentRouter || !contracts.premiumVault) {
+    throw new Error(
+      "this deployment predates the router and the premium vault — run `pnpm deploy` first",
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  act("A new agent gets an identity and some money");
+  // ---------------------------------------------------------------------------
+  console.log(`  agent: ${agent.publicKey()}`);
+  await friendbotFund(agent.publicKey());
+  changeTrust(`USDC:${operator.publicKey()}`, agent.secret());
+  await bound.mintUsdc(operator, agent.publicKey(), AGENT_FUNDING);
+  ok(`funded with XLM and ${formatUsdc(AGENT_FUNDING)} test USDC`);
+
+  // ---------------------------------------------------------------------------
+  act("The operator issues a certificate, and an auditor stakes behind it");
+  // ---------------------------------------------------------------------------
+  await bound.stakeAsAuditor(auditor, AUDITOR_STAKE);
+  ok(
+    `auditor locked ${formatUsdc(await bound.auditorStake(auditor.publicKey()))} of their own capital`,
   );
 
-  // 2 — Operator funds the reserve... but short
-  step(`Operator deposits reserve — but only ${money(RESERVE_DEPOSIT)}`);
-  invoke(RESERVE_VAULT, OPERATOR_SK, "deposit", ["--amount", RESERVE_DEPOSIT]);
-  console.log(
-    `  ✓ vault balance: ${money(invoke(RESERVE_VAULT, OPERATOR_SK, "get_balance", []).replace(/"/g, ""))} (cert will claim ${money(RESERVE_CLAIMED)})`,
+  const expiresAt = BigInt(Math.floor(Date.now() / 1000) + TERM_SECONDS);
+  const certId = await bound.publishCertificate(operator, agent, {
+    bound: BOUND,
+    reserveAmount: RESERVE,
+    expiresAt,
+  });
+  ok(`certificate #${certId} published — bound ${formatUsdc(BOUND)}, term ${TERM_SECONDS / 3600}h`);
+  note("the operator signed the transaction and the agent signed its own");
+  note("authorization entry: nobody can be bonded without consenting to it");
+
+  await bound.depositReserve(operator, certId, RESERVE);
+  ok(
+    `reserve funded: ${formatUsdc(await bound.reserveBalance(certId))} against a claim of ${formatUsdc(RESERVE)}`,
   );
 
-  // 3 — Operator deposits the audit fee
-  step(`Operator deposits ${money(FEE)} audit fee`);
-  invoke(FEE_ESCROW, OPERATOR_SK, "deposit", [
-    "--operator",
-    OPERATOR,
-    "--auditor",
-    AUDITOR,
-    "--amount",
-    FEE,
-  ]);
-  console.log(`  ✓ fee escrowed for auditor`);
-
-  // 4 — Operator publishes the certificate (PENDING). It claims $10k reserve.
-  step(`Operator publishes certificate (claims reserve ${money(RESERVE_CLAIMED)})`);
-  const certId = invoke(REGISTRY, OPERATOR_SK, "publish", [
-    "--operator",
-    OPERATOR,
-    "--agent",
-    AGENT,
-    "--bound",
-    BOUND,
-    "--reserve_amount",
-    RESERVE_CLAIMED,
-    "--expires_at",
-    EXPIRES_AT,
-    "--reserve_vault_contract",
-    RESERVE_VAULT,
-    "--auditor_staking_contract",
-    AUDITOR_STAKING,
-  ]).replace(/"/g, "");
-  console.log(`  ✓ cert_id: ${certId} (status: PENDING)`);
-
-  // 5 — Auditor attests → VERIFIED. This is the false vouch.
-  step(`Auditor attests the certificate (the false vouch)`);
-  invoke(REGISTRY, AUDITOR_SK, "attest", ["--auditor", AUDITOR, "--cert_id", certId]);
-  console.log(`  ✓ auditor signed — cert now VERIFIED`);
-
-  // 6 — Counterparty verifies and decides to accept
-  step(`Counterparty verifies the certificate`);
-  const verify = JSON.parse(invoke(REGISTRY, OPERATOR_SK, "verify", ["--agent", AGENT]));
-  console.log(`  valid: ${verify.valid} · status: ${verify.status}`);
-  console.log(
-    `  bound: ${money(verify.bound)} · reserve (claimed): ${money(verify.reserve)} · auditor stake: ${money(verify.auditor_stake)}`,
+  await bound.attestCertificate(auditor, certId, ALLOCATION);
+  const verified = await bound.verifyCertificate(agent.publicKey());
+  ok(
+    `auditor attested ${formatUsdc(ALLOCATION)} — certificate is ${verified.status.tag}, valid: ${verified.valid}`,
   );
-  console.log(`  ✓ counterparty accepts — "worst-case is bounded and vouched"`);
 
-  // 7 — Agent pays the counterparty (direct USDC transfer)
-  step(`Agent pays ${money(PAYMENT)} to the counterparty`);
-  const cpBefore = usdcBalance(COUNTERPARTY);
-  invoke(USDC, AGENT_SK, "transfer", ["--from", AGENT, "--to", COUNTERPARTY, "--amount", PAYMENT]);
-  console.log(`  ✓ counterparty USDC: ${money(cpBefore)} → ${money(usdcBalance(COUNTERPARTY))}`);
+  // ---------------------------------------------------------------------------
+  act("The operator buys coverage — the auditor starts earning");
+  // ---------------------------------------------------------------------------
+  const quote = await bound.quotePremiumForCert(certId);
+  note(`premium = bound x rate x duration / 1 year`);
+  note(`        = ${formatUsdc(BOUND)} x 2.00%/yr x ${TERM_SECONDS}s / 31,536,000s`);
+  note(`        = ${money(quote)}`);
+  await bound.payPremium(operator, certId);
+  const coverage = await bound.coverage(certId);
+  ok(`coverage bought: ${money(quote)}, of which the protocol keeps its fee share`);
+  ok(`the rest accrues to the auditor in a straight line across the term`);
+  note(`auditor of record: ${coverage.auditor}`);
 
-  // 8 — Challenger proves the reserve is short → trustless slash + compensate
-  step(`Challenger proves reserve is short → resolve() on-chain`);
-  const auditorStakeBefore = usdcBalance(AUDITOR_STAKING);
-  const cpBeforeSlash = usdcBalance(COUNTERPARTY);
-  const challengerBefore = usdcBalance(CHALLENGER);
+  // ---------------------------------------------------------------------------
+  act("The agent is enrolled in the router, and starts paying");
+  // ---------------------------------------------------------------------------
+  await bound.enrollAgent(operator, agent, certId, FLOAT_CAP);
+  ok(`agent enrolled against certificate #${certId}, float cap ${formatUsdc(FLOAT_CAP)}`);
+  note("both signatures again, and for symmetric reasons: enrollment attaches");
+  note("spend to the operator's certificate and puts the agent's address under");
+  note("the operator's kill switch. Neither party may conscript the other.");
 
-  const challengeId = invoke(CHALLENGE_MANAGER, CHALLENGER_SK, "challenge", [
-    "--challenger",
-    CHALLENGER,
-    "--cert_id",
+  for (let i = 1; i <= PAYMENTS; i++) {
+    const receipt = await bound.executePayment(agent, counterparty, PAYMENT);
+    if (!receipt.routed) {
+      throw new Error(
+        "payment did not go through the router — the spend meter never moved, " +
+          "so BoundExceeded would be unprovable. This is the bug the demo exists to catch.",
+      );
+    }
+    const spent = await bound.spendForCert(certId);
+    ok(
+      `payment ${i}/${PAYMENTS}: ${formatUsdc(PAYMENT)} routed · ` +
+        `metered spend now ${formatUsdc(spent)} of a ${formatUsdc(BOUND)} bound`,
+    );
+  }
+
+  const spent = await bound.spendForCert(certId);
+  console.log("");
+  note(
+    `float held right now: ${formatUsdc(await bound.floatForCert(certId))} (cap ${formatUsdc(FLOAT_CAP)})`,
+  );
+  note("float is topped up per payment rather than parked, so the cap bounds what");
+  note("a stolen key reaches without ever making the agent unable to pay.");
+
+  // ---------------------------------------------------------------------------
+  act("Anyone can now prove the covenant broke — by arithmetic");
+  // ---------------------------------------------------------------------------
+  console.log(`  the certificate says:  bound        = ${formatUsdc(BOUND)}`);
+  console.log(`  the router says:       routed spend = ${formatUsdc(spent)}`);
+  console.log(
+    `  ${formatUsdc(spent)} > ${formatUsdc(BOUND)} — and both numbers are on-chain state.`,
+  );
+  console.log("");
+  note("Gross routed flow is NOT loss. This does not say $600 was stolen, or that");
+  note("anyone is owed $600. It says the operator promised a ceiling and their own");
+  note("agent's metered conduct went past it. The contract sizes no payout from it.");
+  console.log("");
+
+  // First, the branch that costs the challenger money.
+  //
+  // A false claim is not merely refused: it is *settled* at filing, in the same
+  // transaction, and the bond is gone. That is only possible because the
+  // predicate is arithmetic — the contract does not need anybody's opinion to
+  // know that a fully funded reserve is fully funded. Filing this one here, on
+  // a certificate whose reserve is demonstrably intact, is the cheapest honest
+  // way to show the no-fraud branch working on live state rather than in a test.
+  //
+  // Order matters. It has to go before the true claim, because once a window is
+  // open every later claim joins it instead of settling on its own.
+  const challengerBefore = await bound.usdcBalance(challenger.publicKey());
+  const falseClaim = await bound.challengeCertificate(challenger, {
     certId,
-    "--proof_type",
-    '"InsufficientReserve"', // enum passed as JSON string
-    "--victim",
-    COUNTERPARTY,
-    "--stake",
-    CHALLENGE_BOND,
-  ]).replace(/"/g, "");
-  console.log(`  challenge_id: ${challengeId} · bond posted: ${money(CHALLENGE_BOND)}`);
-  console.log(`  calling resolve() — the contract checks claim vs live balance…`);
-  invoke(CHALLENGE_MANAGER, CHALLENGER_SK, "resolve", ["--challenge_id", challengeId]);
+    proofType: "InsufficientReserve",
+    victim: counterparty,
+    bond: CHALLENGE_BOND,
+  });
+  const challengerAfter = await bound.usdcBalance(challenger.publicKey());
+  ok(
+    `false claim #${falseClaim} filed — reserve is ${formatUsdc(await bound.reserveBalance(certId))} against a claim of ${formatUsdc(RESERVE)}`,
+  );
+  ok(
+    `rejected and settled in the same transaction: challenger ${formatUsdc(challengerBefore)} → ${formatUsdc(challengerAfter)}`,
+  );
+  note(`the ${formatUsdc(CHALLENGE_BOND)} bond is forfeit. Nobody adjudicated it and nobody`);
+  note("had to: the contract read the vault and did the subtraction itself.");
+  console.log("");
 
-  const verifyAfter = JSON.parse(invoke(REGISTRY, OPERATOR_SK, "verify", ["--agent", AGENT]));
-  console.log(
-    `\n  ⚡ FRAUD PROVEN (claimed ${money(RESERVE_CLAIMED)} > actual ${money(RESERVE_DEPOSIT)})`,
+  // Now the branch that is true.
+  const challengeId = await bound.challengeCertificate(challenger, {
+    certId,
+    proofType: "BoundExceeded",
+    victim: counterparty,
+    bond: CHALLENGE_BOND,
+  });
+  ok(
+    `challenge #${challengeId} filed with a ${formatUsdc(CHALLENGE_BOND)} bond of the challenger's own money`,
   );
-  console.log(
-    `     auditor staking pool: ${money(auditorStakeBefore)} → ${money(usdcBalance(AUDITOR_STAKING))} (slashed)`,
-  );
-  console.log(
-    `     counterparty:         ${money(cpBeforeSlash)} → ${money(usdcBalance(COUNTERPARTY))} (compensated)`,
-  );
-  console.log(
-    `     challenger:           ${money(challengerBefore)} → ${money(usdcBalance(CHALLENGER))} (bond back + reward)`,
-  );
-  console.log(`     cert status:          ${verifyAfter.status} (valid: ${verifyAfter.valid})`);
 
-  console.log("\n══════════════════════════════════════════════");
-  console.log("  ✓ All 8 steps passed. The cage was economic — and it held.");
-  console.log("══════════════════════════════════════════════");
+  const closesAt = await bound.windowClosesAt(certId);
+  const windowSeconds = await bound.claimWindowSeconds();
+  ok(`a ${Number(windowSeconds) / 3600}-hour claim window is now open on certificate #${certId}`);
+  note(`it may be closed at ${new Date(Number(closesAt) * 1000).toISOString()}`);
+
+  // ---------------------------------------------------------------------------
+  act("What the other two proofs would read, right now");
+  // ---------------------------------------------------------------------------
+  // Printed rather than filed. One challenge per run is enough to show the
+  // mechanism, and filing three against one certificate would only demonstrate
+  // the aggregation rule, which the contract tests already cover exhaustively.
+  console.log(
+    `  InsufficientReserve — claimed ${formatUsdc(RESERVE)} vs live vault ${formatUsdc(await bound.reserveBalance(certId))}`,
+  );
+  console.log(`                        equal, which is why the claim above was rejected`);
+  console.log(
+    `  ExpiredCertificate  — expires ${new Date(Number(expiresAt) * 1000).toISOString()}`,
+  );
+  console.log(`                        now     ${new Date().toISOString()}`);
+  console.log(`                        unexpired, so this proof would be rejected the same way`);
+  console.log(`  FakeSignature       — no on-chain trace to read. The one proof that still`);
+  console.log(`                        needs an arbiter, and the only one.`);
+  console.log("");
+  note("The first three are read from the same kind of state: a number the contract");
+  note("already holds, checked against another number the contract already holds.");
+  note("That is what shrank the arbiter down to signature forgery alone.");
+
+  writeFileSync(
+    STATE_PATH,
+    JSON.stringify(
+      {
+        certId: Number(certId),
+        challengeId: Number(challengeId),
+        agent: agent.publicKey(),
+        boundStroops: BOUND.toString(),
+        spentStroops: spent.toString(),
+        windowClosesAt: Number(closesAt),
+        premiumStroops: quote.toString(),
+        filedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  console.log("\n" + "═".repeat(62));
+  console.log(`  Certificate #${certId} · challenge #${challengeId} · window open`);
+  console.log("═".repeat(62));
+  console.log(`
+  Nothing has settled, and that is correct. The claim window exists so a
+  claimant who files second is not foreclosed by one who filed first: every
+  admitted claim against this certificate is priced together when the window
+  lapses.
+
+  Run \x1b[1mpnpm run demo:settle\x1b[0m after
+  ${new Date(Number(closesAt) * 1000).toISOString()}
+  to close the window, settle every claim at once, and see the auditor's yield.
+
+  Run state written to .demo-run.json
+`);
 }
 
-main();
+main().catch((err) => {
+  console.error(`\n\x1b[31m✗ ${err?.message ?? err}\x1b[0m`);
+  process.exit(1);
+});

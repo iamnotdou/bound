@@ -18,12 +18,27 @@ export interface PaymentRequired {
 
 export interface AgentFetchResult {
   response: Response;
-  paid?: { amount: number; recipient: string; txHash?: string };
+  paid?: {
+    amount: number;
+    recipient: string;
+    txHash?: string;
+    /** Whether the payment hit the router's meter — see `executePayment`. */
+    routed: boolean;
+    /** The certificate the spend was recorded against; null when unrouted. */
+    certId: number | null;
+  };
 }
 
 /**
- * Fetch `url`; if it returns 402, pay the demanded price via `signer` through
- * the SpendingLimit-free USDC rail, then retry once with an `X-Payment` proof.
+ * Fetch `url`; if it returns 402, pay the demanded price via `signer`, then
+ * retry once with an `X-Payment` proof.
+ *
+ * The payment goes through `executePayment`, which routes an enrolled agent's
+ * spend through the PaymentRouter. That is what makes this loop evidence
+ * rather than just a transfer: the meter it moves is the state a challenger
+ * later reads to prove `BoundExceeded`. The rail is deliberately not named
+ * here — a facilitator-based x402 integration settles into the same hook
+ * instead of replacing it.
  */
 export async function agentFetch(
   url: string,
@@ -39,15 +54,21 @@ export async function agentFetch(
     throw new Error(`malformed 402 response: ${JSON.stringify(demand)}`);
   }
 
-  const txHash = await bound.executePayment(signer, demand.recipient, usdc(demand.amount));
+  const receipt = await bound.executePayment(signer, demand.recipient, usdc(demand.amount));
 
   const retry = await fetch(url, {
     ...init,
-    headers: { ...(init?.headers ?? {}), "X-Payment": txHash ?? "" },
+    headers: { ...(init?.headers ?? {}), "X-Payment": receipt.hash ?? "" },
   });
 
   return {
     response: retry,
-    paid: { amount: demand.amount, recipient: demand.recipient, txHash },
+    paid: {
+      amount: demand.amount,
+      recipient: demand.recipient,
+      txHash: receipt.hash,
+      routed: receipt.routed,
+      certId: receipt.certId,
+    },
   };
 }

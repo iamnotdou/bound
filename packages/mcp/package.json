@@ -1,23 +1,28 @@
 {
-  "name": "@bound/sdk",
-  "version": "0.5.0",
+  "name": "@bound/mcp",
+  "version": "0.1.0",
   "private": false,
-  "description": "Typed TypeScript client for the Bound Protocol contracts on Stellar.",
+  "description": "MCP server exposing Bound Protocol's agent tools to any MCP-capable client.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iamnotdou/bound.git",
-    "directory": "packages/sdk"
+    "directory": "packages/mcp"
   },
-  "homepage": "https://github.com/iamnotdou/bound/tree/main/packages/sdk#readme",
+  "homepage": "https://github.com/iamnotdou/bound/tree/main/packages/mcp#readme",
   "keywords": [
     "bound-protocol",
+    "mcp",
+    "model-context-protocol",
     "stellar",
     "soroban",
     "agent",
     "x402"
   ],
   "sideEffects": false,
+  "bin": {
+    "bound-mcp": "./dist/bound-mcp.js"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -32,14 +37,14 @@
         "default": "./dist/index.js"
       }
     },
-    "./deployments": {
+    "./tools": {
       "import": {
-        "types": "./dist/deployments.d.mts",
-        "default": "./dist/deployments.mjs"
+        "types": "./dist/tools.d.mts",
+        "default": "./dist/tools.mjs"
       },
       "require": {
-        "types": "./dist/deployments.d.ts",
-        "default": "./dist/deployments.js"
+        "types": "./dist/tools.d.ts",
+        "default": "./dist/tools.js"
       }
     },
     "./package.json": "./package.json"
@@ -59,8 +64,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@bound/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@stellar/stellar-sdk": "^16.0.1",
-    "buffer": "^6.0.3"
+    "zod": "^3.25.56"
   },
   "devDependencies": {
     "@types/node": "^22",

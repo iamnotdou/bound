@@ -11,6 +11,9 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^1.2.12
         version: 1.2.12(zod@3.25.76)
+      '@bound/mcp':
+        specifier: workspace:*
+        version: link:packages/mcp
       '@bound/sdk':
         specifier: workspace:*
         version: link:packages/sdk
@@ -18,8 +21,8 @@ importers:
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
       '@stellar/stellar-sdk':
-        specifier: ^14.6.1
-        version: 14.6.1
+        specifier: ^16.0.1
+        version: 16.2.0
       ai:
         specifier: ^4.3.16
         version: 4.3.19(react@19.2.7)(zod@3.25.76)
@@ -72,6 +75,9 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^1.2.12
         version: 1.2.12(zod@3.25.76)
+      '@bound/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
       '@bound/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -258,6 +264,34 @@ importers:
       typescript:
         specifier: ^5.6.2
         version: 5.9.3
+
+  packages/mcp:
+    dependencies:
+      '@bound/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+      '@stellar/stellar-sdk':
+        specifier: ^16.0.1
+        version: 16.2.0
+      zod:
+        specifier: ^3.25.56
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.19
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.26)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.19.19)(msw@2.14.6(@types/node@22.19.19)(typescript@5.9.3))(vite@8.2.1(@types/node@22.19.19)(esbuild@0.27.7)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/sdk:
     dependencies:
@@ -2956,11 +2990,6 @@ packages:
   '@stellar/stellar-sdk@14.2.0':
     resolution: {integrity: sha512-7nh2ogzLRMhfkIC0fGjn1LHUzk3jqVw8tjAuTt5ADWfL9CSGBL18ILucE9igz2L/RU2AZgeAvhujAnW91Ut/oQ==}
     engines: {node: '>=20.0.0'}
-
-  '@stellar/stellar-sdk@14.6.1':
-    resolution: {integrity: sha512-A1rQWDLdUasXkMXnYSuhgep+3ZZzyuXJKdt5/KAIc0gkmSp906HTvUpbT4pu+bVr41tu0+J4Ugz9J4BQAGGytg==}
-    engines: {node: '>=20.0.0'}
-    hasBin: true
 
   '@stellar/stellar-sdk@16.2.0':
     resolution: {integrity: sha512-FV/Rm11QvrFzR5X9fIfb6Pg30KyYyrRkNezELGFmYDAYrzoPTjqo7vklnEPd2HEontzjJmZizWk8CjyIh5vp0w==}
@@ -10645,21 +10674,6 @@ snapshots:
       '@stellar/stellar-base': 14.1.0
       axios: 1.16.1
       bignumber.js: 9.3.1
-      eventsource: 2.0.2
-      feaxios: 0.0.23
-      randombytes: 2.1.0
-      toml: 3.0.0
-      urijs: 1.19.11
-    transitivePeerDependencies:
-      - debug
-      - supports-color
-
-  '@stellar/stellar-sdk@14.6.1':
-    dependencies:
-      '@stellar/stellar-base': 14.1.0
-      axios: 1.16.1
-      bignumber.js: 9.3.1
-      commander: 14.0.3
       eventsource: 2.0.2
       feaxios: 0.0.23
       randombytes: 2.1.0

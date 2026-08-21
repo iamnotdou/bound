@@ -37,3 +37,4 @@ contracts/payment-router/test_snapshots/
 # and a mock Registry per test: ~776 KB of generated JSON that nothing asserts
 # on.
 contracts/premium-vault/test_snapshots/
+.demo-run.json

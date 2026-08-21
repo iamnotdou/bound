@@ -19,7 +19,7 @@ function stubBound(opts: { txHash?: string } = {}) {
   const bound = {
     executePayment: vi.fn(async (_signer: Keypair, recipient: string, amount: bigint) => {
       calls.push({ recipient, amount });
-      return txHash;
+      return { hash: txHash, amount, routed: true, certId: 7 };
     }),
   } as unknown as BoundClient;
   return { bound, calls };
@@ -75,7 +75,16 @@ describe("agentFetch()", () => {
       // The server names the price in dollars; it must reach the chain as
       // stroops. $25 -> 25 * 10^7.
       expect(calls[0]).toEqual({ recipient: RECIPIENT, amount: 250_000_000n });
-      expect(result.paid).toEqual({ amount: 25, recipient: RECIPIENT, txHash: "deadbeef" });
+      // The receipt carries whether the payment hit the router's meter. An
+      // unrouted payment still buys the resource; it just leaves no evidence a
+      // challenger could read, and the caller is told which one it got.
+      expect(result.paid).toEqual({
+        amount: 25,
+        recipient: RECIPIENT,
+        txHash: "deadbeef",
+        routed: true,
+        certId: 7,
+      });
     });
 
     it("sends the tx hash as proof on the retry", async () => {

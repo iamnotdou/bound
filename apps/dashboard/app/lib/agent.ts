@@ -1,9 +1,14 @@
 // AI SDK adapter — runs Claude in a tool-use loop over the Bound tools. Used by
 // the /chat demo. Claude lives inside our app; the tools call BoundClient.
+//
+// The tools themselves are defined once, in `@bound/mcp`, and adapted twice:
+// here onto the AI SDK, and there onto MCP for every other client. We import
+// the `/tools` entry rather than the package root so a Next build never pulls
+// an MCP server into the bundle.
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { streamText, tool, type CoreMessage } from "ai";
 import { z } from "zod";
-import { boundTools } from "./agent-tools";
+import { boundTools } from "@bound/mcp/tools";
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5";
 

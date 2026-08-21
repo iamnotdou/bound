@@ -33,7 +33,7 @@ The headline is the **trustless slash**, not a blocked payment.
 3. `pnpm test:e2e` → runs the 5 live smoke suites (needs `.env.testnet`).
    `pnpm verify` covers everything that does _not_ need the network. Expect all ✓:
    - tools-smoke / sdk-smoke: read a real cert + balances from testnet
-   - mcp-smoke: 5 MCP tools exposed
+   - mcp-smoke: launches the packaged `bound-mcp` executable, 15 MCP tools exposed
    - routes-smoke: `/api/paid-service` (402→pay→200), `/api/verify` (400 + live cert),
      `/api/auditor` GET (pending params + current cert)
    - Note: a `⚠ ANTHROPIC_API_KEY EMPTY` line is EXPECTED unless a key was added —
