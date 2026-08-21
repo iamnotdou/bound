@@ -39,6 +39,8 @@ export const contracts = {
   auditorStaking: deployment.contracts.auditorStaking,
   feeEscrow: deployment.contracts.feeEscrow,
   challengeManager: deployment.contracts.challengeManager,
+  // undefined on a v1 deployment record — see Deployment.contracts.paymentRouter.
+  paymentRouter: deployment.contracts.paymentRouter,
   usdc: deployment.contracts.usdc,
 };
 

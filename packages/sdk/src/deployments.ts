@@ -45,6 +45,13 @@ export interface Deployment {
     feeEscrow: string;
     challengeManager: string;
     usdc: string;
+    /**
+     * The PaymentRouter (SEP-41 wrapped USDC that meters spend per
+     * certificate). Optional because the v1 deployment predates it — a
+     * deployment record without this key is a v1 record, and the two new
+     * trustless proofs are unavailable against it.
+     */
+    paymentRouter?: string;
   };
 }
 
@@ -97,6 +104,7 @@ export function serializeDeployment(d: Deployment): string {
       feeEscrow: d.contracts.feeEscrow,
       challengeManager: d.contracts.challengeManager,
       usdc: d.contracts.usdc,
+      ...(d.contracts.paymentRouter ? { paymentRouter: d.contracts.paymentRouter } : {}),
     },
   };
   return `${JSON.stringify(body, null, 2)}\n`;

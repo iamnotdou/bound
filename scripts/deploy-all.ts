@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { existsSync, writeFileSync } from "node:fs";
-import { readEnv, writeEnvValues, deploy, initialize, usdc, NETWORK } from "./lib";
+import { readEnv, writeEnvValues, deploy, initialize, invoke, usdc, NETWORK } from "./lib";
 import { serializeDeployment } from "@bound/sdk";
 
 const ROOT = resolve(__dirname, "..");
@@ -31,12 +31,15 @@ const WASM = {
   fee_escrow: "fee_escrow.wasm",
   challenge_manager: "challenge_manager.wasm",
   registry: "registry.wasm",
+  payment_router: "payment_router.wasm",
 } as const;
 
 // Economic parameters
 const AUDITOR_MIN_STAKE = usdc(500); // min stake to be a registered auditor
 const CHALLENGE_MIN_BOND = usdc(100); // min bond to open a challenge
-const RESERVE_LOCK_SECONDS = 365 * 24 * 3600; // reserve locked ~1 year out
+// Reserve and allocation unlock per certificate now, derived from the
+// certificate's own expiry plus Registry::CHALLENGE_WINDOW_SECONDS, so the
+// deploy script no longer sets a global lock.
 
 function buildWasm(): void {
   console.log("Building contracts (release wasm)…");
@@ -76,6 +79,7 @@ function main() {
     fee_escrow: deploy(wasmPath(WASM.fee_escrow), operatorSecret),
     challenge_manager: deploy(wasmPath(WASM.challenge_manager), operatorSecret),
     registry: deploy(wasmPath(WASM.registry), operatorSecret),
+    payment_router: deploy(wasmPath(WASM.payment_router), operatorSecret),
   };
   for (const [name, id] of Object.entries(addr)) console.log(`  ${name.padEnd(18)} ${id}`);
 
@@ -86,6 +90,7 @@ function main() {
     FEE_ESCROW_ADDRESS: addr.fee_escrow,
     CHALLENGE_MANAGER_ADDRESS: addr.challenge_manager,
     REGISTRY_ADDRESS: addr.registry,
+    PAYMENT_ROUTER_ADDRESS: addr.payment_router,
   });
 
   // Output of record: committed deployment data. .env.testnet still gets the
@@ -118,30 +123,35 @@ function main() {
         feeEscrow: addr.fee_escrow,
         challengeManager: addr.challenge_manager,
         usdc: usdcAddr,
+        paymentRouter: addr.payment_router,
       },
     }),
   );
   console.log(`  wrote ${deploymentPath}`);
 
   // --- Phase B: initialize (all addresses known) ---
-  const unlockAt = String(Math.floor(Date.now() / 1000) + RESERVE_LOCK_SECONDS);
-  // Arbiter resolves only the subjective challenge paths (BoundExceeded /
-  // FakeSignature); the headline InsufficientReserve path is trustless. For the
-  // demo the operator stands in as arbiter.
+  // The arbiter now resolves only FakeSignature. InsufficientReserve,
+  // BoundExceeded and ExpiredCertificate are all trustless, which is what this
+  // revision is for. For the demo the operator stands in as arbiter.
   const arbiter = operatorAddr;
+  // Slashed auditor stake goes here and nowhere else — never to the victim or
+  // the challenger, so nobody who can trigger a proof can receive it. There is
+  // no admin, so this address cannot be changed after initialize.
+  const treasury = env.TREASURY_ADDRESS ?? operatorAddr;
 
   console.log("\nInitializing contracts…");
 
   console.log("  reserve_vault");
+  // No operator and no global unlock: balances, locks and unlock times are all
+  // keyed by certificate id now, and the operator is read per certificate from
+  // the Registry.
   initialize(addr.reserve_vault, operatorSecret, [
-    "--operator",
-    operatorAddr,
+    "--registry",
+    addr.registry,
     "--challenge_manager",
     addr.challenge_manager,
     "--token",
     usdcAddr,
-    "--unlock_at",
-    unlockAt,
   ]);
 
   console.log("  auditor_staking");
@@ -178,6 +188,8 @@ function main() {
     usdcAddr,
     "--arbiter",
     arbiter,
+    "--treasury",
+    treasury,
     "--min_stake",
     CHALLENGE_MIN_BOND,
   ]);
@@ -190,8 +202,26 @@ function main() {
     addr.auditor_staking,
   ]);
 
+  console.log("  payment_router");
+  initialize(addr.payment_router, operatorSecret, [
+    "--registry",
+    addr.registry,
+    "--token",
+    usdcAddr,
+  ]);
+
+  // THE STEP THAT MUST NOT BE SKIPPED.
+  //
+  // set_router is one-shot and arbiter-gated. Without it, ChallengeManager has
+  // no router to read `spent` from, so BoundExceeded and ExpiredCertificate —
+  // the two trustless proofs this revision exists to enable — both resolve into
+  // `router_not_set`, while every contract test still passes. A deployment that
+  // skips this looks healthy and is silently missing half its proof surface.
+  console.log("  challenge_manager.set_router");
+  invoke(addr.challenge_manager, operatorSecret, "set_router", ["--router", addr.payment_router]);
+
   console.log(
-    `\n✓ All 5 contracts deployed, initialized, written to .env.testnet and deployments/${NETWORK}.json`,
+    `\n✓ All 6 contracts deployed, initialized, router wired, written to .env.testnet and deployments/${NETWORK}.json`,
   );
 }
 
