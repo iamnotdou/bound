@@ -10,21 +10,42 @@ use soroban_sdk::{
     Env,
 };
 
+/// The Registry, as far as this contract is concerned, is one read:
+/// `get_cert_settlement_deadline`. `release_allocation` consults it live so an
+/// open claim window (DESIGN-V2 §1) can hold an allocation past the deadline
+/// snapshotted at attestation.
+#[soroban_sdk::contract]
+pub struct MockRegistry;
+
+#[soroban_sdk::contractimpl]
+impl MockRegistry {
+    pub fn set_deadline(env: Env, cert_id: u64, deadline: u64) {
+        env.storage().persistent().set(&cert_id, &deadline);
+    }
+    pub fn get_cert_settlement_deadline(env: Env, cert_id: u64) -> u64 {
+        env.storage().persistent().get(&cert_id).unwrap_or(0)
+    }
+}
+
 struct Fixture<'a> {
+    registry: MockRegistryClient<'a>,
     client: AuditorStakingClient<'a>,
     treasury: Address,
 }
 
 fn setup(env: &Env, min_stake: i128) -> Fixture<'_> {
     let cm = Address::generate(env);
-    let registry = Address::generate(env);
+    let registry = env.register(MockRegistry, ());
     let token = Address::generate(env);
     let treasury = Address::generate(env);
     let contract_id = env.register(AuditorStaking, ());
     let client = AuditorStakingClient::new(env, &contract_id);
     client.initialize(&cm, &registry, &token, &min_stake);
-    let _ = registry;
-    Fixture { client, treasury }
+    Fixture {
+        registry: MockRegistryClient::new(env, &registry),
+        client,
+        treasury,
+    }
 }
 
 /// Credit stake directly, bypassing the token transfer: these tests are about
@@ -188,6 +209,7 @@ fn test_release_allocation_blocked_before_settlement_deadline() {
     let auditor = Address::generate(&env);
     credit(&env, &f.client, &auditor, 600_0000000);
     f.client.allocate(&auditor, &1u64, &400_0000000, &5_000u64);
+    f.registry.set_deadline(&1u64, &5_000u64);
 
     env.ledger().set_timestamp(4_999);
     f.client.release_allocation(&1u64);
@@ -201,6 +223,7 @@ fn test_release_allocation_allowed_after_settlement_deadline() {
     let auditor = Address::generate(&env);
     credit(&env, &f.client, &auditor, 600_0000000);
     f.client.allocate(&auditor, &1u64, &400_0000000, &5_000u64);
+    f.registry.set_deadline(&1u64, &5_000u64);
 
     env.ledger().set_timestamp(5_000);
     f.client.release_allocation(&1u64);

@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+};
 
 #[contracttype]
 pub enum DataKey {
@@ -285,11 +287,20 @@ impl AuditorStaking {
             .expect("no_allocation");
         auditor.require_auth();
 
-        let unlock_at: u64 = env
+        // The attest-time snapshot is a floor, not the answer. DESIGN-V2 §1
+        // lets an open claim window push the certificate's settlement deadline
+        // out past `expires_at + CHALLENGE_WINDOW`, and the snapshot taken at
+        // attestation cannot know about a window opened later. The live
+        // deadline is read from the Registry every time and the later of the
+        // two wins, so the auditor cannot free the allocation that a live
+        // window is about to settle against.
+        let snapshot: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::AllocationUnlockAt(cert_id))
             .unwrap_or(0);
+        let live = Self::cert_settlement_deadline(&env, cert_id);
+        let unlock_at = if snapshot > live { snapshot } else { live };
         if env.ledger().timestamp() < unlock_at {
             panic!("allocation_still_locked");
         }
@@ -335,6 +346,18 @@ impl AuditorStaking {
             .persistent()
             .get(&DataKey::Allocated(auditor.clone()))
             .unwrap_or(0)
+    }
+
+    /// The Registry owns the settlement deadline — `expires_at +
+    /// CHALLENGE_WINDOW`, extended by any open claim window — so the reserve
+    /// and this allocation can never drift apart.
+    fn cert_settlement_deadline(env: &Env, cert_id: u64) -> u64 {
+        let registry: Address = env.storage().instance().get(&DataKey::Registry).unwrap();
+        env.invoke_contract(
+            &registry,
+            &Symbol::new(env, "get_cert_settlement_deadline"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
     }
 
     fn allocation_of(env: &Env, cert_id: u64) -> i128 {

@@ -42,6 +42,11 @@ const FUNDING: i128 = 10_000_0000000;
 /// The challenge window the Registry publishes: 7 days. The reserve and the
 /// auditor's allocation both stay locked until `expires_at + CHALLENGE_WINDOW`.
 const CHALLENGE_WINDOW: u64 = 7 * 24 * 60 * 60;
+/// DESIGN-V2 §1's claim window: 72 hours. A first valid challenge opens one
+/// instead of settling, and settlement runs once, at its close, over every
+/// claim it admitted. Tests that care about the exact ledger instant of
+/// settlement file their claim `CLAIM_WINDOW` seconds ahead of it.
+const CLAIM_WINDOW: u64 = 72 * 60 * 60;
 /// The challenger's fee, in basis points of proven harm (10%).
 const CHALLENGER_FEE_BPS: i128 = 1_000;
 /// The flat hygiene bounty the ChallengeManager pays when a proof is true but
@@ -86,6 +91,11 @@ struct BoundWorld {
     auditor: Address,
     challenger: Address,
     victim: Address,
+    /// A second, unrelated claimant pair. DESIGN-V2 §1's claim window
+    /// aggregates many claims against one certificate, so the harness needs
+    /// more than one of each.
+    challenger2: Address,
+    victim2: Address,
     arbiter: Address,
     /// Where every slashed stroop goes, and the only place it may go.
     treasury: Address,
@@ -109,6 +119,8 @@ impl BoundWorld {
         let auditor = Address::generate(&env);
         let challenger = Address::generate(&env);
         let victim = Address::generate(&env);
+        let challenger2 = Address::generate(&env);
+        let victim2 = Address::generate(&env);
         let arbiter = Address::generate(&env);
         let treasury = Address::generate(&env);
 
@@ -181,6 +193,8 @@ impl BoundWorld {
             auditor,
             challenger,
             victim,
+            challenger2,
+            victim2,
             arbiter,
             treasury,
         };
@@ -190,6 +204,7 @@ impl BoundWorld {
             world.operator2.clone(),
             world.auditor.clone(),
             world.challenger.clone(),
+            world.challenger2.clone(),
         ] {
             world.mint(&who, FUNDING);
         }
@@ -322,6 +337,8 @@ impl BoundWorld {
             + self.balance(&self.auditor)
             + self.balance(&self.challenger)
             + self.balance(&self.victim)
+            + self.balance(&self.challenger2)
+            + self.balance(&self.victim2)
             + self.balance(&self.treasury)
             + self.balance(&self.vault)
             + self.balance(&self.staking)
@@ -339,14 +356,57 @@ impl BoundWorld {
             .challenge(&self.challenger, &cert_id, &proof, &self.victim, &bond)
     }
 
+    /// File a claim naming an arbitrary challenger and victim. A claim window
+    /// admits claims from unrelated parties, so most §1 tests need this.
+    fn challenge_as(
+        &self,
+        challenger: &Address,
+        victim: &Address,
+        cert_id: u64,
+        proof: ProofType,
+        bond: i128,
+    ) -> u64 {
+        self.cm()
+            .challenge(challenger, &cert_id, &proof, victim, &bond)
+    }
+
     /// Restore blanket auth mocking after a test has narrowed it with
     /// `mock_auths`.
     fn mock_all_auths(&self) {
         self.env.mock_all_auths();
     }
 
+    /// Close the claim window this challenge belongs to, and settle it.
+    ///
+    /// DESIGN-V2 §1 replaced per-challenge resolution with a per-certificate
+    /// claim window, so "resolving" is now: wait out the window, then close it
+    /// once over every claim it admitted. The ledger clock is moved to the
+    /// close instant, which is where the extra 72 hours in most of these tests
+    /// comes from.
+    ///
+    /// A claim that was **false at filing** never opened a window — it was
+    /// rejected on the spot inside `challenge()` — so there is nothing to close
+    /// and this returns without doing anything.
     fn resolve(&self, challenge_id: u64) {
-        self.cm().resolve(&challenge_id);
+        let cert_id = self.cm().get_challenge(&challenge_id).cert_id;
+        self.settle_window(cert_id);
+    }
+
+    /// Advance to the window's close and settle. Permissionless: any address
+    /// may make this call, and here the test harness makes it.
+    fn settle_window(&self, cert_id: u64) {
+        let closes_at = self.cm().window_closes_at(&cert_id);
+        if closes_at == 0 {
+            return;
+        }
+        if self.env.ledger().timestamp() < closes_at {
+            self.set_time(closes_at);
+        }
+        self.cm().close_window(&cert_id);
+    }
+
+    fn verdict_of(&self, challenge_id: u64) -> CmVerdict {
+        self.cm().get_challenge(&challenge_id).verdict
     }
 
     // --- time --------------------------------------------------------------
@@ -937,11 +997,12 @@ fn hygiene_mode_kills_the_certificate_and_pays_a_flat_bounty_without_touching_th
     // A real covenant breach the arbiter confirms, but with no harm anybody
     // could evidence — the arbiter states zero. Hygiene mode stays reachable
     // through the arbiter path precisely because the quantity is theirs to set.
-    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
     w.cm().resolve_by_arbiter(&id, &true, &0i128);
+    w.settle_window(cert_id);
 
     // Certificate invalidated.
-    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
     assert_eq!(
         w.registry().get_certificate(&cert_id).status,
         CertStatus::Invalid
@@ -976,6 +1037,8 @@ fn hygiene_bounty_is_limited_to_the_forfeited_bond_pool() {
     let challenger_before = w.balance(&w.challenger);
     let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
     w.cm().resolve_by_arbiter(&id, &true, &0i128);
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
 
     // Bond back, bounty zero — nothing was invented out of the auditor's stake.
     assert_eq!(w.balance(&w.challenger), challenger_before);
@@ -1538,11 +1601,13 @@ fn fraud_settlement_against_one_certificate_leaves_the_others_reserve_untouched(
         + w.balance(&w.auditor)
         + w.balance(&w.challenger)
         + w.balance(&w.victim)
+        + w.balance(&w.challenger2)
+        + w.balance(&w.victim2)
         + w.balance(&w.treasury)
         + w.balance(&w.vault)
         + w.balance(&w.staking)
         + w.balance(&w.challenge_manager);
-    assert_eq!(total, FUNDING * 4);
+    assert_eq!(total, FUNDING * 5);
 
     // B's operator can still reclaim it in full once B's challenge window shuts.
     w.set_time(SETTLEMENT_DEADLINE);
@@ -1645,19 +1710,23 @@ fn arbiter_resolves_subjective_proof_types_both_ways() {
     w.deposit_reserve(cert_id, deposited);
     w.attest(cert_id);
 
-    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
-    // `BoundExceeded` is now provable on-chain, but only ever settles as
-    // hygiene — the arbiter path is still the only one that can attach a
-    // quantity to it, which is what this test is about. `FakeSignature` is the
-    // remaining proof type the trustless resolver genuinely cannot touch.
-    let unprovable = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
-    assert!(w.cm().try_resolve(&unprovable).is_err());
-    assert!(w.cm().get_challenge(&unprovable).verdict == CmVerdict::Pending);
+    // `FakeSignature` is the proof type no contract can verify: it is filed
+    // un-adjudicated and waits for the arbiter. A `BoundExceeded` claim on a
+    // certificate whose counter has not moved is *false at filing* and is
+    // rejected inside `challenge()` — the router is the source of truth for
+    // what it measures, and the arbiter may not overturn it.
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
+    // The window is open and cannot be closed early.
+    assert!(w.cm().try_close_window(&cert_id).is_err());
 
-    // The arbiter rules that the agent blew through its bound, at a cost of $300.
+    // The arbiter rules that the auditor's signature was forged, at a cost of
+    // $300. That records the verdict and the quantity; the money moves at
+    // window close, over the whole window.
     let stated_harm = 300_0000000i128;
     w.cm().resolve_by_arbiter(&id, &true, &stated_harm);
-    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::ChallengeWins);
+    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::Pending);
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
 
     //   victim = min(300, 100) = $100  <- the operator's own reserve, drained
     //   fee    = min(30, 0)    = $0    <- nothing left in that reserve
@@ -1684,7 +1753,8 @@ fn arbiter_resolves_subjective_proof_types_both_ways() {
     let (w2, cert_id2) = staked_and_attested();
     let id2 = w2.challenge(cert_id2, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
     w2.cm().resolve_by_arbiter(&id2, &false, &0i128);
-    assert!(w2.cm().get_challenge(&id2).verdict == CmVerdict::ChallengeFails);
+    w2.settle_window(cert_id2);
+    assert!(w2.verdict_of(id2) == CmVerdict::ChallengeFails);
     assert_eq!(w2.staking().get_stake(&w2.auditor), AUDITOR_STAKE);
     assert_eq!(w2.balance(&w2.victim), 0);
     assert_eq!(w2.balance(&w2.treasury), 0);
@@ -1731,8 +1801,9 @@ fn arbiter_stated_harm_beyond_the_collateral_is_still_capped_by_payable() {
     w.deposit_reserve(unrelated, RESERVE_CLAIM);
 
     let outrageous = 100_000_0000000i128; // $100,000
-    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
     w.cm().resolve_by_arbiter(&id, &true, &outrageous);
+    w.settle_window(cert_id);
 
     // payable = reserve + allocation = $400 + $600 = $1,000, and no more.
     assert_eq!(w.balance(&w.victim), deposited); // the whole reserve
@@ -1754,11 +1825,13 @@ fn arbiter_stated_harm_beyond_the_collateral_is_still_capped_by_payable() {
         + w.balance(&w.auditor)
         + w.balance(&w.challenger)
         + w.balance(&w.victim)
+        + w.balance(&w.challenger2)
+        + w.balance(&w.victim2)
         + w.balance(&w.treasury)
         + w.balance(&w.vault)
         + w.balance(&w.staking)
         + w.balance(&w.challenge_manager);
-    assert_eq!(total, FUNDING * 4);
+    assert_eq!(total, FUNDING * 5);
 }
 
 /// **The arbiter cannot aim the slash.** Whatever verdict and quantity they
@@ -1779,11 +1852,12 @@ fn arbiter_cannot_direct_the_slash_to_a_victim_or_a_challenger() {
     let id = w.cm().challenge(
         &w.challenger,
         &cert_id,
-        &ProofType::BoundExceeded,
+        &ProofType::FakeSignature,
         &w.challenger,
         &MIN_CHALLENGE_STAKE,
     );
     w.cm().resolve_by_arbiter(&id, &true, &50_000_0000000i128);
+    w.settle_window(cert_id);
 
     // Every slashed stroop is in the treasury.
     assert_eq!(w.balance(&w.treasury), ALLOCATION);
@@ -1803,7 +1877,7 @@ fn arbiter_cannot_direct_the_slash_to_a_victim_or_a_challenger() {
 #[test]
 fn arbiter_resolution_rejects_non_arbiter() {
     let (w, cert_id) = staked_and_attested();
-    let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
+    let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
 
     w.env.set_auths(&[]);
     assert!(w.cm().try_resolve_by_arbiter(&id, &true, &0i128).is_err());
@@ -1821,8 +1895,19 @@ fn double_resolve_is_rejected_after_a_real_settlement() {
     w.resolve(id);
     let victim_after_first = w.balance(&w.victim);
 
-    assert!(w.cm().try_resolve(&id).is_err());
+    assert!(w.cm().try_close_window(&cert_id).is_err());
     assert!(w.cm().try_resolve_by_arbiter(&id, &true, &0i128).is_err());
+    // And no second window may ever open on a settled certificate.
+    assert!(w
+        .cm()
+        .try_challenge(
+            &w.challenger,
+            &cert_id,
+            &ProofType::InsufficientReserve,
+            &w.victim,
+            &MIN_CHALLENGE_STAKE,
+        )
+        .is_err());
     assert_eq!(w.balance(&w.victim), victim_after_first);
 }
 
@@ -2659,6 +2744,7 @@ fn the_arbiter_still_slashes_the_same_breach_when_it_states_harm() {
     let harm = 1_200_0000000i128;
     let id = w.challenge(cert_id, ProofType::BoundExceeded, MIN_CHALLENGE_STAKE);
     w.cm().resolve_by_arbiter(&id, &true, &harm);
+    w.settle_window(cert_id);
 
     //   victim = min(1200, 1000) = $1,000  <- the operator's own reserve
     //   fee    = min(120, 0)     = $0      <- nothing left in that reserve
@@ -2677,14 +2763,26 @@ fn the_arbiter_still_slashes_the_same_breach_when_it_states_harm() {
     );
 }
 
-/// `FakeSignature` leaves no on-chain trace, so it still needs the arbiter and
-/// `resolve` still refuses it.
+/// `FakeSignature` leaves no on-chain trace, so it is filed un-adjudicated and
+/// waits for the arbiter. If the arbiter never rules, closing the window
+/// returns the bond in full rather than forfeiting it: a claim nobody judged is
+/// not a claim the challenger got wrong.
 #[test]
 fn fake_signature_still_needs_the_arbiter() {
     let (w, cert_id) = predicate_world(SMALL_BOUND);
+    let before = w.balance(&w.challenger);
     let id = w.challenge(cert_id, ProofType::FakeSignature, MIN_CHALLENGE_STAKE);
-    assert!(w.cm().try_resolve(&id).is_err());
-    assert!(w.cm().get_challenge(&id).verdict == CmVerdict::Pending);
+    let ch = w.cm().get_challenge(&id);
+    assert!(!ch.adjudicated);
+    assert!(!ch.proven);
+    assert!(ch.verdict == CmVerdict::Pending);
+
+    w.settle_window(cert_id);
+
+    assert!(w.verdict_of(id) == CmVerdict::Unadjudicated);
+    assert_eq!(w.balance(&w.challenger), before);
+    // The certificate survives — nothing was ever proven against it.
+    assert!(!w.cm().is_settled(&cert_id));
     assert_auditor_untouched(&w);
 }
 
@@ -2839,7 +2937,7 @@ fn premium_accrues_straight_line_and_the_protocol_share_is_never_claimable() {
     // Claiming again pays nothing.
     assert_eq!(w.claim_premium(cert_id), 0);
     assert_eq!(w.balance(&w.auditor), FUNDING - AUDITOR_STAKE + PREMIUM_POT);
-    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
 /// Claim, let more accrue, claim again: the running total is right and the
@@ -2864,7 +2962,7 @@ fn claim_accrue_claim_pays_the_right_total_and_never_twice() {
     assert_eq!(w.claim_premium(cert_id), PREMIUM_POT / 2);
     assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT);
     assert_eq!(w.balance(&w.premium_vault), 0);
-    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
 /// **The forfeiture rule, both halves, in real balances — and step 4 of the
@@ -2894,8 +2992,9 @@ fn a_slashed_auditor_forfeits_unclaimed_premium_and_keeps_what_they_claimed() {
     assert_eq!(w.claim_premium(cert_id), kept);
     assert_eq!(w.balance(&w.auditor), auditor_start + kept);
 
-    // Halfway, the shortfall is challenged and proven.
-    w.set_time(1_000 + YEAR / 2);
+    // The shortfall is challenged 72 hours before the halfway mark, so the
+    // claim window closes — and settlement runs — exactly halfway through.
+    w.set_time(1_000 + YEAR / 2 - CLAIM_WINDOW);
     let harm = RESERVE_CLAIM - deposited;
     assert_eq!(harm, 800_0000000);
     let challenge_id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
@@ -2937,7 +3036,7 @@ fn a_slashed_auditor_forfeits_unclaimed_premium_and_keeps_what_they_claimed() {
 
     // Conservation across every account, the premium vault included. Nothing
     // was created and nothing evaporated.
-    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
 /// The victim's share of a forfeited premium is capped by the harm the
@@ -2971,7 +3070,7 @@ fn forfeited_premium_never_pays_a_victim_more_than_the_proven_harm() {
     assert_eq!(w.balance(&w.premium_vault), 0);
     assert_eq!(w.premium().claimable(&cert_id), 0);
 
-    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
 /// **Hygiene mode.** The proof is true, nobody is evidenced as harmed and the
@@ -2992,7 +3091,9 @@ fn hygiene_mode_freezes_accrual_and_sends_only_the_unaccrued_share_to_the_treasu
     w.router().deposit(&w.operator, &(PREMIUM_BOUND * 2));
     w.router()
         .transfer(&w.operator, &w.agent, &(PREMIUM_BOUND * 2));
-    w.set_time(1_000 + YEAR / 2);
+    // 72 hours before the halfway mark, so the claim window closes exactly
+    // halfway through the term and the accrual arithmetic below stays clean.
+    w.set_time(1_000 + YEAR / 2 - CLAIM_WINDOW);
     w.router()
         .transfer(&w.agent, &w.victim, &(PREMIUM_BOUND + 1));
     assert!(w.router().spent(&cert_id) > PREMIUM_BOUND);
@@ -3057,11 +3158,13 @@ fn premium_and_accrual_on_one_certificate_do_not_touch_another() {
     );
 
     // Accrual is independent.
-    w.set_time(1_000 + YEAR / 2);
-    assert_eq!(w.accrued(cert_a), PREMIUM_POT / 2);
-    assert_eq!(w.accrued(cert_b), PREMIUM_POT);
+    w.set_time(1_000 + YEAR / 4);
+    assert_eq!(w.accrued(cert_a), PREMIUM_POT / 4);
+    assert_eq!(w.accrued(cert_b), PREMIUM_POT / 2);
 
-    // A's auditor is slashed and A's premium is forfeited entirely.
+    // A's auditor is slashed and A's premium is forfeited entirely. The claim
+    // is filed 72 hours before the halfway mark so its window closes there.
+    w.set_time(1_000 + YEAR / 2 - CLAIM_WINDOW);
     let challenge_id = w.challenge(cert_a, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
     w.resolve(challenge_id);
     assert_eq!(w.premium().claimable(&cert_a), 0);
@@ -3077,7 +3180,7 @@ fn premium_and_accrual_on_one_certificate_do_not_touch_another() {
     assert_eq!(w.claim_premium(cert_b), PREMIUM_POT * 2);
     assert_eq!(w.balance(&w.premium_vault), 0);
 
-    assert_eq!(w.total_in_the_system(), FUNDING * 4);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
 }
 
 /// An operator cannot buy coverage twice, and cannot buy it for a certificate
