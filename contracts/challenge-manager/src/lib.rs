@@ -405,6 +405,56 @@ impl ChallengeManager {
             }
         }
 
+        // ---- R1. Nothing may be proven against a certificate whose collateral
+        // the protocol has already released ---------------------------------
+        //
+        // The Registry's `get_cert_settlement_deadline` is documented as "the
+        // instant after which nothing can still be proven against this
+        // certificate, and therefore the instant its collateral may unwind".
+        // Both money contracts honour the second half of that sentence and
+        // release at exactly this instant. Nothing honoured the first half, and
+        // the gap was a High finding:
+        //
+        //   `reserve_shortfall` compares the certificate's IMMUTABLE claimed
+        //   reserve against the vault's LIVE balance, and `release_to_operator`
+        //   zeroes that balance at the deadline. So the moment the protocol
+        //   itself invites the operator to reclaim their money, every
+        //   honestly-completed certificate acquires a permanently true
+        //   `InsufficientReserve` proof. Filing it costs gas, re-freezes the
+        //   certificate — which traps the auditor's allocation, because
+        //   `release_allocation` is a separate call the auditor has to make
+        //   themselves — and 72 hours later sends the entire allocation to the
+        //   treasury. Nothing went wrong on that certificate and nobody is
+        //   compensated: it is free, total destruction of auditor capital.
+        //
+        // The rail is the deadline itself. A claim filed after it is settling
+        // against a pot the protocol already promised away, so it is refused.
+        //
+        // WHY ALL PROOF TYPES AND NOT JUST `InsufficientReserve`. The deadline's
+        // stated meaning is not proof-type-specific, and neither is the harm: a
+        // `FakeSignature` or hygiene claim filed after it freezes and slashes
+        // exactly the same already-released collateral. Special-casing one
+        // predicate would leave the same free freeze available through the
+        // others.
+        //
+        // AN ALREADY-OPEN WINDOW IS UNAFFECTED, and that is not an accident of
+        // ordering: `get_cert_settlement_deadline` returns the LATER of
+        // `expires_at + CHALLENGE_WINDOW` and the freeze this contract wrote
+        // when the window opened. While a window is open the freeze is its
+        // `closes_at`, which is in the future by construction, so joining
+        // claims pass this check and the window runs to completion and settles
+        // exactly as it would have.
+        //
+        // THE COST, STATED PLAINLY. A genuine breach discovered after the
+        // deadline is now unchallengeable. That is accepted because bounding
+        // precisely this is what the deadline is for — the alternative is
+        // collateral that can never safely unwind — and because the alternative
+        // reading leaves every honest certificate permanently attackable. It is
+        // recorded in DESIGN-V2 §10.
+        if now >= Self::cert_settlement_deadline(&env, cert_id) {
+            panic!("settlement_deadline_passed");
+        }
+
         // Bond moves into the ChallengeManager and stays at risk until the
         // window closes.
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
@@ -1153,6 +1203,17 @@ impl ChallengeManager {
         )
     }
 
+    /// The instant this certificate's collateral may unwind, read live so that
+    /// an open claim window's extension is included. See the R1 rail in
+    /// `challenge`.
+    fn cert_settlement_deadline(env: &Env, cert_id: u64) -> u64 {
+        env.invoke_contract(
+            &Self::registry(env),
+            &Symbol::new(env, "get_cert_settlement_deadline"),
+            Vec::from_array(env, [cert_id.into_val(env)]),
+        )
+    }
+
     fn cert_agent(env: &Env, cert_id: u64) -> Address {
         env.invoke_contract(
             &Self::registry(env),
@@ -1244,8 +1305,72 @@ impl ChallengeManager {
             reserve + allocation
         };
 
+        // ---- WHO MAY BE PAID COMPENSATION -------------------------------
+        //
+        // R2. Only an ARBITER-ASSESSED claim names a victim the protocol has
+        // any reason to believe in. A predicate-computed proof establishes that
+        // THE COVENANT WAS BROKEN, not that any particular person was harmed —
+        // that is the protocol's own founding principle, and it is exactly why
+        // `BoundExceeded` and `ExpiredCertificate` settle in hygiene mode with
+        // no victim payment at all. `InsufficientReserve` was treated
+        // differently only by inheritance from v1, and the consequence was a
+        // High finding:
+        //
+        //   the certificate-level shortfall is counted once and split equally
+        //   between the claims standing on it, each claim pays the address it
+        //   named, and an admitted claim gets its bond back in full. So `n`
+        //   extra TRUE claims from throwaway addresses cost gas plus 72 hours
+        //   of bond float and take `n/(n+1)` of the victim pool from the honest
+        //   victim. The contract was trying to compensate victims it has no way
+        //   to identify, so whoever showed up in the largest numbers took the
+        //   pot.
+        //
+        // ADDRESS DE-DUPLICATION IS NOT A FIX and was rejected: a sybil farms
+        // addresses, and dedupe only raises the price. Nor is a non-refundable
+        // filing fee (same — it prices the attack rather than removing it) or a
+        // cap on claims per window (the attacker fills the cap and forecloses
+        // the honest claimant outright). The dilution is not a bug in the
+        // splitting rule; it is the splitting rule being asked a question the
+        // predicate cannot answer.
+        //
+        // So the predicate group is paid NO victim compensation. Its share of
+        // the reserve draw goes to the TREASURY, which is not a party to the
+        // window and cannot be sybilled into being one. Every other number
+        // below — the size of the reserve draw, `reserve_left`, the fee pool,
+        // the slash — is unchanged, so the operator still pays first and the
+        // auditor still covers only the remainder. All that changes is the
+        // recipient of the predicate share.
+        //
+        // THE COST, STATED PLAINLY. The protocol's only trustless proof no
+        // longer compensates anyone directly. A victim's compensation now
+        // always requires the arbiter to name and size them. That narrows the
+        // trustless surface and it contradicts earlier framing; it is recorded
+        // in DESIGN-V2 §1 and §10 rather than hidden.
+        // The compensable claims and their total. `arbitrated_harm` — not
+        // `total_harm` — is the denominator every victim payout below divides
+        // by, and that is load-bearing: dividing by `total_harm` would let a
+        // single free predicate claim shave the assessed victim's share and
+        // send the difference to the treasury. It also makes the payout
+        // independent of how many predicate claims stand beside it, which is
+        // the property R2 needs.
+        let mut victim_weights: Vec<i128> = Vec::new(env);
+        let mut arbitrated_harm: i128 = 0;
+        let mut vi: u32 = 0;
+        while vi < admitted.len() {
+            let ch = Self::get(env, admitted.get(vi).unwrap());
+            let w = if ch.arbitrated {
+                weights.get(vi).unwrap()
+            } else {
+                0
+            };
+            victim_weights.push_back(w);
+            arbitrated_harm += w;
+            vi += 1;
+        }
+
         // 1. Victim compensation — from the OPERATOR'S OWN RESERVE for THIS
-        //    certificate only, split pro rata across every admitted claim.
+        //    certificate only, split pro rata across every admitted claim that
+        //    an arbiter assessed.
         //
         //    ATTACK CLOSED: self-dealing. A colluding operator that names an
         //    address it controls as "victim" is moving money from its left
@@ -1255,22 +1380,36 @@ impl ChallengeManager {
         //
         //    ATTACK CLOSED: foreclosure. Under the old lifecycle this pot was
         //    handed whole to whoever settled first. It is now shared by
-        //    everyone the window admitted, in proportion to what they proved,
-        //    so a minimum-bond self-challenge dilutes an honest claimant by
-        //    exactly its own share of harm and takes nothing else from them.
-        let victim_pool = if payable < reserve { payable } else { reserve };
+        //    everyone the window admitted, in proportion to what they proved.
+        //
+        //    ATTACK CLOSED: sybil dilution. See the note above — the shares of
+        //    the predicate group are zero here and fall to the treasury.
+        //
+        //    `reserve_draw` is the whole of step 1 and is sized exactly as it
+        //    always was, so `reserve_left`, `residual` and the slash below are
+        //    untouched by R2. `victim_pool` is the part of it that has somebody
+        //    to go to; the rest falls to the treasury.
+        let reserve_draw = if payable < reserve { payable } else { reserve };
+        let victim_pool = if reserve_draw < arbitrated_harm {
+            reserve_draw
+        } else {
+            arbitrated_harm
+        };
         let victim_paid = Self::distribute(
             env,
             admitted,
-            weights,
+            &victim_weights,
             victim_pool,
-            total_harm,
+            arbitrated_harm,
             &|ch: &Challenge, amount: i128| {
                 Self::pay_from_reserve(env, &vault, cert_id, &ch.victim, amount)
             },
         );
-        // Rounding remainder. Integer division truncates, so the shares can sum
-        // to a stroop or two under the pool. It goes to the TREASURY rather
+        // What step 1 did not hand to a victim. Two things land here now: the
+        // rounding remainder, because integer division truncates and the shares
+        // can sum to a stroop or two under the pool; and — since R2 — the whole
+        // share of every predicate-computed claim, which is a real amount and
+        // not a rounding crumb. Both go to the TREASURY rather
         // than to a claimant, because handing it to "the largest claim" or "the
         // first claim" would make a payout depend on tie-breaking — which is
         // ordering value, the exact thing this window exists to destroy. The
@@ -1278,10 +1417,10 @@ impl ChallengeManager {
         // one. The amount is bounded by (claims - 1) stroops, i.e. 10^-7 USDC
         // each. Nothing is stranded and nothing is conjured: the pots below are
         // sized so that the total leaving the reserve is exactly `victim_pool`.
-        if victim_pool - victim_paid > 0 {
-            Self::pay_from_reserve(env, &vault, cert_id, &treasury, victim_pool - victim_paid);
+        if reserve_draw - victim_paid > 0 {
+            Self::pay_from_reserve(env, &vault, cert_id, &treasury, reserve_draw - victim_paid);
         }
-        let reserve_left = reserve - victim_pool;
+        let reserve_left = reserve - reserve_draw;
 
         // 2. Challenger fees — a percentage of PROVEN HARM, out of the same
         //    reserve, never out of the stake, split pro rata by the harm each
@@ -1291,6 +1430,17 @@ impl ChallengeManager {
         //    auditor's live stake, so the most profitable target was whoever
         //    had posted the most collateral, regardless of how small the fraud
         //    was.
+        //
+        //    NOT CLOSED, AND DELIBERATELY SO: sybil claims still split this
+        //    pool. R2's fix removes them from the victim pot, not from here,
+        //    and that is the right line. This is a BOUNTY for surfacing a fact,
+        //    not compensation for a loss. Its total is fixed at 10% of proven
+        //    harm however many people file, so a sybil cannot enlarge it — they
+        //    can only take a share of one honest challenger's bounty, which is
+        //    the same trade the hygiene bounty already makes on purpose ("ONE
+        //    flat bounty for the window, split EQUALLY, not one bounty each").
+        //    Removing it would need an identity the predicate does not have.
+        //    Recorded in DESIGN-V2 §10.
         let mut fee_pool = total_harm * CHALLENGER_FEE_BPS / 10_000;
         if fee_pool > reserve_left {
             fee_pool = reserve_left;
@@ -1324,7 +1474,7 @@ impl ChallengeManager {
         //    capped by that certificate's allocation. Aggregating a window does
         //    not widen either cap: it is one slash against one allocation,
         //    sized by the harm of the whole window rather than of one claim.
-        let residual = payable - victim_pool;
+        let residual = payable - reserve_draw;
         let slash = if residual < allocation {
             residual
         } else {
@@ -1373,10 +1523,15 @@ impl ChallengeManager {
         //    The vault has no reference to AuditorStaking and moves only tokens
         //    it already holds.
         //
-        //    THE CAP is `total_harm - victim_pool`: the harm the operator's own
-        //    reserve did not already cover. Without it, a large premium could
-        //    pay victims more than the harm proven against the certificate,
-        //    breaking the waterfall's "capped by proven harm" invariant.
+        //    THE CAP is `arbitrated_harm - victim_pool`: the ASSESSED harm the
+        //    operator's own reserve did not already cover. Without it, a large
+        //    premium could pay victims more than the harm proven against the
+        //    certificate, breaking the waterfall's "capped by proven harm"
+        //    invariant. It is `arbitrated_harm` and not `total_harm` for R2's
+        //    reason: a predicate proof evidences no victim, so it must not
+        //    enlarge the pot the named victims share. When no arbiter assessed
+        //    anything the cap is zero and the whole forfeited premium goes to
+        //    the treasury, exactly as in hygiene mode.
         //
         //    WHY `payable` IS NOT RAISED BY THE FORFEITED PREMIUM. It was
         //    considered and rejected, because it is arithmetically a no-op and a
@@ -1388,7 +1543,7 @@ impl ChallengeManager {
         //    `victim_pool` is `reserve` either way, and `slash` is capped at
         //    `allocation` either way.
         if let Some(pv) = Self::premium_vault(env) {
-            let victim_cap = total_harm - victim_pool;
+            let victim_cap = arbitrated_harm - victim_pool;
             let received = env.invoke_contract::<i128>(
                 &pv,
                 &Symbol::new(env, "forfeit"),
@@ -1405,12 +1560,16 @@ impl ChallengeManager {
                 let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
                 let client = token::Client::new(env, &token_addr);
                 let me = env.current_contract_address();
+                // R2 again: this pot pays `ch.victim`, so it is sybil-diluted
+                // by exactly the same mechanism as step 1 and is restricted to
+                // exactly the same claims. The predicate group's share falls to
+                // the treasury on the line below.
                 let handed = Self::distribute(
                     env,
                     admitted,
-                    weights,
+                    &victim_weights,
                     received,
-                    total_harm,
+                    arbitrated_harm,
                     &|ch: &Challenge, amount: i128| client.transfer(&me, &ch.victim, &amount),
                 );
                 // Same rounding rule as step 1, and it matters more here: any
