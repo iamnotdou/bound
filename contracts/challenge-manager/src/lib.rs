@@ -7,7 +7,7 @@
 // item-level allow does not cover.
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
 };
 
 #[contracttype]
@@ -216,10 +216,13 @@ impl ChallengeManager {
             &Symbol::new(env, "get_cert_reserve"),
             Vec::from_array(env, [cert_id.into_val(env)]),
         );
+        // Per-certificate accounting: the proof compares the certificate's own
+        // claim against the certificate's own reserve. A deposit made for any
+        // other certificate is invisible here.
         let actual: i128 = env.invoke_contract(
             &reserve_vault,
             &Symbol::new(env, "get_balance"),
-            Vec::<Val>::new(env),
+            Vec::from_array(env, [cert_id.into_val(env)]),
         );
 
         actual < claimed
@@ -287,11 +290,12 @@ impl ChallengeManager {
             );
         }
 
-        // Drain whatever reserve remains to the victim.
+        // Drain whatever reserve remains *for this certificate* to the victim.
+        // Every other certificate's reserve in the same vault is untouched.
         let reserve_bal: i128 = env.invoke_contract(
             &vault,
             &Symbol::new(env, "get_balance"),
-            Vec::<Val>::new(env),
+            Vec::from_array(env, [ch.cert_id.into_val(env)]),
         );
         if reserve_bal > 0 {
             env.invoke_contract::<()>(
@@ -299,7 +303,11 @@ impl ChallengeManager {
                 &Symbol::new(env, "release_to_victim"),
                 Vec::from_array(
                     env,
-                    [ch.victim.clone().into_val(env), reserve_bal.into_val(env)],
+                    [
+                        ch.cert_id.into_val(env),
+                        ch.victim.clone().into_val(env),
+                        reserve_bal.into_val(env),
+                    ],
                 ),
             );
         }
