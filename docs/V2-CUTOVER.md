@@ -121,6 +121,24 @@ be rewritten.
   cheaper for being faster. Panics `not_arbitrated`, `claim_not_rejected`,
   `no_open_window`, `claim_window_closed`, or `live_claim_remains`. Purely
   additive — clients that never call it are unaffected. See DESIGN-V2 §10.
+- **`challenge` now panics `settlement_deadline_passed`** once
+  `Registry::get_cert_settlement_deadline(cert_id)` has been reached — for
+  **every** proof type. Same signature, one more rejection case, and it is a
+  security fix rather than a tidy-up: without it every honestly completed
+  certificate acquired a permanently true `InsufficientReserve` proof the moment
+  the operator lawfully reclaimed their reserve, and anyone could spend gas to
+  send the auditor's whole allocation to the treasury. A window opened **before**
+  the deadline is unaffected, because the freeze it writes becomes the live
+  deadline. **Client impact:** a UI that offers a "challenge" button on an
+  expired certificate has to hide it once the settlement deadline passes, and
+  `get_cert_settlement_deadline` is the number to read. See DESIGN-V2 §9.
+- **`InsufficientReserve` settlement no longer pays the named victim.** No
+  signature change and no new panic, but the **money moves somewhere else**: the
+  operator's reserve draw goes to the treasury and only arbiter-assessed claims
+  compensate a victim. A client that shows "you will be compensated if this
+  proof upholds" is now wrong, and any indexer reconciling settlement transfers
+  by recipient will see treasury payments where it used to see victim payments.
+  See DESIGN-V2 §1.
 
 ### Registry — the freeze, and one additive getter
 
@@ -326,16 +344,44 @@ whose reserve is not funded, so an auditor can no longer be walked onto a
 certificate that is provably fraudulent the moment they sign it. See the
 Registry section above for the ABI and workflow consequences.
 
-> **What it does not fix.** It does not stop the reserve leaving _after_
-> attestation, which is what the `InsufficientReserve` proof exists for. In
-> practice the vault's own lock narrows that window hard — the money cannot be
-> released before the settlement deadline — but a post-deadline withdrawal is
-> still provable fraud against a still-slashable allocation, and
-> `a_reserve_withdrawn_after_attestation_is_still_provable_fraud` demonstrates
-> exactly that. It also does not close **collusion**: §3's allowlist of vault
+> **What it does not fix.** It does not close **collusion**: §3's allowlist of vault
 > wasm hashes was never built, so `cert.reserve_vault_contract` remains
 > operator-supplied and untrusted. That is why this check reads the
 > ChallengeManager's vault instead of the certificate's.
+
+**Review R1 is fixed.** A claim may no longer be filed once a certificate's
+settlement deadline has passed. Before this, the moment the protocol invited the
+operator to reclaim their reserve, every honestly completed certificate acquired
+a permanently true `InsufficientReserve` proof — free to file, by anybody, with
+no fraud anywhere in the story — and filing it re-froze the certificate and sent
+the auditor's entire allocation to the treasury.
+
+> **What it costs.** A genuine breach discovered after the deadline is
+> unchallengeable. That is what the deadline is for; the alternative is
+> collateral that can never safely unwind. Note also that the earlier claim in
+> this document that a post-attestation withdrawal "is still provable fraud" was
+> wrong in the other direction too: the vault's lock means an attested
+> certificate's reserve is monotone until its deadline, so there is nothing left
+> to prove against it before then. See DESIGN-V2 §9.
+
+**Review R2 is fixed.** `InsufficientReserve` pays no victim compensation.
+Sybil claims used to take `n/(n+1)` of the victim pool from an honest claimant
+for the price of gas plus 72 hours of bond float, and address de-duplication
+would only have raised that price.
+
+> **What it costs, and it is the biggest single narrowing in this cutover.** The
+> protocol's only trustless proof no longer compensates anyone directly. The
+> reserve still covers proven harm, but **proving harm now always requires the
+> arbiter**. This contradicts earlier framing in DESIGN-V2 and in this document,
+> and it makes the still-open arbiter veto (review R4) a wider trust than it was.
+> See DESIGN-V2 §1.
+
+**Reviews R3 and R4 are not fixed.** An ignored `FakeSignature` claim still buys
+a 72-hour freeze for the price of gas, because an `Unadjudicated` verdict returns
+the bond in full; and `resolve_by_arbiter` can still overturn a true
+`InsufficientReserve` claim and forfeit the honest challenger's bond. Both are
+Medium, both are demonstrated in section 14 of the cross-contract harness, and
+both are deliberately left as filed.
 
 **L3 is not fixed.** `FeeEscrow` is still a singleton whose `Released` flag never
 resets, so it pays out exactly once ever, and the ChallengeManager still stores

@@ -320,11 +320,24 @@ impl BoundWorld {
     ///
     /// The drawdown goes through `pay_from_reserve`, which is
     /// ChallengeManager-only on the live network and is reachable here only
-    /// because the harness mocks auths. It stands in for the slower real
-    /// sequence — wait out the settlement deadline, then `release_to_operator`
-    /// — because that sequence would move every scenario's clock past expiry
-    /// and change what the rest of each test is measuring. The end state is
-    /// identical: the certificate is attested and its vault is short.
+    /// because the harness mocks auths.
+    ///
+    /// **Read this before trusting it as a model of reality.** It used to stand
+    /// in for the slower real sequence — wait out the settlement deadline, then
+    /// `release_to_operator` — and since the review's R1 that sequence no
+    /// longer produces a challengeable certificate: filing is refused from the
+    /// deadline onwards, and before the deadline the vault's lock means an
+    /// attested certificate's reserve is monotone. See
+    /// `an_attested_reserve_cannot_fall_short_before_the_settlement_deadline`.
+    ///
+    /// So this helper now builds a state the live contracts cannot reach for an
+    /// **attested** certificate. It is kept because the scenarios below are
+    /// about the settlement waterfall's arithmetic — pot sizes, caps, pro-rata
+    /// shares, conservation — and that arithmetic has to be exercised against a
+    /// certificate that has an allocation behind it. What is genuinely
+    /// reachable is the same shortfall on a certificate that was never attested
+    /// (DESIGN-V2 §4 refuses attestation over an unfunded vault), where there
+    /// is no allocation to slash.
     fn withdraw_reserve_to(&self, cert_id: u64, to: &Address, amount: i128) {
         if amount > 0 {
             self.vault().pay_from_reserve(&cert_id, to, &amount);

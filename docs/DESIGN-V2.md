@@ -101,6 +101,51 @@ Equal shares within the predicate group rather than pro rata, because the
 predicate cannot tell the claimants apart: it reads the vault, not the victims.
 Equality is also the only order-independent answer.
 
+**The attack this did NOT close is harm dilution, and the answer is R2.** Equal
+shares stop `n` copies of a proof enlarging the slash. They did not stop `n`
+copies of a proof taking `n/(n+1)` of the **victim pool** away from an honest
+claimant: nothing de-duplicated a challenger or a victim address, and an
+admitted claim gets its bond back in full, so the sybil's cost was gas plus 72
+hours of bond float. Address de-duplication is not a fix — a sybil farms
+addresses. Neither is a non-refundable filing fee, nor a cap on claims per
+window; the first prices the attack, the second lets the attacker fill the cap
+and foreclose the honest claimant outright.
+
+The fix is to stop asking the predicate a question it cannot answer. **A
+predicate-computed proof establishes that the covenant was broken, not that any
+particular person was harmed.** That is this document's own founding principle,
+and it is precisely why `BoundExceeded` and `ExpiredCertificate` settle in
+hygiene mode with no victim payment at all. `InsufficientReserve` was treated
+differently only by inheritance from v1, and the dilution attack is the
+consequence: the contract was trying to compensate victims it has no way to
+identify, so whoever showed up in the largest numbers took the pot.
+
+So **`InsufficientReserve` pays no victim compensation.** The operator's reserve
+is still drawn — the operator does not keep money they failed to commit — but
+the draw goes to the **treasury**, which is not a party to the window and cannot
+be sybilled into being one. The challenger is still paid their fee. Victim
+compensation flows only from **arbiter-assessed harm**, the one mechanism that
+can name and size a victim. The equal split above survives unchanged; it now
+sizes the slash and the fee, and nothing else.
+
+Mechanically, the victim pot is `min(reserve_draw, arbitrated_harm)` and is
+divided by **assessed** harm, not by `total_harm`. Dividing by `total_harm`
+would let a single free predicate claim shave the assessed victim's share and
+send the difference to the treasury — a smaller attack, but the same one. With
+the assessed denominator the assessed victim's payout does not depend on how
+many predicate claims stand beside it, at any `n`.
+
+**THE COST, STATED PLAINLY, AND IT CONTRADICTS EARLIER FRAMING IN THIS
+DOCUMENT.** The protocol's only trustless proof no longer compensates anyone
+directly. The reserve still covers proven harm, but **proving harm now always
+requires the arbiter**. This narrows the trustless surface, and it makes §10's
+R4-style arbiter veto a wider trust than it was. Everywhere above that describes
+`InsufficientReserve` as paying a victim describes the pre-R2 contract.
+
+**Rejected — anything that merely raises the attacker's cost.** A half-measure
+that makes the sybil pay more is not a fix; `n` is the attacker's free parameter
+and the certificates worth attacking are the ones where the pot dwarfs the bond.
+
 ### Rounding: the remainder goes to the treasury
 
 Every pro-rata share is `pool * weight / total_harm`, truncating, so the shares
@@ -141,9 +186,15 @@ proposal, not a researched number.
   paid equals the available collateral exactly.
 - `the_pro_rata_remainder_goes_to_the_treasury_and_never_goes_missing`
 - `a_self_challenge_cannot_foreclose_an_honest_claim_in_the_same_window` — the
-  headline. Runs the attack and a control world side by side and asserts the
-  honest claimant's recovery fell by exactly its own pro-rata dilution
-  (one of two claims instead of one of one) and by nothing else.
+  headline. Runs the attack and a control world side by side. Since R2 the
+  honest claimant is on the arbiter-assessed path, which is where compensation
+  now lives, and the property is stronger than it was: their recovery is
+  **identical** with and without the free self-challenge, rather than halved by
+  it.
+- Section 14: `sybil_claims_dilute_an_honest_victim_and_every_sybil_bond_comes_back`
+  (the review's PoC, converted — three sybils take nothing from an assessed
+  victim) and
+  `a_predicate_proof_pays_no_victim_and_draws_the_reserve_to_the_treasury`.
 - `filing_order_inside_a_window_changes_no_payout`
 - `a_claim_filed_after_the_window_closes_is_rejected`
 - `an_open_window_freezes_the_reserve_and_the_allocation_past_expiry`
@@ -586,6 +637,74 @@ the fraud proof upholding. Plus per-certificate accounting: two certificates on
 one vault, funding one must not back the other; withdrawal against one must not
 draw down the other's reserve.
 
+### What the trustless proof is, after R1 and R2
+
+The per-certificate refactor restored `InsufficientReserve`. The adversarial
+review then showed that the restored proof was doing two jobs it could not do,
+and both have been taken off it. What is left is narrower than this section
+implies, and the difference belongs here rather than only in §10.
+
+**R1 — it may no longer be filed after the certificate's settlement deadline.**
+`reserve_shortfall` compares the certificate's **immutable** claimed reserve
+against the vault's **live** balance, and `release_to_operator` zeroes that
+balance at `expires_at + CHALLENGE_WINDOW`. So at the exact instant the protocol
+invites the operator to reclaim, every honestly completed certificate acquired a
+permanently true proof — free to file, for anybody, with no fraud anywhere in
+the story. Filing it re-froze the certificate, which trapped the auditor's
+allocation (`release_allocation` is a separate call the auditor makes
+themselves, unlocking at the same timestamp, with no atomic unwind and no
+ordering requirement), and 72 hours later sent the whole allocation to the
+treasury. Nobody was compensated and nobody profited: pure destruction of
+auditor capital, priced at gas.
+
+The rail is the deadline itself. `Registry::get_cert_settlement_deadline` is
+already documented as "the instant after which nothing can still be proven
+against this certificate, and therefore the instant its collateral may unwind";
+both money contracts honoured the second half and nothing honoured the first.
+`challenge` now refuses **any** filing from that instant onwards.
+
+- **All proof types, not just this one.** The deadline's meaning is not
+  proof-type-specific, and a `FakeSignature` or hygiene claim filed after it
+  freezes and slashes exactly the same already-released collateral.
+  Special-casing the predicate would leave the free freeze available through the
+  others.
+- **An already-open window is unaffected, by construction.**
+  `get_cert_settlement_deadline` returns the **later** of
+  `expires_at + CHALLENGE_WINDOW` and the freeze the ChallengeManager writes
+  when a window opens. While a window is open the deadline **is** its
+  `closes_at`, so joining claims pass the check and the window runs to
+  completion and settles normally.
+- **Nothing legitimately empties the reserve before the deadline.** §4 requires
+  the money to be there at attestation; `release_to_operator` is locked until
+  the deadline (the later of its deposit-time snapshot and the live one);
+  `pay_from_reserve` is ChallengeManager-only and runs only inside a settlement
+  that kills the certificate anyway. So for an attested certificate the balance
+  is monotone until the deadline, and the rail cannot swallow a real claim.
+  `an_attested_reserve_cannot_fall_short_before_the_settlement_deadline` pins
+  this down on every ledger it matters on.
+- **The cost: a genuine breach discovered after the deadline is
+  unchallengeable.** That is accepted, because bounding exactly this is what the
+  deadline is _for_ — the alternative is collateral that can never safely
+  unwind — and because the alternative reading leaves every honest certificate
+  permanently attackable by anyone.
+
+**R2 — it pays no victim.** See §1. A predicate establishes that the covenant
+broke, not that a named address lost anything.
+
+**Where that leaves the proof.** `InsufficientReserve` is still trustless and
+still unforgeable, and its remaining job is real: it kills an under-funded
+certificate before or during its life, draws the operator's uncommitted money to
+the treasury, slashes the auditor who vouched for it, and pays the challenger a
+bounty for surfacing it. What it no longer does is compensate anybody or reach
+past the deadline. Combined with §4, the honest reading is that **a trustless
+proof can no longer, on its own, move money to a person** — that requires the
+arbiter. This is a narrowing and it is stated rather than hidden.
+
+**Tests** (section 14):
+`a_lawful_reserve_withdrawal_manufactures_a_free_total_slash_of_the_allocation`
+(the review's PoC, converted — the filing is refused and everybody ends whole)
+and `a_window_opened_before_the_deadline_still_admits_claims_and_settles`.
+
 ---
 
 ## 10. Per-certificate stake allocation and one uniform settlement waterfall
@@ -642,27 +761,37 @@ divided pro rata by each claim's share of `total_harm`:
 total_harm = Σ admitted claim weights   (see §1 on how weights aggregate)
 payable    = min(total_harm, reserve_for_this_cert + allocation_for_this_cert)
 
-1. victim compensation  <- the operator's own reserve for THIS certificate only
+reserve_draw   = min(payable, reserve)            <- all of step 1, unchanged
+arbitrated_harm = Σ weights of ARBITER-ASSESSED admitted claims
+
+1. reserve draw         <- the operator's own reserve for THIS certificate only
+                           of which min(reserve_draw, arbitrated_harm) is paid
+                           to the ASSESSED victims pro rata by assessed harm;
+                           the rest -> TREASURY  (§1, R2)
 2. challenger fee       <- the same reserve, 10% of PROVEN HARM
 3. auditor slash        -> the TREASURY, capped by harm and by allocation
-4. forfeited premium    -> the victim, capped by harm the reserve did not
-                           cover; the remainder + the unaccrued share -> TREASURY
+4. forfeited premium    -> the assessed victims, capped by ASSESSED harm the
+                           reserve did not cover; the remainder + the unaccrued
+                           share -> TREASURY
 5. allocation retires; unslashed remainder returns to free stake
 6. certificate invalidated; challenger's bond returned
 ```
 
-| Rule                                                        | Attack it closes                                                                                                                                                                                       |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Victim paid **only** from the operator's own reserve        | A colluding operator paying its own colluder moves money from its left pocket to its right. Manufacturing a proof against yourself extracts nothing, so victim naming can stay as permissive as it is. |
-| Slashed stake goes **only** to the treasury                 | Removes the prize. Nobody who can trigger a proof can receive the auditor's money.                                                                                                                     |
-| Challenger fee is a % of **proven harm**, from the reserve  | v1's 20%-of-stake fee made hunting _auditors_ profitable rather than hunting _fraud_.                                                                                                                  |
-| Slash capped by allocation **and** by harm                  | A manufactured $10 breach cannot cost an auditor a $50,000 bond, and one bad certificate cannot destroy a book.                                                                                        |
-| Unslashed remainder returns to free stake                   | Otherwise auditor capital is stranded.                                                                                                                                                                 |
-| Forfeited premium to the victim is capped by uncovered harm | Otherwise a large premium could pay a victim more than the harm proven against the certificate, breaking the "capped by proven harm" rail.                                                             |
+| Rule                                                                     | Attack it closes                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Victim paid **only** from the operator's own reserve                     | A colluding operator paying its own colluder moves money from its left pocket to its right. Manufacturing a proof against yourself extracts nothing, so victim naming can stay as permissive as it is. Since R2 it is stronger still: a self-dealer's predicate claim is paid nothing at all, so the reserve draw leaves for the treasury and the pair ends up **down** by the harm they manufactured. |
+| Victim paid **only** on ARBITER-ASSESSED harm (R2)                       | A predicate proves the covenant broke, not that a named address lost anything, so `n` sybil claims can no longer dilute an honest victim. The cost: the trustless proof compensates nobody directly. See §1.                                                                                                                                                                                           |
+| Slashed stake goes **only** to the treasury                              | Removes the prize. Nobody who can trigger a proof can receive the auditor's money.                                                                                                                                                                                                                                                                                                                     |
+| Challenger fee is a % of **proven harm**, from the reserve               | v1's 20%-of-stake fee made hunting _auditors_ profitable rather than hunting _fraud_.                                                                                                                                                                                                                                                                                                                  |
+| Slash capped by allocation **and** by harm                               | A manufactured $10 breach cannot cost an auditor a $50,000 bond, and one bad certificate cannot destroy a book.                                                                                                                                                                                                                                                                                        |
+| Unslashed remainder returns to free stake                                | Otherwise auditor capital is stranded.                                                                                                                                                                                                                                                                                                                                                                 |
+| Forfeited premium to the victim is capped by uncovered **assessed** harm | Otherwise a large premium could pay a victim more than the harm proven against the certificate, breaking the "capped by proven harm" rail. Assessed rather than total since R2, so a predicate claim cannot enlarge the pot named victims share; with no assessed claim in the window the cap is zero and the whole forfeited premium goes to the treasury.                                            |
 
 `harm` for `InsufficientReserve` is the shortfall, claimed reserve minus actual.
 The named victim is deliberately not part of it: a named victim is a _filter, not
 a proof_, and receiving a payment is evidence of being paid, not of being harmed.
+Since R2 the named victim on a predicate claim is not part of the **payout**
+either — the draw goes to the treasury. See §1.
 
 **The arbiter states the quantity as well as the verdict.**
 `resolve_by_arbiter(challenge_id, upheld, harm)` feeds its `harm` into the same
@@ -970,20 +1099,37 @@ until the certificate's settlement deadline, the operator cannot legitimately
 withdraw it afterwards either, until that deadline passes. The cheap version of
 this attack — publish empty, get attested, self-challenge the same day — is gone.
 
-What remains is the expensive version. The operator must genuinely post the full
-reserve and leave it locked for the certificate's whole life plus the challenge
-window, and only then withdraw it and self-challenge against an auditor who has
-not yet reclaimed their allocation. That still destroys the allocation to the
-treasury, and the operator still gains nothing by it — so the griefing residue
-survives, at a far higher cost to the griefer and with a warning the auditor can
-act on. `a_reserve_withdrawn_after_attestation_is_still_provable_fraud` is the
-test that keeps this honest. The residue is real, it is an open problem, and no
-fix is invented here. It needs a deliberate decision. Candidate
-directions, none chosen: requiring the challenger not to be the certificate's own
-operator (weak — addresses are free); routing a self-challenge's slash back to
-the auditor rather than the treasury; or treating an operator-initiated
-`InsufficientReserve` proof as hygiene too, which trades this griefing vector for
-a way for an operator to escape a real reserve shortfall.
+What remained was described here as "the expensive version": post the full
+reserve, leave it locked for the certificate's whole life plus the challenge
+window, then withdraw it at the deadline and self-challenge against an auditor
+who has not yet reclaimed their allocation.
+
+**That paragraph was wrong about the price, and the adversarial review's R1 is
+why.** The withdrawal at the deadline is not a sacrifice — it is the operator
+getting all of their money back, exactly as the protocol invites. There was no
+under-funding, no lost reserve, and the certificate being killed had already
+expired and was worthless. And the attacker need not be the operator at all:
+the proof was true for anybody the moment the vault emptied. So this was not an
+expensive griefing residue but a **free, total slash available to any address
+against every honestly completed certificate**.
+
+**Fixed** (`f2de15b`): `challenge` refuses any filing from the certificate's
+settlement deadline onwards. See §9's "What the trustless proof is, after R1 and
+R2" for the rail, why it covers all proof types, why an already-open window is
+unaffected, and what it costs. The test that used to keep this residue honest,
+`a_reserve_withdrawn_after_attestation_is_still_provable_fraud`, has been
+converted into
+`an_attested_reserve_cannot_fall_short_before_the_settlement_deadline`, which
+asserts the opposite and shows why the opposite is safe.
+
+**What is left of the residue.** The cheap version was closed by §4 and the
+expensive version turns out not to have existed, because the vault lock means an
+attested certificate's reserve is monotone until its deadline. An operator who
+wants their auditor slashed must therefore under-fund **before** attestation —
+which §4 refuses — or persuade the arbiter. The candidate directions listed here
+before (barring the operator from challenging their own certificate; routing a
+self-challenge's slash to the auditor; treating an operator-initiated proof as
+hygiene) are no longer needed for this and are dropped.
 
 ### The claim window's own residue
 
@@ -1046,7 +1192,23 @@ a way for an operator to escape a real reserve shortfall.
   `InsufficientReserve` claimants share the shortfall equally, because the
   predicate cannot tell them apart. If one genuinely lost far more than the
   other, only the arbiter path can express that — and the arbiter path is
-  trusted. This is the honest limit of a certificate-level predicate.
+  trusted. This is the honest limit of a certificate-level predicate. **R2 took
+  this to its conclusion**: the predicate group is no longer paid compensation
+  at all, and the arbiter path is the only one that is. See §1.
+- **Sybil claims still split the challenger FEE, and that is deliberate.** R2
+  removed them from the victim pot, not from the fee, and the line is drawn
+  there on purpose. The fee is a **bounty for surfacing a fact**, not
+  compensation for a loss; its total is fixed at 10% of proven harm however many
+  people file, so a sybil cannot enlarge it — they can only take a share of one
+  honest challenger's bounty. That is the same trade the hygiene bounty already
+  makes on purpose ("one flat bounty for the window, split equally, not one
+  bounty each"). Removing it would need an identity the predicate does not have,
+  and the exposure is bounded at 10% of harm rather than 100% of it.
+- **R2 widened the arbiter's power, and therefore R4's.** Victim compensation
+  now flows only through `resolve_by_arbiter`, and `resolve_by_arbiter` can
+  still overturn a true `InsufficientReserve` claim (R4, still open). The two
+  should be read together: the arbiter was already trusted to state harm, and is
+  now the only route to being paid for it.
 - **An arbiter who overstates harm now dilutes the honest claimants sharing the
   window,** as well as enlarging the slash. The waterfall's rails still hold —
   nothing reaches anyone who could have bribed them — but the dilution is a new
