@@ -172,8 +172,9 @@ Per-certificate coverage premiums: priced on `bound × duration`, accruing
 straight-line to the certificate's auditor as yield on their allocation, with a
 configurable protocol fee share, and forfeited to the victim and treasury when
 that auditor is slashed. It is a **new contract, not an extension of
-`fee-escrow`** — that singleton pays out once ever (defect L3) and is still off
-the settlement path.
+`fee-escrow`** — that singleton pays out once ever (defect L3), is still off the
+settlement path, and should be deleted before the deploy (see "What v2 now fixes"
+below for why that is blocked on an SDK change).
 
 Needs its own bindings entry, its own `deployments/` key (`premiumVault`, not
 yet added — see step 5) and an SDK surface.
@@ -259,21 +260,62 @@ The order matters; steps 3 and 4 are the ones that bite.
 
 ---
 
-## What does not change
+## What v2 now fixes, and what it still does not
 
-- `publish` still authenticates only the operator and still overwrites the
-  agent-to-certificate mapping. **L1 is not fixed by any of this work.**
-  Enumerating by certificate id remains mandatory, in the SDK and anywhere else.
-- No TTL management anywhere. **L2 is not fixed.** A v2 deployment is on the same
-  archival clock as v1.
-- FeeEscrow's one-shot release. **L3 is not fixed**; it is simply not on the
-  settlement path. The premium economy deliberately did **not** extend it — a
-  singleton whose `Released` flag never resets cannot serve many certificates —
-  so `premium-vault` is a separate contract and `fee-escrow` stays dead weight.
+**L1 is fixed.** `Registry::publish` requires `agent.require_auth()` alongside
+the operator's. A third party can no longer publish a certificate naming an
+agent it does not control, so `verify(agent)` can no longer be poisoned with a
+junk `Pending` certificate. The mapping is still overwritable — that is how
+renewal works, since `expires_at` is immutable — but only by the operator and
+agent together, and never while the previous certificate's claim window is open.
 
-Anyone reading this as "v2 fixes the five defects" should stop: it fixes L5 and
-L4-adjacent issues. L1, L2 and L3 are still open and still belong in the
-disclosure.
+> **This changes the client.** Publishing now needs **two signatures in one
+> transaction**. Soroban permits a single contract call per transaction, so a UI
+> cannot split this into two sequential submissions: it must collect the agent's
+> signed authorization entry and include it in the operator's transaction. Any
+> caller that signs only as the operator will now fail. This is a step-6 item
+> for bound-web and a step-5 item for the SDK.
+
+**L2 is fixed.** All eight contracts extend TTLs. Every write path bumps the
+instance entry, and every persistent entry a contract creates is extended to
+`TTL_EXTEND_TO` (120 days) whenever fewer than `TTL_THRESHOLD` (60 days) remain.
+The reasoning for both numbers is on the constants in
+`contracts/registry/src/lib.rs`.
+
+> **TTL extension is rent, and somebody pays it.** The charge lands on whoever
+> submits the transaction that triggers the bump — the operator, agent, auditor,
+> arbiter or challenger who was already paying for that call. The protocol never
+> pays. No read-only path was turned into a state change, which leaves one
+> deliberate residual: **a certificate nobody transacts against at all for 120
+> days still archives.** Publishing, attesting, depositing, paying a premium,
+> filing a challenge or settling all reset the clock. Certificates are expected
+> to be shorter-lived than that, but a long-dated certificate left completely
+> idle needs a touch.
+
+**L3 is not fixed.** `FeeEscrow` is still a singleton whose `Released` flag never
+resets, so it pays out exactly once ever, and the ChallengeManager still stores
+its address without ever calling it. The premium economy deliberately did **not**
+extend it — a singleton whose flag never resets cannot serve many certificates —
+so `premium-vault` is a separate contract and `fee-escrow` remains dead weight
+that nothing depends on.
+
+**It should be deleted before the v2 deploy, and that deletion is blocked on a
+TypeScript change, not a Rust one.** Removing the crate from the workspace means
+`scripts/deploy-all.ts` can no longer supply an address, and
+`packages/sdk/src/deployments.ts` declares `contracts.feeEscrow` as a **required**
+field of `Deployment` (with `packages/sdk/src/deployments.test.ts` asserting the
+key list). The removal is therefore: make `feeEscrow` optional in that interface
+and in `serializeDeployment`, drop the assertions that require it, then delete
+`contracts/fee-escrow`, its workspace member, its `deploy`/`initialize`/env-write
+in `deploy-all.ts`, and the `fee_escrow` argument from
+`ChallengeManager::initialize`. Do it in step 5, alongside the other SDK work —
+the wasm artifact count drops from 8 to 7 at that point. Shipping a known-broken
+contract that holds funds into a fresh deployment is not defensible, and there is
+no upgrade path to remove it afterwards.
+
+Anyone reading this as "v2 fixes the five defects" should stop: it fixes L5, L1,
+L2 and L4-adjacent issues. **L3 is still open and still belongs in the
+disclosure** until the removal above lands.
 
 ---
 
