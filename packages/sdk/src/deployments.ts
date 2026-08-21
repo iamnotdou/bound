@@ -52,6 +52,12 @@ export interface Deployment {
      * trustless proofs are unavailable against it.
      */
     paymentRouter?: string;
+    /**
+     * The PremiumVault (coverage premiums, priced on bound x duration, accruing
+     * to the auditor as yield). Optional for the same reason as paymentRouter:
+     * a record without it is a deployment that predates the premium economy.
+     */
+    premiumVault?: string;
   };
 }
 
@@ -105,6 +111,7 @@ export function serializeDeployment(d: Deployment): string {
       challengeManager: d.contracts.challengeManager,
       usdc: d.contracts.usdc,
       ...(d.contracts.paymentRouter ? { paymentRouter: d.contracts.paymentRouter } : {}),
+      ...(d.contracts.premiumVault ? { premiumVault: d.contracts.premiumVault } : {}),
     },
   };
   return `${JSON.stringify(body, null, 2)}\n`;

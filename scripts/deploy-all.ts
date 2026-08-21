@@ -132,6 +132,7 @@ function main() {
         challengeManager: addr.challenge_manager,
         usdc: usdcAddr,
         paymentRouter: addr.payment_router,
+        premiumVault: addr.premium_vault,
         // NOTE: the PremiumVault address is deliberately NOT written here yet.
         // `serializeDeployment`'s contract map lives in `packages/sdk/src`, and
         // this branch is Rust-and-deploy-script-only by design (see
