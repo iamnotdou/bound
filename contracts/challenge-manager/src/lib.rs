@@ -897,9 +897,12 @@ impl ChallengeManager {
     /// renewed **before** the payment", and this asks "not renewed as of
     /// resolution". A renewal filed after the late payment therefore also
     /// defeats the proof, which is a cure path in the sense of §2 — and §2's
-    /// evaluate-at-filing machinery does not exist yet. It errs toward not
-    /// killing a certificate, and it is recorded as an open gap in
-    /// `docs/DESIGN-V2.md` §10 rather than silently accepted.
+    /// evaluate-at-filing machinery now exists, so such a claim resolves as
+    /// `Cured` and the challenger's bond comes back whole rather than being
+    /// forfeited for a renewal they could not have foreseen. The coarseness
+    /// itself remains, errs toward not killing a certificate, and is recorded
+    /// as an open gap in `docs/DESIGN-V2.md` §10 rather than silently
+    /// accepted.
     ///
     /// An agent that never enrolled has no post-expiry record at all, so the
     /// predicate is false for it.

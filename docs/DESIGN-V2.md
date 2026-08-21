@@ -28,22 +28,98 @@ Every decision below is downstream of that sentence.
 
 ## 1. First-resolver-takes-all — CRITICAL
 
+**Status: implemented, not deployed** (branch `feat/claim-window`). Landed
+together with §2, because a claim window without filing-time evaluation is a
+strictly worse protocol than what it replaced.
+
 **Problem.** If one settlement extinguishes a certificate, a self-challenge for
 the minimum bond permanently forecloses every honest claim behind it. The attack
 costs the minimum bond and destroys the entire coverage.
 
 **Decision. A claim window that aggregates before paying.**
 
-A first valid challenge opens a fixed **claim window** (proposed: 72 hours of
-ledger time) rather than settling. During the window any party may file an
-additional claim against the same certificate. The certificate is frozen: no new
-attestation, no reserve withdrawal, no expiry-based escape. At window close,
-settlement runs **once**, over all admitted claims:
+A first valid challenge opens a fixed **claim window** — `CLAIM_WINDOW_SECONDS`,
+**72 hours** of ledger time — rather than settling. During the window any party
+may file an additional claim against the same certificate. The certificate is
+frozen: no new attestation, no reserve withdrawal, no allocation release, no
+expiry-based escape. At window close, settlement runs **once**, over all
+admitted claims:
 
 - Claims are paid **pro rata** from the available collateral when total proven
   harm exceeds it, in full when it does not.
 - Pro rata, not first-come — ordering within a window must not be worth anything,
   or we have rebuilt the race we are removing.
+
+### What was built
+
+`ChallengeManager::challenge` no longer settles. It evaluates the predicate
+(§2), then either **opens** a window (`DataKey::Window(cert_id)`, a `ClaimWindow`
+holding `closes_at` and the list of claim ids) or **joins** the open one.
+`ChallengeManager::resolve` is **gone**. In its place:
+
+`close_window(cert_id)` — **permissionless**, callable by anyone once
+`closes_at` has passed. **The caller pays the transaction fee, and there is no
+reward for making the call.** A bounty here would be a second pot to game, and
+none is needed: nobody in the window is paid a stroop until somebody calls it,
+so every claimant is motivated to be that somebody and any of them can be. The
+certificate stays frozen until it happens, so an unclosed window costs the
+operator and the auditor rather than the victims.
+
+**The freeze reuses the existing settlement-deadline lock rather than inventing
+a second mechanism.** The Registry already publishes
+`get_cert_settlement_deadline(cert_id)`, and both the ReserveVault and
+AuditorStaking already refuse to release before it. The ChallengeManager now
+calls `Registry::set_claim_freeze(cert_id, closes_at)` when it opens a window,
+and the deadline becomes `max(expires_at + CHALLENGE_WINDOW_SECONDS,
+claim_freeze)`. One mechanism, three enforcement points, no way for them to
+drift apart. Two follow-on changes were required: `release_to_operator` and
+`release_allocation` both used to trust a _snapshot_ of the deadline taken at
+deposit/attest time, which cannot know about a window opened later, so both now
+read the live value and take the later of the two. `attest` refuses a frozen
+certificate outright, so an operator cannot walk a fresh auditor onto a
+certificate that has already been filed against.
+
+### How harm aggregates, and why it is not a sum
+
+This is the part a reader will want to "simplify", and it must not be.
+
+- A harm the **arbiter stated** is an assessment of what **one claimant** lost.
+  Two claimants who each lost $500 lost $1,000 between them. These **sum**.
+- A harm a **predicate computed** is a property of the **certificate**.
+  `InsufficientReserve` reads one shortfall off one vault; ten people noticing
+  the same $800 hole have not proven $8,000 of harm. So the shortfall is counted
+  **once** — the maximum recorded across the window's filings, i.e. the worst
+  state the certificate was in — and **shared equally** by the claims standing
+  on it.
+
+**The attack this closes is harm amplification.** If identical predicate claims
+summed, anyone could file _n_ copies of the same true proof and drive `payable`,
+and with it the auditor's slash, to _n_ times the real shortfall — up to the
+whole allocation — for _n_ minimum bonds. The waterfall's "capped by proven
+harm" rail would be capped by proven harm times a number the attacker picks.
+Equal shares within the predicate group rather than pro rata, because the
+predicate cannot tell the claimants apart: it reads the vault, not the victims.
+Equality is also the only order-independent answer.
+
+### Rounding: the remainder goes to the treasury
+
+Every pro-rata share is `pool * weight / total_harm`, truncating, so the shares
+can sum to a stroop or two under the pool. **The remainder goes to the
+treasury**, not to a claimant. Handing it to "the largest claim" or "the first
+claim" would make a payout depend on a tie-break, and a tie-break is ordering
+value — the exact thing the window exists to destroy. The treasury is not a
+party to the window and cannot be gamed into being one. The amount is bounded by
+(claims − 1) stroops, 10⁻⁷ USDC each. Nothing is stranded and nothing is
+conjured: the total leaving the reserve is exactly the pot that was sized for
+it, and the pot is still capped by `payable = min(total_harm, reserve +
+allocation)`.
+
+The hygiene bounty is the one pot that is **not** pro rata: hygiene harm is zero
+by definition, so there is no ratio to divide by. It is **one** flat $10 bounty
+for the window, split **equally** — its job is to pay for the gas of killing a
+dead certificate, and that job is done once however many people showed up to do
+it. Otherwise filing _n_ copies of the same hygiene proof would mint _n_
+bounties.
 
 **Rejected — multi-claim settlement without a window.** Pay each valid claim as
 it resolves until collateral is exhausted. Simpler, but it keeps the race: the
@@ -52,24 +128,33 @@ extinguish. It makes the ordering profitable, which is the actual defect.
 
 **Rejected — one certificate, one claim, ever.** This is v1. It is the bug.
 
-**Cost, stated plainly.** A genuine victim now waits out the window before being
-paid. That is the price of not letting a self-dealer foreclose them, and it
-should be documented in the trust model as a known latency, not hidden.
+**Cost, stated plainly.** A genuine victim now waits out the whole window before
+being paid a stroop, even when theirs is the only claim ever filed. That latency
+is real and it is the price of not letting a self-dealer foreclose them. It
+belongs in the trust model as a known latency, not hidden. 72 hours is a
+proposal, not a researched number.
 
-**Tests.**
+**Tests** (`contracts/integration-tests/tests/cross_contract.rs`, section 12).
 
-- Two claimants, collateral sufficient → both paid in full, in one settlement.
-- Two claimants, collateral insufficient → paid pro rata; the sum paid equals
-  available collateral exactly; no dust is stranded and none is minted.
-- A minimum-bond self-challenge filed first → does **not** foreclose an honest
-  claim filed later in the same window; the honest claimant's share is unchanged
-  by the self-challenge's presence beyond its own pro-rata dilution.
-- A claim filed one ledger after window close → rejected.
-- Reserve withdrawal during an open window → rejected.
+- `two_claimants_with_enough_collateral_are_both_paid_in_full`
+- `two_claimants_short_of_collateral_are_paid_pro_rata_to_the_stroop` — the sum
+  paid equals the available collateral exactly.
+- `the_pro_rata_remainder_goes_to_the_treasury_and_never_goes_missing`
+- `a_self_challenge_cannot_foreclose_an_honest_claim_in_the_same_window` — the
+  headline. Runs the attack and a control world side by side and asserts the
+  honest claimant's recovery fell by exactly its own pro-rata dilution
+  (one of two claims instead of one of one) and by nothing else.
+- `filing_order_inside_a_window_changes_no_payout`
+- `a_claim_filed_after_the_window_closes_is_rejected`
+- `an_open_window_freezes_the_reserve_and_the_allocation_past_expiry`
+- `an_open_window_refuses_a_new_attestation`
 
 ---
 
 ## 2. Curing a proof mid-challenge — CRITICAL
+
+**Status: implemented, not deployed** (branch `feat/claim-window`), together
+with §1.
 
 **Problem.** With a two-phase challenge, an operator can top up the reserve
 between filing and resolution, flip the predicate to false, and pocket the
@@ -78,18 +163,54 @@ caught.
 
 **Decision. The predicate is evaluated at filing, and a cure returns the bond.**
 
-Two mechanisms, both required:
+Two mechanisms, both required, both built:
 
-1. **Evaluate at filing.** The challenge records the predicate's inputs at the
-   filing ledger. Resolution re-checks the recorded state, not live state. What
-   was true when the challenge was filed stays true.
-2. **A cure returns the bond.** If the operator remedies the condition during the
-   window, the challenge resolves as `Cured`: the challenger's bond is returned
-   **in full**, the certificate survives, and no slash occurs.
+1. **Evaluate at filing.** `challenge()` computes the predicate and its quantity
+   in the same read and records them on the `Challenge` as `proven` and `harm`.
+   Nothing downstream ever recomputes whether the challenger was right.
+2. **A cure returns the bond.** At window close the live predicate is
+   re-read — and it answers a _different question_: not "was the challenger
+   right" but "is the certificate still broken". If it is now false, the claim
+   resolves `Cured`: bond returned **in full**, certificate survives, nobody
+   slashed, nothing forfeited from the premium pot.
 
-`Cured` is a third outcome alongside `Upheld` and `Rejected`. A challenger who
-was right about the state at filing never loses their bond, even when the
-operator fixes it. Only a challenger who was **wrong at filing** forfeits.
+The two questions are kept deliberately apart in `close_window`, and the
+asymmetry is the safety property: **recorded state decides the bond, live state
+decides the certificate, and live state can only ever move in the challenger's
+favour.**
+
+`Cured` is a third outcome alongside `ChallengeWins` (upheld) and
+`ChallengeFails` (rejected). A fourth, `Unadjudicated`, covers an arbiter-gated
+claim the arbiter never ruled on before the window closed: the bond comes back
+whole, because a claim nobody judged is not a claim the challenger got wrong.
+**`ChallengeFails` is now the only outcome that forfeits a bond**, and it is
+reachable only by being wrong at filing.
+
+### Does a cure cost the operator anything? No — and that is a decision
+
+**A cure is free.** The operator restores the reserve, the certificate survives
+untouched, the auditor is untouched, and the challenger is made whole out of
+their own returned bond. The protocol takes nothing.
+
+This is a deliberate call, and it does under-price getting caught: an operator
+can run a persistently underfunded certificate and only ever top it up when
+challenged, using the 72-hour window as free credit. Two things make that a
+tolerable trade rather than a hole. First, **each cure costs the operator a
+challenge's worth of public evidence** — the `Cured` challenge is on-chain
+forever and readable by any counterparty. Second, and decisively, **the
+alternative prices remediation.** A cure fee would be a tax on the exact
+behaviour the protocol wants most, and an operator weighing "fix it and pay" against
+"do not fix it and hope" is an operator we have pushed toward the second answer.
+A penalty here also needs a recipient, and every candidate recipient — the
+challenger, the treasury — turns curing into somebody's revenue line and
+re-creates a version of the bounty-hunting incentive §10 spent so much effort
+removing.
+
+**What would change the call:** evidence of repeat cures on the same
+certificate. A per-certificate cure counter, with a fee or a forced
+re-attestation on the second or third, is the obvious next step and is listed in
+§10's open gaps. It is not built, because pricing it without a loss history
+would be inventing a number.
 
 **Rejected — evaluate at filing only.** Sound against the theft, but it forces a
 slash on an operator who fixed the problem within hours. That over-punishes and
@@ -99,18 +220,32 @@ discourages exactly the remediation we want.
 operator still controls the predicate at resolution time, so it does not close
 the hole; it only makes the theft cheaper.
 
-**Note.** This interacts with §1: a cure must close the whole claim window, and
-claims filed after the cure must be rejected rather than aggregated.
+### Interaction with §1
 
-**Tests.**
+A cure closes the whole claim window: with no admitted claim left, `close_window`
+lifts the freeze, deletes the window and leaves the certificate alive — a fresh
+window may open later. Claims filed **after** the cure are rejected rather than
+aggregated, and this falls out of mechanism 1 rather than needing its own rule:
+a claim filed against a certificate that has already been fixed is _false at
+filing_, and false-at-filing is precisely what `ChallengeFails` means.
 
-- Reserve topped up after filing → resolves `Cured`, bond returned in full, no
-  slash, certificate still valid.
-- Reserve topped up after filing, on a challenge that was **false at filing** →
-  resolves `Rejected`, bond forfeited. The cure does not launder a bad challenge.
-- Live state manipulated between filing and resolution → recorded state governs;
-  the outcome is identical to resolving at the filing ledger.
-- A `Cured` resolution must leave the auditor's stake untouched.
+One consequence worth naming: **a claim that is false at filing with no window
+open does not open one.** It is rejected on the spot inside `challenge()` and
+its bond forfeited. If a wrong claim could freeze a certificate for 72 hours,
+anybody could freeze any certificate for the price of the minimum bond. Once a
+window _is_ open a wrong claim is allowed to join it, because there it changes
+nothing.
+
+**Tests** (`contracts/integration-tests/tests/cross_contract.rs`, section 13).
+
+- `a_reserve_topped_up_during_the_window_resolves_as_cured` — bond back in full,
+  no slash, certificate still Verified.
+- `a_claim_filed_after_the_cure_is_rejected_and_forfeits_its_bond` — the cure
+  does not launder a bad challenge.
+- `state_recorded_at_filing_governs_the_payout_not_live_state` — the operator
+  shrinks the live shortfall from $800 to $100 and the settlement still pays
+  $800.
+- `a_cured_resolution_leaves_the_auditors_stake_and_premium_alone`.
 
 ---
 
@@ -439,11 +574,13 @@ stranded on dead certificates — the exact defect the refactor exists to remove
 
 ### The waterfall
 
-`settle_fraud` is one rule, applied identically to every proof type:
+`settle_fraud` is one rule, applied identically to every proof type. Since §1 it
+runs **once per claim window**, over the admitted set, and every pot in it is
+divided pro rata by each claim's share of `total_harm`:
 
 ```
-harm    = raw_harm_from_predicate
-payable = min(harm, reserve_for_this_cert + allocation_for_this_cert)
+total_harm = Σ admitted claim weights   (see §1 on how weights aggregate)
+payable    = min(total_harm, reserve_for_this_cert + allocation_for_this_cert)
 
 1. victim compensation  <- the operator's own reserve for THIS certificate only
 2. challenger fee       <- the same reserve, 10% of PROVEN HARM
@@ -586,6 +723,15 @@ When an auditor is slashed for a certificate, they forfeit **unclaimed** yield o
 it. `PremiumVault::forfeit(cert_id, victim, victim_cap)` splits the pot:
 
 - **accrued-but-unclaimed → the victim**, capped by `victim_cap`;
+
+Since §1 the ChallengeManager passes **itself** as the recipient and fans the
+money out to the window's victims pro rata inside the same invocation. `forfeit`
+pays one address and a window can admit many victims; calling it once per victim
+would hand the whole pot to whoever was called first, which is exactly the
+ordering value §1 exists to remove. The ChallengeManager is a conduit for the
+length of one call — nothing observes the intermediate balance and `bonds_held`
+is untouched, so the hygiene bounty pool is unaffected.
+
 - **the excess over the cap, plus the entire unaccrued remainder → the
   treasury**.
 
@@ -759,8 +905,50 @@ the auditor rather than the treasury; or treating an operator-initiated
 `InsufficientReserve` proof as hygiene too, which trades this griefing vector for
 a way for an operator to escape a real reserve shortfall.
 
+### The claim window's own residue
+
+**Status: implemented, not deployed** (branch `feat/claim-window`). See §1 and
+§2 for what was built. What it did **not** close:
+
+- **A cure is free, and that under-prices getting caught.** §2 states the
+  decision and its reasoning. An operator can run a persistently underfunded
+  certificate and top it up only when challenged, using the 72 hours as free
+  credit. The obvious next step — a per-certificate cure counter with a fee or a
+  forced re-attestation on repeat — is not built, because pricing it without a
+  loss history would be inventing a number.
+- **An arbiter-gated claim freezes a certificate for 72 hours on a minimum
+  bond.** A `FakeSignature` claim has no on-chain predicate, so it cannot be
+  rejected at filing the way a false `InsufficientReserve` claim is; it opens a
+  window and waits for the arbiter. That is a griefing surface: the certificate
+  is frozen, and the reserve and allocation are locked, for the price of the
+  minimum bond and however long the arbiter takes. The arbiter ruling it false
+  does **not** shorten the window. Mitigations exist and none is chosen — a
+  higher bond for arbiter-gated proof types, an early close once every claim is
+  adjudicated false, or arbiter-gated claims not freezing at all.
+- **Nobody is paid to close a window.** `close_window` is permissionless and
+  unrewarded. The claimants' own money is the incentive, which is sound but is
+  not a guarantee: a window with only a hygiene claim in it has almost nothing
+  behind it, and the certificate stays frozen until somebody spends the fee.
+- **72 hours is a proposal.** It is long enough to be a real cost to a victim
+  and short enough that a claimant in a bad timezone can miss it. It is not a
+  researched number.
+- **The predicate group's equal split can under-pay a large real victim.** Two
+  `InsufficientReserve` claimants share the shortfall equally, because the
+  predicate cannot tell them apart. If one genuinely lost far more than the
+  other, only the arbiter path can express that — and the arbiter path is
+  trusted. This is the honest limit of a certificate-level predicate.
+- **An arbiter who overstates harm now dilutes the honest claimants sharing the
+  window,** as well as enlarging the slash. The waterfall's rails still hold —
+  nothing reaches anyone who could have bribed them — but the dilution is a new
+  cost that did not exist before aggregation.
+
 ### Gaps deliberately left open
 
+- **The renewal cure path is now real machinery rather than an accident.** §2's
+  evaluate-at-filing exists, so an `ExpiredCertificate` claim that a renewal
+  defeats mid-window resolves `Cured` with the bond returned, instead of
+  silently failing. The coarseness noted below is unchanged; its cost to the
+  challenger is not.
 - **`ExpiredCertificate` judges one payment, not a history.** The router records
   a single post-expiry pair — the largest late payment and its timestamp — so a
   large payment inside the grace window masks a smaller, later one that would
@@ -769,8 +957,10 @@ a way for an operator to escape a real reserve shortfall.
 - **The renewal check is coarser than §7's wording.** §7 says "not renewed
   _before_ the payment"; the predicate asks "not renewed as of resolution", so a
   renewal filed _after_ the late payment also defeats the proof. That is a cure
-  path in the sense of §2, and §2's evaluate-at-filing machinery does not exist
-  yet. It errs toward not killing a certificate.
+  path in the sense of §2 — and now that §2's machinery exists, it resolves as
+  `Cured` with the bond returned rather than costing the challenger anything.
+  The timing is still coarser than §7's wording, and it still errs toward not
+  killing a certificate.
 - **The grace window and the floor are unresearched proposals.** 24 hours and
   0.1% are §7's numbers, adopted as-is. Both are attack surface: the window is
   free post-expiry coverage a hostile operator can plan around, and the floor is

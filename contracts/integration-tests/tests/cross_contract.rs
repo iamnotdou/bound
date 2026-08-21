@@ -3259,3 +3259,641 @@ fn nobody_but_the_challenge_manager_can_forfeit_a_premium() {
     assert_eq!(w.balance(&w.premium_vault), PREMIUM_POT);
     assert_eq!(w.premium().claimable(&cert_id), PREMIUM_POT / 2);
 }
+
+// ---------------------------------------------------------------------------
+// 12. DESIGN-V2 §1 — the claim window
+//
+// The defect: settlement invalidates the certificate, drains the reserve and
+// retires the allocation, so under the old lifecycle the FIRST settled
+// challenge foreclosed every honest claim behind it. A self-challenge for the
+// minimum bond destroyed the coverage everyone else was relying on. The
+// attacker gained nothing — the waterfall saw to that — and the victims still
+// lost everything, which is just as fatal.
+//
+// The fix: a first valid challenge opens a 72-hour window instead of settling.
+// Every claim filed into it is settled together, pro rata, once.
+// ---------------------------------------------------------------------------
+
+/// A certificate with a named reserve deposit, attested and funded, ready for
+/// claims. `1_000` on the clock, `RESERVE_CLAIM` advertised.
+fn window_world(deposit: i128) -> (BoundWorld, u64) {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    if deposit > 0 {
+        w.deposit_reserve(cert_id, deposit);
+    }
+    w.attest(cert_id);
+    (w, cert_id)
+}
+
+/// File an arbiter-assessed claim for a stated harm.
+///
+/// `FakeSignature` is the proof type whose harm is a **per-claimant
+/// assessment** rather than a certificate-level number, which is what lets two
+/// claimants in one window prove two different losses.
+fn assessed_claim(
+    w: &BoundWorld,
+    cert_id: u64,
+    challenger: &Address,
+    victim: &Address,
+    harm: i128,
+) -> u64 {
+    let id = w.challenge_as(
+        challenger,
+        victim,
+        cert_id,
+        ProofType::FakeSignature,
+        MIN_CHALLENGE_STAKE,
+    );
+    w.cm().resolve_by_arbiter(&id, &true, &harm);
+    id
+}
+
+/// **Two claimants, collateral enough for both → both paid in full, in one
+/// settlement.**
+///
+/// This is the case the old lifecycle got most obviously wrong: the second
+/// claimant's certificate was already dead by the time they filed, and the
+/// reserve that would have covered them in full had gone to the first.
+#[test]
+fn two_claimants_with_enough_collateral_are_both_paid_in_full() {
+    let (w, cert_id) = window_world(RESERVE_CLAIM); // $1,000 of real reserve
+
+    let harm_a = 200_0000000i128;
+    let harm_b = 300_0000000i128;
+    let a = assessed_claim(&w, cert_id, &w.challenger, &w.victim, harm_a);
+    let b = assessed_claim(&w, cert_id, &w.challenger2, &w.victim2, harm_b);
+
+    // One window, two claims, and nothing has moved yet.
+    assert_eq!(w.cm().get_window(&cert_id).unwrap().claims.len(), 2);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.balance(&w.victim2), 0);
+
+    w.settle_window(cert_id);
+
+    // Both upheld in the same settlement.
+    assert!(w.verdict_of(a) == CmVerdict::ChallengeWins);
+    assert!(w.verdict_of(b) == CmVerdict::ChallengeWins);
+
+    // Paid in full — not pro rata, because $500 of harm fits inside $1,000 of
+    // reserve with room to spare.
+    assert_eq!(w.balance(&w.victim), harm_a);
+    assert_eq!(w.balance(&w.victim2), harm_b);
+
+    // Each challenger takes 10% of the harm THEY proved, plus their bond back.
+    assert_eq!(w.balance(&w.challenger), FUNDING + harm_a / 10);
+    assert_eq!(w.balance(&w.challenger2), FUNDING + harm_b / 10);
+
+    // The operator's reserve covered everything, so the auditor is untouched.
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+    assert_eq!(
+        w.reserve_of(cert_id),
+        RESERVE_CLAIM - harm_a - harm_b - harm_a / 10 - harm_b / 10
+    );
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Invalid
+    );
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **Two claimants, not enough collateral → pro rata, and the collateral is
+/// spent to the stroop.**
+///
+///   harm     = $600 + $400            = $1,000
+///   collateral = reserve $100 + allocation $600 = $700
+///   payable  = min(1,000, 700)        = $700
+///   victims  = the whole $100 reserve, split 60/40 by proven harm
+///   slash    = $600, the whole allocation, to the treasury
+///
+/// $700 of collateral goes out and $700 is accounted for. Nothing is stranded
+/// in the vault and nothing is minted to cover the $300 of harm that no
+/// collateral stands behind.
+#[test]
+fn two_claimants_short_of_collateral_are_paid_pro_rata_to_the_stroop() {
+    let deposit = 100_0000000i128; // $100
+    let (w, cert_id) = window_world(deposit);
+
+    let harm_a = 600_0000000i128;
+    let harm_b = 400_0000000i128;
+    let a = assessed_claim(&w, cert_id, &w.challenger, &w.victim, harm_a);
+    let b = assessed_claim(&w, cert_id, &w.challenger2, &w.victim2, harm_b);
+    w.settle_window(cert_id);
+
+    assert!(w.verdict_of(a) == CmVerdict::ChallengeWins);
+    assert!(w.verdict_of(b) == CmVerdict::ChallengeWins);
+
+    // 60/40 of the reserve, exactly in proportion to proven harm.
+    let paid_a = 60_0000000i128;
+    let paid_b = 40_0000000i128;
+    assert_eq!(w.balance(&w.victim), paid_a);
+    assert_eq!(w.balance(&w.victim2), paid_b);
+
+    // NO DUST STRANDED: the reserve is empty, and what left it is exactly what
+    // the victims received.
+    assert_eq!(paid_a + paid_b, deposit);
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.balance(&w.vault), 0);
+
+    // NONE CONJURED: total outflow is the collateral and not a stroop more,
+    // even though $1,000 of harm was proven against it.
+    let slash = ALLOCATION;
+    assert_eq!(w.balance(&w.treasury), slash);
+    assert_eq!(paid_a + paid_b + slash, deposit + ALLOCATION);
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE - slash);
+
+    // The fee is a share of the reserve, and the reserve was exhausted by the
+    // victims first — so both challengers get their bond back and no more.
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    assert_eq!(w.balance(&w.challenger2), FUNDING);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **The rounding remainder goes to the treasury, and it is the only place it
+/// could go.**
+///
+/// $1 of reserve split between claims of $1 and $2 of harm is 3333333 and
+/// 6666666 stroops: one stroop short. Handing the odd stroop to "the largest
+/// claim" or "the first claim" would make a payout depend on a tie-break, and a
+/// tie-break is ordering value — the exact thing this window exists to destroy.
+/// The treasury is not a party to the window and cannot be gamed into being
+/// one.
+#[test]
+fn the_pro_rata_remainder_goes_to_the_treasury_and_never_goes_missing() {
+    let deposit = 1_0000000i128; // $1
+    let (w, cert_id) = window_world(deposit);
+
+    assessed_claim(&w, cert_id, &w.challenger, &w.victim, 1_0000000);
+    assessed_claim(&w, cert_id, &w.challenger2, &w.victim2, 2_0000000);
+    w.settle_window(cert_id);
+
+    let paid_a = 3_333_333i128;
+    let paid_b = 6_666_666i128;
+    assert_eq!(w.balance(&w.victim), paid_a);
+    assert_eq!(w.balance(&w.victim2), paid_b);
+    assert_eq!(paid_a + paid_b, deposit - 1);
+
+    // The missing stroop is in the treasury, alongside the $2 slash — not left
+    // behind in the vault, and not created out of nothing.
+    let slash = 2_0000000i128;
+    assert_eq!(w.balance(&w.treasury), slash + 1);
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.balance(&w.vault), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **THE HEADLINE. A minimum-bond self-challenge cannot foreclose an honest
+/// claim filed behind it.**
+///
+/// The operator underfunds their own certificate, then self-challenges for the
+/// minimum bond naming their own address as the victim — the attack §1 exists
+/// to kill. Under the old lifecycle that single settlement invalidated the
+/// certificate, drained the reserve and retired the allocation before any
+/// honest victim could file: their recovery was **zero**.
+///
+/// Now the self-challenge merely opens the window it was trying to slam shut.
+/// The honest claimant files into the same window and is paid out of the same
+/// reserve, and the ONLY effect the self-challenge has on them is its own
+/// pro-rata dilution — one extra claim against a certificate-level shortfall,
+/// so half instead of all. Not zero.
+///
+/// The self-dealer still gains nothing: their "compensation" is their own
+/// reserve moving from their left pocket to their right, and the auditor's
+/// allocation goes to a treasury they do not control.
+#[test]
+fn a_self_challenge_cannot_foreclose_an_honest_claim_in_the_same_window() {
+    let deposit = 200_0000000i128; // $200 against a $1,000 claim
+    let shortfall = RESERVE_CLAIM - deposit; // $800
+
+    // --- the attack: self-challenge first, honest claim second -------------
+    let (w, cert_id) = window_world(deposit);
+    let operator_after_funding = w.balance(&w.operator);
+
+    // The operator files first, for the minimum bond, naming themselves.
+    let selfish = w.challenge_as(
+        &w.operator,
+        &w.operator,
+        cert_id,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    // It did not settle. It opened a window.
+    assert!(w.verdict_of(selfish) == CmVerdict::Pending);
+    assert!(w.cm().get_window(&cert_id).is_some());
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+
+    // An honest victim, who had no way of front-running anybody, files second.
+    let honest = w.challenge_as(
+        &w.challenger2,
+        &w.victim2,
+        cert_id,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    w.settle_window(cert_id);
+
+    assert!(w.verdict_of(selfish) == CmVerdict::ChallengeWins);
+    assert!(w.verdict_of(honest) == CmVerdict::ChallengeWins);
+
+    // The $800 shortfall is a property of the CERTIFICATE, so the two claims
+    // share it — $400 of weight each — and the $200 reserve splits evenly.
+    let honest_share = deposit / 2;
+    assert_eq!(w.balance(&w.victim2), honest_share);
+    assert_eq!(honest_share, 100_0000000);
+
+    // The self-dealer is exactly where they started, less the reserve they
+    // burned: their bond came back and their "compensation" was their own money.
+    assert_eq!(w.balance(&w.operator), operator_after_funding + deposit / 2);
+    // And the auditor's allocation went to the treasury, which the operator
+    // does not control. Manufacturing the proof paid them nothing.
+    assert_eq!(w.balance(&w.treasury), ALLOCATION);
+
+    // --- the control: the honest claim alone -------------------------------
+    let (c, cert_c) = window_world(deposit);
+    let alone = c.challenge_as(
+        &c.challenger2,
+        &c.victim2,
+        cert_c,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    c.settle_window(cert_c);
+    assert!(c.verdict_of(alone) == CmVerdict::ChallengeWins);
+    let undiluted = c.balance(&c.victim2);
+    assert_eq!(undiluted, deposit);
+
+    // THE PROPERTY: the honest claimant's recovery fell by exactly its own
+    // pro-rata dilution — one of two claims instead of one of one — and by
+    // nothing else. Under first-resolver-takes-all it would have been zero.
+    assert_eq!(honest_share * 2, undiluted);
+    assert!(honest_share > 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+    assert_eq!(shortfall, 800_0000000);
+}
+
+/// **Ordering inside a window is worth nothing.** The same two claims filed in
+/// the opposite order produce identical payouts, to the stroop, everywhere.
+///
+/// If this ever fails, the race has been rebuilt somewhere rather than removed.
+#[test]
+fn filing_order_inside_a_window_changes_no_payout() {
+    let deposit = 100_0000000i128;
+    let harm_a = 600_0000000i128;
+    let harm_b = 400_0000000i128;
+
+    let (first, cert_1) = window_world(deposit);
+    assessed_claim(&first, cert_1, &first.challenger, &first.victim, harm_a);
+    assessed_claim(&first, cert_1, &first.challenger2, &first.victim2, harm_b);
+    first.settle_window(cert_1);
+
+    // Same world, same claims, filed the other way round.
+    let (second, cert_2) = window_world(deposit);
+    assessed_claim(
+        &second,
+        cert_2,
+        &second.challenger2,
+        &second.victim2,
+        harm_b,
+    );
+    assessed_claim(&second, cert_2, &second.challenger, &second.victim, harm_a);
+    second.settle_window(cert_2);
+
+    for (a, b) in [
+        (first.balance(&first.victim), second.balance(&second.victim)),
+        (
+            first.balance(&first.victim2),
+            second.balance(&second.victim2),
+        ),
+        (
+            first.balance(&first.challenger),
+            second.balance(&second.challenger),
+        ),
+        (
+            first.balance(&first.challenger2),
+            second.balance(&second.challenger2),
+        ),
+        (
+            first.balance(&first.treasury),
+            second.balance(&second.treasury),
+        ),
+        (first.reserve_of(cert_1), second.reserve_of(cert_2)),
+        (
+            first.staking().get_stake(&first.auditor),
+            second.staking().get_stake(&second.auditor),
+        ),
+    ] {
+        assert_eq!(a, b);
+    }
+    // Sanity: the payouts being compared are not all trivially zero.
+    assert!(first.balance(&first.victim) > 0);
+    assert!(first.balance(&first.victim2) > 0);
+}
+
+/// A claim filed one ledger after the window's close is refused. The window has
+/// to be closed and settled before anything else happens to the certificate —
+/// otherwise "settlement runs once, over all admitted claims" is not true.
+#[test]
+fn a_claim_filed_after_the_window_closes_is_rejected() {
+    let (w, cert_id) = window_world(200_0000000);
+    w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    let closes_at = w.cm().window_closes_at(&cert_id);
+
+    // One ledger before the close: still admitted.
+    w.set_time(closes_at - 1);
+    let inside = w.challenge_as(
+        &w.challenger2,
+        &w.victim2,
+        cert_id,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    assert_eq!(w.cm().get_window(&cert_id).unwrap().claims.len(), 2);
+
+    // One ledger after: refused, and the challenger's money never moves.
+    w.set_time(closes_at + 1);
+    let before = w.balance(&w.challenger2);
+    assert!(w
+        .cm()
+        .try_challenge(
+            &w.challenger2,
+            &cert_id,
+            &ProofType::InsufficientReserve,
+            &w.victim2,
+            &MIN_CHALLENGE_STAKE,
+        )
+        .is_err());
+    assert_eq!(w.balance(&w.challenger2), before);
+    assert_eq!(w.cm().get_window(&cert_id).unwrap().claims.len(), 2);
+
+    // And once it is settled, no further claim may ever open a second window.
+    w.cm().close_window(&cert_id);
+    assert!(w.verdict_of(inside) == CmVerdict::ChallengeWins);
+    assert!(w.cm().is_settled(&cert_id));
+    assert!(w
+        .cm()
+        .try_challenge(
+            &w.challenger2,
+            &cert_id,
+            &ProofType::InsufficientReserve,
+            &w.victim2,
+            &MIN_CHALLENGE_STAKE,
+        )
+        .is_err());
+}
+
+/// **The certificate is frozen while a window is open**: the operator cannot
+/// withdraw the reserve and the auditor cannot free the allocation, even after
+/// the ordinary settlement deadline has passed.
+///
+/// The clock is deliberately set to `SETTLEMENT_DEADLINE` before the claim is
+/// filed. At that instant `expires_at + CHALLENGE_WINDOW` has already elapsed,
+/// so the only thing still holding the collateral is the claim window — which
+/// is exactly what "expiry must not let anything escape" means.
+#[test]
+fn an_open_window_freezes_the_reserve_and_the_allocation_past_expiry() {
+    let (w, cert_id) = window_world(900_0000000); // $100 short of its claim
+
+    w.set_time(SETTLEMENT_DEADLINE);
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+
+    // The Registry's settlement deadline is now the window's close, not expiry.
+    let closes_at = w.cm().window_closes_at(&cert_id);
+    assert_eq!(closes_at, SETTLEMENT_DEADLINE + CLAIM_WINDOW);
+    assert_eq!(
+        w.registry().get_cert_settlement_deadline(&cert_id),
+        closes_at
+    );
+    assert!(w.registry().is_frozen(&cert_id));
+
+    // Neither side of the collateral can walk away.
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+    assert_eq!(w.reserve_of(cert_id), 900_0000000);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+
+    // Still frozen one ledger before the close.
+    w.set_time(closes_at - 1);
+    assert!(w.vault().try_release_to_operator(&cert_id).is_err());
+    assert!(w.staking().try_release_allocation(&cert_id).is_err());
+
+    // The operator cures the shortfall, so the window closes with nothing
+    // admitted and the freeze lifts. Both sides unwind normally again.
+    w.deposit_reserve(cert_id, 100_0000000);
+    w.set_time(closes_at);
+    w.cm().close_window(&cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::Cured);
+    assert!(!w.registry().is_frozen(&cert_id));
+
+    w.vault().release_to_operator(&cert_id);
+    w.staking().release_allocation(&cert_id);
+    assert_eq!(w.reserve_of(cert_id), 0);
+    assert_eq!(w.free_stake(), AUDITOR_STAKE);
+}
+
+/// A frozen certificate takes no new attestation. Without this an operator
+/// under a live claim window could walk a fresh auditor onto the certificate
+/// and put new collateral at risk for a breach that has already been filed.
+#[test]
+fn an_open_window_refuses_a_new_attestation() {
+    let w = BoundWorld::new();
+    w.set_time(1_000);
+    w.stake_auditor(AUDITOR_STAKE);
+    // Published, unfunded, and NOT yet attested: `InsufficientReserve` is true
+    // against it the moment it exists.
+    let cert_id = w.publish_cert(BOUND, RESERVE_CLAIM, EXPIRES_AT);
+    w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    assert!(w.registry().is_frozen(&cert_id));
+
+    assert!(w
+        .registry()
+        .try_attest(&w.auditor, &cert_id, &ALLOCATION)
+        .is_err());
+    assert_eq!(w.allocation_of(cert_id), 0);
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Pending
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 13. DESIGN-V2 §2 — filing-time evaluation and `Cured`
+//
+// The window makes curing reachable: during it an operator could top the
+// reserve back up, flip the predicate to false and pocket the challenger's
+// forfeited bond. The protocol would be paying the operator for having been
+// caught. Two mechanisms close it, and both are required.
+// ---------------------------------------------------------------------------
+
+/// **A cure returns the bond in full, and costs the challenger nothing.**
+///
+/// The operator remedies the shortfall inside the window. The certificate
+/// survives, nobody is slashed, and the challenger — who was RIGHT at filing —
+/// gets every stroop of their bond back.
+#[test]
+fn a_reserve_topped_up_during_the_window_resolves_as_cured() {
+    let deposit = 900_0000000i128;
+    let (w, cert_id) = window_world(deposit);
+    let challenger_before = w.balance(&w.challenger);
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    // The predicate was recorded true at filing, with its quantity.
+    let ch = w.cm().get_challenge(&id);
+    assert!(ch.proven);
+    assert_eq!(ch.harm, RESERVE_CLAIM - deposit);
+
+    // The operator fixes it, which is the behaviour we want to encourage.
+    w.deposit_reserve(cert_id, RESERVE_CLAIM - deposit);
+    w.settle_window(cert_id);
+
+    assert!(w.verdict_of(id) == CmVerdict::Cured);
+    // Bond back IN FULL. Not a fee, not a haircut, not a forfeiture.
+    assert_eq!(w.balance(&w.challenger), challenger_before);
+    assert_eq!(w.cm().get_bounty_pool(), 0);
+
+    // The certificate survives and is still valid to a counterparty.
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    // (`verify` also weighs expiry, and 72 hours of window have carried the
+    // clock past this certificate's short test expiry — the point here is that
+    // the status is Verified rather than Invalid.)
+    assert!(!w.cm().is_settled(&cert_id));
+
+    // NO SLASH, and the auditor's stake is untouched to the stroop — allocation
+    // included, because the certificate is still alive and still backed.
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.balance(&w.victim), 0);
+    assert_eq!(w.reserve_of(cert_id), RESERVE_CLAIM);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **A cure does not launder a claim that was wrong at filing.**
+///
+/// The first claim is right, so it opens the window. The operator then cures
+/// it. A third party files afterwards — against a certificate that is, by then,
+/// fully funded — and that claim is FALSE AT FILING. It is rejected and its
+/// bond forfeited, exactly as §2 asks: a claim filed after a cure is rejected
+/// rather than aggregated.
+#[test]
+fn a_claim_filed_after_the_cure_is_rejected_and_forfeits_its_bond() {
+    let deposit = 900_0000000i128;
+    let (w, cert_id) = window_world(deposit);
+
+    let good = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM - deposit); // the cure
+
+    let late = w.challenge_as(
+        &w.challenger2,
+        &w.victim2,
+        cert_id,
+        ProofType::InsufficientReserve,
+        MIN_CHALLENGE_STAKE,
+    );
+    assert!(!w.cm().get_challenge(&late).proven); // false at filing, recorded so
+
+    w.settle_window(cert_id);
+
+    // The challenger who was right keeps their bond.
+    assert!(w.verdict_of(good) == CmVerdict::Cured);
+    assert_eq!(w.balance(&w.challenger), FUNDING);
+    // The challenger who was wrong does not. This is the ONLY outcome that
+    // forfeits a bond.
+    assert!(w.verdict_of(late) == CmVerdict::ChallengeFails);
+    assert_eq!(w.balance(&w.challenger2), FUNDING - MIN_CHALLENGE_STAKE);
+    assert_eq!(w.cm().get_bounty_pool(), MIN_CHALLENGE_STAKE);
+
+    // Certificate alive, auditor untouched.
+    assert_eq!(
+        w.registry().get_certificate(&cert_id).status,
+        CertStatus::Verified
+    );
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// **The recorded state governs, not the live state.**
+///
+/// The claim is filed against an $800 shortfall. The operator then moves the
+/// live number to $100 — enough to shrink the payout, not enough to cure. The
+/// settlement pays the **$800 recorded at filing**, because what was true when
+/// the challenge was filed stays true.
+///
+/// Without this the operator could always shave the claim down to a stroop
+/// after being caught, which is the same theft as the bond grab wearing a
+/// different hat.
+#[test]
+fn state_recorded_at_filing_governs_the_payout_not_live_state() {
+    let deposit = 200_0000000i128;
+    let (w, cert_id) = window_world(deposit);
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    let recorded = w.cm().get_challenge(&id).harm;
+    assert_eq!(recorded, 800_0000000);
+
+    // The operator tops the reserve up to $900 — the live shortfall is now
+    // $100, an eighth of what was filed against.
+    w.deposit_reserve(cert_id, 700_0000000);
+    assert_eq!(w.reserve_of(cert_id), 900_0000000);
+
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::ChallengeWins);
+
+    //   payable = min(800, 900 + 600) = $800   <- the RECORDED harm
+    //   victim  = min(800, 900)       = $800
+    //   fee     = min(80, 100)        = $80
+    //   slash   = 800 - 800           = $0
+    assert_eq!(w.balance(&w.victim), recorded);
+    assert_eq!(w.balance(&w.challenger), FUNDING + recorded / 10);
+    // Had live state governed, the victim would have received $100.
+    assert!(w.balance(&w.victim) > 100_0000000);
+    assert_eq!(
+        w.reserve_of(cert_id),
+        900_0000000 - recorded - recorded / 10
+    );
+    assert_eq!(w.balance(&w.treasury), 0);
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}
+
+/// A `Cured` resolution leaves the auditor's stake untouched — including when
+/// the auditor has premium yield riding on the certificate. Nothing is slashed,
+/// nothing is forfeited, and the coverage keeps accruing, because the
+/// certificate never died.
+#[test]
+fn a_cured_resolution_leaves_the_auditors_stake_and_premium_alone() {
+    let (w, cert_id) = premium_world(900_0000000);
+    let auditor_start = FUNDING - AUDITOR_STAKE;
+
+    let id = w.challenge(cert_id, ProofType::InsufficientReserve, MIN_CHALLENGE_STAKE);
+    w.deposit_reserve(cert_id, RESERVE_CLAIM - 900_0000000);
+    w.settle_window(cert_id);
+    assert!(w.verdict_of(id) == CmVerdict::Cured);
+
+    // Stake, allocation and free stake: all exactly as before.
+    assert_eq!(w.staking().get_stake(&w.auditor), AUDITOR_STAKE);
+    assert_eq!(w.balance(&w.staking), AUDITOR_STAKE);
+    assert_eq!(w.allocation_of(cert_id), ALLOCATION);
+    assert_eq!(w.free_stake(), 0);
+    assert_eq!(w.balance(&w.auditor), auditor_start);
+
+    // The premium pot is intact and still accruing — no forfeit, no terminate.
+    assert_eq!(w.premium().get_coverage(&cert_id).yield_pot, PREMIUM_POT);
+    assert!(!w.premium().get_coverage(&cert_id).closed);
+    assert_eq!(w.balance(&w.premium_vault), PREMIUM_POT);
+    w.set_time(1_000 + YEAR);
+    assert_eq!(w.claim_premium(cert_id), PREMIUM_POT);
+    assert_eq!(w.balance(&w.auditor), auditor_start + PREMIUM_POT);
+
+    assert_eq!(w.total_in_the_system(), FUNDING * 5);
+}

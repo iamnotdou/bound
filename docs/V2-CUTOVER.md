@@ -87,11 +87,54 @@ Everything below is a breaking ABI change unless marked additive.
   forfeited through the PremiumVault. If no vault is wired the step is skipped
   silently — see the trap note below.
 
-### Registry — one additive getter
+### ChallengeManager — the claim window (DESIGN-V2 §1, §2)
 
+The biggest ABI break in the whole cutover, because the _lifecycle_ changed, not
+just a signature. Any client that filed a challenge and then resolved it has to
+be rewritten.
+
+- **`resolve(challenge_id)` is REMOVED.** A challenge no longer settles by
+  itself. `challenge()` evaluates the predicate at filing and opens (or joins) a
+  per-certificate **claim window**; settlement runs once, at the window's close,
+  over every claim it admitted.
+- **New: `close_window(cert_id)`.** Permissionless, callable by anyone once
+  `window_closes_at(cert_id)` has passed, and the caller pays the fee. This is
+  the call that moves all the money. Nothing pays out until somebody makes it.
+- **`resolve_by_arbiter(challenge_id, fraud_proven, harm)` no longer settles.**
+  Same signature, different meaning: it records a verdict and a quantity on one
+  live claim inside an open window. It panics if the window has closed.
+- New getters: `get_window(cert_id) -> Option<ClaimWindow>`,
+  `window_closes_at(cert_id) -> u64`, `is_settled(cert_id) -> bool`,
+  `get_claim_window_seconds() -> u64`.
+- **`Verdict` gains two variants**, so the enum's wire representation changes:
+  `Cured` (right at filing, remedied by the operator — bond returned in full)
+  and `Unadjudicated` (an arbiter-gated claim nobody ruled on — bond returned).
+- **`Challenge` gains five fields**: `filed_at`, `proven`, `harm`,
+  `adjudicated`, `arbitrated`. Any client decoding a `Challenge` breaks.
+- New type `ClaimWindow { cert_id, opened_at, closes_at, claims }`.
+
+### Registry — the freeze, and one additive getter
+
+- **New: `set_claim_freeze(cert_id, until)`**, ChallengeManager-only. It writes
+  the claim window's close into the certificate, and
+  `get_cert_settlement_deadline` now returns
+  `max(expires_at + CHALLENGE_WINDOW_SECONDS, claim_freeze)`. That is how the
+  freeze reaches the ReserveVault and AuditorStaking without a second lock.
+- New getters: `get_claim_freeze(cert_id) -> u64`, `is_frozen(cert_id) -> bool`.
+- **`attest` now panics `claim_window_open`** on a frozen certificate. Same
+  signature, one more rejection case.
 - `get_cert_issued_at(cert_id) -> u64`. The PremiumVault reads it with
-  `get_cert_expires_at` to price coverage over `expires_at - issued_at`. Nothing
-  else changed.
+  `get_cert_expires_at` to price coverage over `expires_at - issued_at`.
+
+### ReserveVault and AuditorStaking — one behaviour change each, no signature change
+
+Both `release_to_operator(cert_id)` and `release_allocation(cert_id)` now read
+`Registry::get_cert_settlement_deadline` **live** and take the later of it and
+their own stored snapshot. The snapshot is taken at deposit/attest time and
+cannot know about a claim window opened afterwards, so on its own it would let
+the collateral walk out from under an open window. `AuditorStaking` therefore
+makes a cross-contract call it did not make before, which changes its footprint
+and its failure modes even though the ABI is identical.
 
 ### PaymentRouter — entirely new
 
