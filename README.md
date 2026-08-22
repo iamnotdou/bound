@@ -13,6 +13,26 @@ _"can I trust this agent?"_ with a number you can look up:
 
 ---
 
+|                   |                                                                                                                                                                 |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Live demo**     | [www.boundprotocol.dev/app](https://www.boundprotocol.dev/app) — browse bonded agents, publish and fund a certificate, attest one                               |
+| **Documentation** | [docs.boundprotocol.dev](https://docs.boundprotocol.dev)                                                                                                        |
+| **SDK**           | [`@bound/sdk`](https://www.npmjs.com/package/@bound/sdk) — typed client for the whole lifecycle                                                                 |
+| **MCP connector** | [`@bound/mcp`](https://www.npmjs.com/package/@bound/mcp) — 15 tools for any MCP-capable agent                                                                   |
+| **Quickstart**    | [`docs/QUICKSTART.md`](./docs/QUICKSTART.md) — reproducible from a clean clone                                                                                  |
+| **What is built** | [`docs/DELIVERABLES.md`](./docs/DELIVERABLES.md) — per-requirement audit, checked against source                                                                |
+| **Trust model**   | [`docs/THREAT-MODEL.md`](./docs/THREAT-MODEL.md) and the [disclosed defects](https://docs.boundprotocol.dev/docs/trust-model#defects-in-the-deployed-contracts) |
+
+### Repositories
+
+|                                                         |                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| [`bound`](https://github.com/iamnotdou/bound)           | this repo — contracts, SDK, MCP connector, demo scripts |
+| [`bound-web`](https://github.com/iamnotdou/bound-web)   | the marketing site and the app at `boundprotocol.dev`   |
+| [`bound-docs`](https://github.com/iamnotdou/bound-docs) | the documentation site at `docs.boundprotocol.dev`      |
+
+Testnet only. Amounts are testnet USDC and no mainnet deployment exists.
+
 ## How it works
 
 1. **Lock the reserve.** The operator locks real USDC in a vault. It's the pre-funded
@@ -38,7 +58,6 @@ Full documentation lives in [`docs/`](./docs):
 | ------------------------------------------ | --------------------------------------------------- |
 | [`docs/WRITEUP.md`](./docs/WRITEUP.md)     | The academic framing, developer docs, and narrative |
 | [`docs/PROJECT.md`](./docs/PROJECT.md)     | The build plan, trust model, and known limitations  |
-| [`docs/VERIFY.md`](./docs/VERIFY.md)       | How to verify the deployment yourself               |
 | [`docs/RESOURCES.md`](./docs/RESOURCES.md) | Reference material and external links               |
 
 ---

@@ -111,7 +111,7 @@ claims and only one of them is ever true.
 | Covers routed payments                                   | BUILT                                |
 | Covers all three fraud proofs                            | BUILT                                |
 | Covers premiums                                          | BUILT                                |
-| MCP connector packaged for any MCP-capable agent         | BUILT (`@bound/mcp` 0.1.0, 15 tools) |
+| MCP connector packaged for any MCP-capable agent         | BUILT (`@bound/mcp` 0.1.1, 15 tools) |
 | Reproducible quickstart                                  | BUILT                                |
 | Permanently hosted demo                                  | BUILT (www.boundprotocol.dev/app)    |
 | Hosted demo shows routed spend and the coverage economy  | BUILT                                |
