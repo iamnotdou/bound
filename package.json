@@ -14,6 +14,8 @@
     "deploy": "ts-node --project scripts/tsconfig.json scripts/deploy-all.ts",
     "demo": "ts-node --project scripts/tsconfig.json scripts/demo.ts",
     "demo:settle": "ts-node --project scripts/tsconfig.json scripts/demo-settle.ts",
+    "demo:expiry": "ts-node --project scripts/tsconfig.json scripts/demo-expiry.ts",
+    "evidence": "ts-node --project scripts/tsconfig.json scripts/evidence.ts",
     "mcp": "pnpm build:mcp && node packages/mcp/dist/bound-mcp.js",
     "test": "vitest run",
     "test:watch": "vitest",
