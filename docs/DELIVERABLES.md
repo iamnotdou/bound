@@ -116,15 +116,14 @@ claims and only one of them is ever true.
 | Permanently hosted demo                                  | BUILT (www.boundprotocol.dev/app)    |
 | Hosted demo shows routed spend and the coverage economy  | BUILT                                |
 | Hosted demo runs the _full_ lifecycle                    | PARTIAL — see below                  |
-| Recorded walkthrough video                               | NOT STARTED                          |
+| Recorded walkthrough video                               | NOT DOING — by decision              |
 
 ---
 
 # What is left, and why
 
-**The settlement leg of the lifecycle, and the video.** Both wait on the same
-thing, and it is a real protocol property rather than missing work: the claim
-window is 72 hours.
+**The settlement leg of the lifecycle.** It waits on a real protocol property
+rather than on missing work: the claim window is 72 hours.
 
 `pnpm run demo` drives everything up to and including a claim being admitted
 from on-chain state, and it _does_ settle one claim live — the false one, which
@@ -138,9 +137,16 @@ protocol we deliberately do not ship. v1 settled the first claim to arrive and
 foreclosed every honest one behind it; the window is what fixed that, and a
 claim filed in hour 71 is admitted on the same terms as one filed in hour 1.
 
-So the honest sequence is: run the demo, let the window on an already-filed
-certificate lapse, settle it, and record the walkthrough against a certificate
-whose entire lifecycle is finished and permanently readable on-chain.
+So the sequence is: run the demo, let the window on an already-filed certificate
+lapse, then settle it. What that leaves behind is better evidence than a
+recording anyway — a certificate whose entire lifecycle is finished and
+permanently readable on-chain by anyone who wants to check it.
+
+**The walkthrough video is a deliberate omission.** The deliverable asks for one
+and there will not be one. The hosted demo is clickable, the quickstart is
+reproducible from a clean clone, and the settled certificate is public. A
+reviewer who wants to see the loop can run it or read it rather than watch
+somebody else run it.
 
 **One release step needs a human.** npm Trusted Publishing can only be
 configured on a package that already exists, so `@bound/mcp`'s first publish has
