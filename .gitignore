@@ -37,4 +37,9 @@ contracts/payment-router/test_snapshots/
 # and a mock Registry per test: ~776 KB of generated JSON that nothing asserts
 # on.
 contracts/premium-vault/test_snapshots/
+
+# What a demo run left on-chain, so a later act can pick it up. Local state, but
+# `.expiry-run.json` also carries the generated agent's SECRET key — the run
+# spans days, so unlike `pnpm run demo` it cannot keep the keypair in memory.
 .demo-run.json
+.expiry-run.json
