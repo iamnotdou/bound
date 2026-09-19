@@ -145,16 +145,24 @@ Only `FakeSignature` needs one.
 
 ## Deployments
 
-Bound runs as two independent deployments of the same contracts, differing only
-in which token they hold.
+One deployment exists today. `deployments/testnet.json` holds a self-issued
+test USDC (`CDIQ4564…`) and is what the live app, the published SDK and the
+InstAward record all cite. Its contract ids are tabulated in the
+[README](../README.md#deployed-contracts-stellar-testnet), generated from that
+file rather than copied out of it.
 
-|                                                | Asset                   | Purpose                                                                         |
-| ---------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------- |
-| **v2** (`deployments/testnet.json`)            | mock USDC `CDIQ4564…`   | the stable deployment behind the live app, the SDK and the InstAward record     |
-| **anchor** (`deployments/testnet-anchor.json`) | anchor USDC `CBIELTK6…` | this hackathon — the same protocol, holding money the anchor issues and redeems |
+A second deployment holding the anchor's USDC (`CBIELTK6…`) is the intended
+next step, and is deliberately a _second_ deployment rather than a redeploy: the
+docs site, the npm package and an approved grant SOW all cite the current
+contract ids, and the anchor work must not move them.
 
-They are separate on purpose. The anchor work never redeploys over contract IDs
-that the docs site, the npm package and an approved grant SOW already cite.
+`@bound/sdk` is ready for it — `NETWORK_NAMES` in `packages/sdk/src/deployments.ts`
+is the single source of truth for the set, so adding one is the import, the
+tuple and the record, in that one file. The deployment record itself is not
+written yet, and until it is, a completed anchor deposit funds a wallet and
+cannot fund a reserve. `/app/fiat` in the bound-web repo states that rather than
+implying otherwise, and `pnpm check:anchor` there prints the two issuers side by
+side.
 
 ### Scaling to the anchor's limits
 
@@ -170,10 +178,8 @@ every existing script behaves exactly as before.
 
 ## Stellar skill files used
 
-<!-- TODO before submission: replace with the exact paths you consulted -->
-
-| Skill file                | Where it shows up                                                    |
-| ------------------------- | -------------------------------------------------------------------- |
-| `skills/anchors/SKILL.md` | SEP-10 / SEP-24 flow in `scripts/anchor-deposit.ts`                  |
-| `skills/wallets/SKILL.md` | Stellar Wallets Kit wiring in `apps/dashboard/app/lib/wallet/kit.ts` |
-| `skills/soroban/SKILL.md` | contract build target and deploy sequence in `scripts/deploy-all.ts` |
+Cited once, in the [README](../README.md#stellar-skills-used), against the code
+each one applies to. A second table here would be a second thing to keep in step
+— and the first version of it had already gone stale, pointing at
+`apps/dashboard/app/lib/wallet/kit.ts` after the frontend moved to its own
+repository.
