@@ -93,9 +93,13 @@ describe("the docs point at things that exist", () => {
     for (const [, inner] of text.matchAll(/`([^`\n]+)`/g)) {
       const value = inner.trim();
       if (!/^[\w.-]+(\/[\w.-]+)+\.(ts|tsx|rs|mjs|mts|json|toml|md)$/.test(value)) continue;
-      // Placeholders, dependencies, and the Stellar skill files — which are
-      // cited by path on purpose and live at skills.stellar.org, not here.
-      if (/^(node_modules|skills)\//.test(value)) continue;
+      // Placeholders, dependencies, the Stellar skill files (cited by path on
+      // purpose and living at skills.stellar.org), and the sibling repos —
+      // `bound-web/lib/anchor.ts` is a deliberate cross-repo reference, and the
+      // repo prefix is what makes it unambiguous rather than what makes it
+      // wrong. Bound is three repositories and the docs have to be able to
+      // point between them.
+      if (/^(node_modules|skills|bound-web|bound-docs)\//.test(value)) continue;
       if (value.includes("<") || value.includes("*")) continue;
       found.add(value);
     }
