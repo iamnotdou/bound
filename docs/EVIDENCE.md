@@ -55,7 +55,7 @@ _No claim window has been closed yet._
 
 `pay_premium` is both halves of the coverage economy in one transaction: the
 operator's premium is deposited and the protocol's fee share is transferred to
-the treasury inside the same call (`premium-vault/src/lib.rs`). The auditor's
+the treasury inside the same call (`contracts/premium-vault/src/lib.rs`). The auditor's
 yield is claimed separately, against accrual across the term.
 
 | When (UTC)          | Cert | What it evidences                                                                | Contract · function           | Transaction                                                                                                                    |

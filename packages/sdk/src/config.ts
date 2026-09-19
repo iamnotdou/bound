@@ -3,22 +3,23 @@
 // Public configuration (network endpoints, contract addresses, the RPC
 // read-source account) comes from the committed deployments map. Credentials
 // (*_SECRET, ANTHROPIC_API_KEY) stay in the environment and never enter this
-// package — see apps/dashboard/app/lib/accounts.ts.
+// package — see `@bound/mcp`'s accounts.ts, or the consuming app's own.
 //
 // Never import this into browser code: it is the server half of the split.
 // Client code takes `@bound/sdk/deployments` instead.
-import { getDeployment, type NetworkName } from "./deployments";
+import { getDeployment, parseNetwork } from "./deployments";
 
-function resolveNetwork(): NetworkName {
-  const raw = process.env.STELLAR_NETWORK;
-  if (!raw || raw === "testnet") return "testnet";
-  throw new Error(
-    `unknown STELLAR_NETWORK=${JSON.stringify(raw)} — known: testnet. ` +
-      `Add a deployments/<network>.json and a DEPLOYMENTS entry before using it.`,
-  );
-}
+/**
+ * Which deployment this process talks to.
+ *
+ * `STELLAR_NETWORK` is validated against the deployments the package actually
+ * carries rather than against a literal written here, so a second deployment is
+ * added in `deployments.ts` alone and every consumer of this module follows
+ * without an edit. Unset means the default.
+ */
+export const networkName = parseNetwork(process.env.STELLAR_NETWORK);
 
-const deployment = getDeployment(resolveNetwork());
+const deployment = getDeployment(networkName);
 
 export const network = {
   rpcUrl: deployment.rpcUrl,

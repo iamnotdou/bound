@@ -181,7 +181,9 @@ stellar contract bindings typescript --network testnet --contract-id $ADDRESS --
 
 ### Phase 4 — Claude Agent (Hours 19–22)
 
-`sdk/src/agent.ts` — tools + `runBoundAgent(task, keypair)` loop:
+sdk/src/agent.ts — tools + `runBoundAgent(task, keypair)` loop.
+_(Planned name. The tool table shipped as `packages/mcp/src/tools.ts`, and
+the loop moved to the consuming app rather than into the SDK.)_
 
 **Tools the agent has:**
 

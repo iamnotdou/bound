@@ -1,14 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { usdc, formatUsdc, USDC_DECIMALS, contracts, network, readSource } from "./config";
-import { getDeployment } from "./deployments";
+import {
+  usdc,
+  formatUsdc,
+  USDC_DECIMALS,
+  contracts,
+  network,
+  networkName,
+  readSource,
+} from "./config";
+import { DEFAULT_NETWORK, getDeployment, listNetworks } from "./deployments";
 
 // USDC on Stellar carries 7 decimals, so one dollar is 10^7 stroops.
 const ONE_DOLLAR = 10_000_000n;
 
 describe("config reads the deployments file", () => {
-  const deployment = getDeployment();
+  // Keyed off the network config actually resolved, not off the default. The
+  // two are the same until a second deployment exists, and then they are not:
+  // comparing against `getDeployment()` here would assert that config read the
+  // default no matter what STELLAR_NETWORK said, which is the one thing this
+  // test must not let pass.
+  const deployment = getDeployment(networkName);
 
-  it("exposes the same six contract addresses as getDeployment()", () => {
+  it("resolves a network the package actually carries", () => {
+    expect(listNetworks()).toContain(networkName);
+  });
+
+  it("defaults when STELLAR_NETWORK is unset", () => {
+    if (!process.env.STELLAR_NETWORK) expect(networkName).toBe(DEFAULT_NETWORK);
+  });
+
+  it("exposes the same contract addresses as getDeployment()", () => {
     expect(contracts).toEqual(deployment.contracts);
   });
 

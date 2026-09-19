@@ -13,7 +13,30 @@
 // disk.
 import testnet from "../../../deployments/testnet.json";
 
-export type NetworkName = "testnet";
+/**
+ * Every network this package carries a deployment for.
+ *
+ * The single source of truth for the set. `DEPLOYMENTS` below is typed
+ * `Record<NetworkName, Deployment>`, so adding a name here without adding the
+ * record is a type error rather than a runtime surprise — which is the point:
+ * a second deployment is three edits in this one file, not a type change
+ * rippling through the SDK, the scripts and the app.
+ *
+ * A tuple rather than `keyof typeof DEPLOYMENTS` because `Deployment.network`
+ * is itself a `NetworkName`, and deriving the union from the map would make the
+ * two definitions circular.
+ */
+export const NETWORK_NAMES = ["testnet"] as const;
+
+export type NetworkName = (typeof NETWORK_NAMES)[number];
+
+/**
+ * What every caller gets when it does not say. Bound is testnet-only today, so
+ * a required selector for a choice with one option would be an onboarding tax;
+ * the day a second network exists, this is the one line that decides the
+ * default.
+ */
+export const DEFAULT_NETWORK: NetworkName = "testnet";
 
 export interface Deployment {
   network: NetworkName;
@@ -65,12 +88,36 @@ const DEPLOYMENTS: Record<NetworkName, Deployment> = {
   testnet: testnet as Deployment,
 };
 
+/** Whether an arbitrary value names a deployment this package carries. */
+export function isNetworkName(value: unknown): value is NetworkName {
+  return typeof value === "string" && (NETWORK_NAMES as readonly string[]).includes(value);
+}
+
+/**
+ * Resolve a network selector that came from outside the type system — an
+ * environment variable, a CLI flag, a query string.
+ *
+ * Pure: it reads no environment of its own, so it stays safe in the browser
+ * bundle and is provable without one. `undefined` and an empty string both mean
+ * "unspecified" and take the default; anything else must name a real
+ * deployment, and the error says which names exist rather than only that this
+ * one does not.
+ */
+export function parseNetwork(raw: string | undefined | null): NetworkName {
+  const value = raw?.trim();
+  if (!value) return DEFAULT_NETWORK;
+  if (isNetworkName(value)) return value;
+  throw new Error(
+    `unknown network ${JSON.stringify(value)} — known: ${listNetworks().join(", ")}. ` +
+      `Add deployments/<network>.json, a NETWORK_NAMES entry and a DEPLOYMENTS entry before using it.`,
+  );
+}
+
 /**
  * Look up a committed deployment. `network` is optional and defaults to
- * `testnet` — a required env var for a choice with one option is an onboarding
- * tax for no benefit. Make it required the day mainnet exists.
+ * `DEFAULT_NETWORK`.
  */
-export function getDeployment(network: NetworkName = "testnet"): Deployment {
+export function getDeployment(network: NetworkName = DEFAULT_NETWORK): Deployment {
   const deployment = DEPLOYMENTS[network];
   if (!deployment) {
     throw new Error(`unknown network: ${network}`);
@@ -79,7 +126,7 @@ export function getDeployment(network: NetworkName = "testnet"): Deployment {
 }
 
 export function listNetworks(): NetworkName[] {
-  return Object.keys(DEPLOYMENTS) as NetworkName[];
+  return [...NETWORK_NAMES];
 }
 
 /**

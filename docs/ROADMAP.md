@@ -10,15 +10,15 @@
 
 Not a prototype. The following is live and independently checkable:
 
-|                                  |                                                                    |
-| -------------------------------- | ------------------------------------------------------------------ |
-| Seven Soroban contracts          | deployed to testnet, IDs in [`ARCHITECTURE.md`](./ARCHITECTURE.md) |
-| `@bound/sdk`                     | published to npm, typed client for the whole lifecycle             |
-| `@bound/mcp`                     | published to npm, 15 tools, works with any MCP-capable agent       |
-| Live app                         | [boundprotocol.dev/app](https://www.boundprotocol.dev/app)         |
-| Docs                             | [docs.boundprotocol.dev](https://docs.boundprotocol.dev)           |
-| Threat model + disclosed defects | published, including the ones still open                           |
-| InstAward                        | month 1 delivered, month 2 in flight                               |
+|                                  |                                                                                           |
+| -------------------------------- | ----------------------------------------------------------------------------------------- |
+| Seven Soroban contracts          | deployed to testnet, IDs in the [README](../README.md#deployed-contracts-stellar-testnet) |
+| `@bound/sdk`                     | published to npm, typed client for the whole lifecycle                                    |
+| `@bound/mcp`                     | published to npm, 15 tools, works with any MCP-capable agent                              |
+| Live app                         | [boundprotocol.dev/app](https://www.boundprotocol.dev/app)                                |
+| Docs                             | [docs.boundprotocol.dev](https://docs.boundprotocol.dev)                                  |
+| Threat model + disclosed defects | published, including the ones still open                                                  |
+| InstAward                        | month 1 delivered, month 2 in flight                                                      |
 
 The relevant point for a funder: **there is no "if we get funded we will build it" step
 here.** The protocol exists, an award has already been delivered against it, and the
@@ -28,14 +28,23 @@ adversarial review that found the defects is public.
 
 ## 2. What this hackathon adds
 
-A second deployment of the same contracts, holding money issued and redeemed by a
-real SEP-24 anchor instead of a mock token. Fiat in funds a bond; a proven claim
-pays fiat out.
+A working fiat boundary, and the honest statement of what it does not yet reach.
 
-That is one edge on a diagram and it is the whole difference between a closed
-on-chain demo and a product a business could actually be paid through. Everything
-Bound does — bound a worst case, fund it, have an auditor stake on it, prove fraud
-by arithmetic — was already true. It just was not true about money anyone could spend.
+What runs: SEP-1 discovery, SEP-10 authentication with the anchor's challenge
+validated before any wallet is asked to sign it, and SEP-24 transfers in both
+directions — verified against the live reference anchor, with transaction ids.
+`@bound/sdk` is ready to carry a second deployment holding the anchor's asset.
+
+What does not: that second deployment is not written yet, so the anchor's USDC
+and the reserve vault's USDC are still different money. A completed deposit funds
+a wallet; it does not fund a bond. The app says so on the page that offers the
+rail rather than letting a demo imply otherwise.
+
+The distinction matters because the rail is the whole difference between a closed
+on-chain demo and a product a business could be paid through. Everything Bound
+does — bound a worst case, fund it, have an auditor stake on it, prove fraud by
+arithmetic — was already true. Making it true about money anyone can spend is one
+edge on a diagram and most of the remaining work.
 
 ---
 
@@ -64,14 +73,18 @@ something more code produces.
 Each milestone lists the evidence that closes it, not the work that fills it.
 A milestone is done when a stranger can check it.
 
-### M1 — Anchor rail hardened `next`
+### M1 — The rail reaches the reserve `next`
 
-Both SEP-24 directions running unattended, not hand-clicked. SEP-45 contract-account
-auth so the protocol authenticates _as itself_ when settling its own obligation,
-rather than borrowing an operator's keypair.
+The boundary works; it does not yet land in a bond. Deploy the contracts against
+the anchor's USDC as a second deployment, so a SEP-24 deposit funds a certificate's
+reserve and a proven claim withdraws to fiat. Then both directions unattended
+rather than hand-clicked, and SEP-45 contract-account auth so the protocol
+authenticates _as itself_ when settling its own obligation instead of borrowing an
+operator's keypair.
 
-**Evidence:** `anchor-smoke` in CI against the live anchor; a deposit and a withdraw
-transaction ID with matching on-chain reserve deltas.
+**Evidence:** a deposit and a withdraw transaction ID with matching on-chain
+reserve deltas, and `check:anchor` reporting the two issuers as the same asset
+rather than as two.
 
 ### M2 — One named payer `the one that matters`
 
@@ -110,7 +123,9 @@ at least one regulated counterparty who has read it and said what would have to 
 | Auditor-side liquidity     | The auditor role only works if someone can afford to stake. Bootstrapping the first auditors is a capital cost, not an engineering one |
 | Regional rail work (M4)    | Licensing and banking conversations are slow, unglamorous, and not something a solo builder does between features                      |
 
-<!-- TODO: fill in the amount and the SCF tier you are applying to before submission -->
+> **Unfilled:** the amount and the SCF tier. Stated out loud rather than left in
+> an HTML comment, because a comment renders as nothing and a blank nobody can
+> see is a blank that ships.
 
 ---
 

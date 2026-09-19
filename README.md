@@ -1,7 +1,8 @@
 # Bound Protocol
 
 > **A surety bond for AI agents, on-chain.**
-> Built for the Build On Stellar Hackathon — IBW 2026 Istanbul · Main Track + Hack Agentic
+> Originally built for the Build On Stellar Hackathon — IBW 2026 Istanbul.
+> Now submitted to the Rise In × Stellar **Pro Hackathon 2026, Scale Track**.
 
 Know your worst case _before_ you transact. AI agents now hold wallets and move money
 autonomously, but reputation can't tell you your maximum downside — models change
@@ -64,36 +65,186 @@ Full documentation lives in [`docs/`](./docs):
 
 ## Architecture
 
-Five Soroban (Rust) smart contracts on Stellar Testnet, a TypeScript SDK, an MCP
-server, and a Next.js app. All value movement is in USDC (the testnet Circle SAC).
+Seven Soroban (Rust) contracts on Stellar Testnet, a published TypeScript SDK, a
+published MCP connector, and a Next.js app in its own repo. All value moves in
+USDC — the testnet Circle SAC — and no contract holds a key: every write is
+authorised by the actor it belongs to.
 
 ```
 contracts/
-├── registry/            # Store, publish, attest, verify Bound Certificates
-├── reserve-vault/        # Locked USDC reserve — absorbs worst-case loss
-├── auditor-staking/      # Auditor's own stake — slashable on fraud
-├── fee-escrow/           # Conditional audit fee — released after attestation
-└── challenge-manager/    # Dispute resolution — slash auditor + compensate victim
+├── registry/            # Certificates: publish, attest, verify, invalidate, freeze
+├── reserve-vault/       # The operator's locked USDC, walled off per certificate
+├── auditor-staking/     # The auditor's stake, allocated per certificate, slashable
+├── challenge-manager/   # Four proof types, the claim window, and settlement
+├── payment-router/      # SEP-41 wrapped USDC that meters spend per certificate
+├── premium-vault/       # Coverage premiums, accruing to the auditor as yield
+├── fee-escrow/          # Deployed but unused — superseded by premium-vault
+├── spend-probe/         # Never deployed: the executable proof that spend ≠ loss
+└── integration-tests/   # Offline cross-contract harness
 
-apps/dashboard/           # Next.js app + API routes
-bindings/                 # Generated TypeScript contract bindings
-packages/sdk/             # @bound/sdk — the publishable typed client
-packages/mcp/             # @bound/mcp — the agent tools, packaged as an MCP server
-scripts/                  # setup-accounts, deploy-all, demo (8-step E2E), smoke suites
+bindings/                # Generated TypeScript clients — never hand-edited
+packages/sdk/            # @bound/sdk — the publishable typed client
+packages/mcp/            # @bound/mcp — the agent tools, packaged as an MCP server
+scripts/                 # setup, deploy, demo, evidence, anchor, and the smoke suites
+deployments/             # testnet.json — the single source of truth for addresses
 ```
+
+### System
+
+```mermaid
+flowchart TB
+  operator([Operator]):::actor
+  agent([AI agent]):::actor
+  auditor([Auditor]):::actor
+  challenger([Challenger]):::actor
+
+  subgraph clients["Clients — nothing here holds a contract address of its own"]
+    web["bound-web<br/>Next.js app"]
+    mcpsrv["@bound/mcp<br/>MCP server + 15 tools"]
+  end
+
+  sdk["@bound/sdk<br/>typed client · committed deployment record"]
+  kit["Stellar Wallets Kit<br/>Freighter · xBull · Lobstr · Albedo · Hana · Rabet"]
+  anchor[["Anchor<br/>SEP-10 auth · SEP-24 deposit/withdraw"]]:::ext
+
+  subgraph chain["Soroban — Stellar testnet"]
+    registry["Registry"]
+    vault["ReserveVault"]
+    staking["AuditorStaking"]
+    cm["ChallengeManager"]
+    premium["PremiumVault"]
+    router["PaymentRouter"]
+    usdc[("USDC SAC")]
+  end
+
+  operator --> web
+  auditor --> web
+  challenger --> web
+  agent --> mcpsrv
+
+  web --> kit
+  kit -- "signs the envelope<br/>the server assembled" --> web
+  web --> sdk
+  mcpsrv --> sdk
+  sdk --> chain
+
+  operator -. "fiat in" .-> anchor
+  anchor -. "USDC out" .-> vault
+  vault -. "payout" .-> anchor
+  anchor -. "fiat out" .-> challenger
+
+  registry -- "is_registered · allocate" --> staking
+  cm -- "pay_from_reserve · get_balance" --> vault
+  cm -- "slash_allocation · retire_allocation" --> staking
+  cm -- "forfeit · terminate" --> premium
+  cm -- "spent · post_expiry_spent" --> router
+  cm -- "invalidate · set_claim_freeze" --> registry
+  vault -- "get_cert_operator<br/>get_cert_settlement_deadline" --> registry
+  router -- "cert terms, copied in at enroll" --> registry
+  premium --> registry
+  vault --> usdc
+  staking --> usdc
+  premium --> usdc
+  router --> usdc
+
+  classDef actor fill:#fff,stroke:#888,stroke-dasharray:3 3
+  classDef ext fill:#fff7ed,stroke:#f97316
+```
+
+The dotted edges are the fiat rail: a reserve funded from a SEP-24 deposit, and a
+proven claim paid out through a SEP-24 withdrawal. That is the boundary the
+protocol is only useful across — a surety bond whose collateral cannot be funded
+from, or redeemed to, money people actually spend is not a bond.
+
+### Settlement
+
+The part worth reading closely. One rule, applied identically to every proof
+type, with the pots drawn in a fixed order:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor C as Challenger
+  participant CM as ChallengeManager
+  participant R as Registry
+  participant V as ReserveVault
+  participant S as AuditorStaking
+  participant P as PremiumVault
+
+  C->>CM: challenge(cert, proof, victim, bond)
+  CM->>R: read the certificate, verify the predicate from state
+  alt wrong at filing
+    CM-->>C: ChallengeFails — bond forfeited, decided in this same tx
+  else proven
+    CM->>R: set_claim_freeze — capital frozen, others may join
+    Note over CM: 72-hour claim window
+    CM->>V: get_balance
+    CM->>S: get_allocation
+    Note over CM: payable = min(harm, reserve + allocation)
+    CM->>V: 1. pay_from_reserve → victim
+    CM->>V: 2. pay_from_reserve → challenger fee, % of proven harm
+    CM->>S: 3. slash_allocation → treasury, never victim or challenger
+    CM->>P: 4. forfeit → victim, capped by uncovered harm
+    CM->>S: 5. retire_allocation — unslashed remainder returns to free stake
+    CM->>R: 6. invalidate — and the challenger's bond comes back
+  end
+```
+
+Every line closes a specific attack; the reasons are attached to them in
+[`contracts/challenge-manager/src/lib.rs`](./contracts/challenge-manager/src/lib.rs).
+The one that matters most: **the auditor's slash goes to the treasury, never to
+the victim or the challenger.** A colluding operator who files a challenge
+against their own certificate must not be able to collect the auditor's stake.
+
+### The claim the protocol refuses to make
+
+`PaymentRouter::spent(cert_id)` is **gross routed flow, not loss**. The
+arithmetic cannot be forged, so `spent > bound` is a sound predicate — and a
+worthless settlement rule, because one dollar shuttled between two addresses the
+same operator controls drives the counter past any bound for the price of gas.
+[`contracts/spend-probe`](./contracts/spend-probe) is the executable proof and is
+kept in the workspace for that reason. Anything that pays out is sized by harm
+proven to a party outside the operator's control, and capped by the collateral
+actually behind the certificate.
 
 ## Deployed contracts (Stellar Testnet)
 
-| Contract          | Address                                                    |
-| ----------------- | ---------------------------------------------------------- |
-| Registry          | `CBM2UAVZFUI2QGZIS35VB6P3W5FYC3HW3KV3E2AF6KFQDUMFIZPPAJWV` |
-| ReserveVault      | `CDN6S5DKUCC4O33L3RGTTO4LYNJVPLPIYYZTUANPJJZYAHZCR32O4WFB` |
-| AuditorStaking    | `CCSJTEXOJZ322XI5ZJF6YZ2IRLCRKNXTGHGK3ZLATKL6Y7CGQODS4VZB` |
-| FeeEscrow         | `CD4EZ5FCFC7D65OHBB5HHF6ASM4OCRGNAO6XQZQ5LKH4QB327SF5EYOF` |
-| ChallengeManager  | `CANDUKOYQIMZDK4MUWHN6MKJI5ORY5R4BPBEQIOQQSINJYITMY47UNZH` |
-| USDC (Circle SAC) | `CBIBCQ6EIQX3DU2SIJ3MFN7MQBNXBCETNLTFHNQOSTTLZDSGQLENPVWV` |
+Generated from [`deployments/testnet.json`](./deployments/testnet.json), which the
+deploy script owns and `@bound/sdk/deployments` publishes. `test/docs-integrity.test.ts`
+fails if this table and that record ever disagree, so an address here is an address
+you can paste into an explorer.
+
+| Contract         | Address                                                    | What it does                                                                   |
+| ---------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Registry         | `CCJTY2VYHQZ7OQE6NX7QFL7JL766YMTNKGHZXGAPTPKV5IUS2AK5UREF` | Certificates. `publish` → `attest` → `verify`.                                 |
+| ReserveVault     | `CD6VK2YUUZO5L5R76DNT3NQNWR2UCALPQ3T6STWAQSEY7Q6I5P4LAFC3` | The operator's locked USDC, walled off per certificate.                        |
+| AuditorStaking   | `CBPUCSASKMQKRWJ7WUTQ6KUPX66QUBV2E6V4CQ46BI4ZLJSW6AFPR6RB` | The auditor's own stake, allocated per certificate and slashable.              |
+| ChallengeManager | `CAYEGPIHNDIEONWNKRF2UPTO32SXGFTLBQ2K4RPN2LCIGOOZYLYYYIHY` | Four proofs, a 72-hour claim window, pro-rata settlement.                      |
+| PaymentRouter    | `CA5OPBLVGNPAFNFHY3ATNZXJ72L3K4EG4RIQYOWOKESAN7C75DDMMCMJ` | SEP-41 wrapped USDC that meters an enrolled agent's spend.                     |
+| PremiumVault     | `CA5JT2IBPY7X4QZS65XY6YW2BXDUEFPZHXTNG2OCPCJTOM4DWEWEOHAF` | Coverage priced bound × duration, accruing to the auditor as yield.            |
+| FeeEscrow        | `CAM3D5PTXQ4MEY45SGNUZZGNN2D6JXHSCFR3IM6S46KCPWERWJGDFXNI` | Deployed but unused — superseded by PremiumVault, kept rather than redeployed. |
+| USDC             | `CDIQ4564SFRCLBP2UL4Z5IBGEBDF2J5ISQVCTHN3F5SNVDXGSB5YEAMM` | The testnet Circle Stellar Asset Contract. Every amount moves in this token.   |
+
+Deployed 2026-08-21 from commit [`82e34af8b9e8`](https://github.com/iamnotdou/bound/commit/82e34af8b9e8b4456623b46bda4b32016f8abc4f).
+Read-only simulations use the funded source account `GDOUNKJLAMAPLK7IZ2MGBE3S4RHF4SSQYPDRCGK2VNSP6IHFR5OQ7HGF`.
 
 ---
+
+## Stellar Skills used
+
+The [official skill files](https://skills.stellar.org/) that bear on the code in
+this repo, cited by path as the submission requires. Each line names the part of
+the codebase it applies to, so a reader can check the claim rather than take it.
+
+| Skill file                  | Where it applies                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills/anchors/SKILL.md`   | [`scripts/anchor-deposit.ts`](./scripts/anchor-deposit.ts), [`scripts/anchor-status.ts`](./scripts/anchor-status.ts), [`scripts/anchor-trustlines.ts`](./scripts/anchor-trustlines.ts) — SEP-10 challenge/sign/JWT, the SEP-24 interactive deposit, and the classic trustline the anchor's asset needs before it can land |
+| `skills/standards/SKILL.md` | The SEP choices themselves: SEP-41 for [`contracts/payment-router`](./contracts/payment-router), SEP-10/24 for the fiat rail, and why `transfer` may make no sub-invocation                                                                                                                                               |
+
+Two more are relevant to work in flight rather than to code already here, and are
+cited only if they end up in the diff: `skills/integration-finder/SKILL.md` for
+choosing the second ecosystem integration, and `skills/soroswap/SKILL.md` if the
+TRY↔USDC swap at the anchor boundary lands.
 
 ## Running it
 
