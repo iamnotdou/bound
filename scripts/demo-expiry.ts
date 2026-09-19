@@ -29,7 +29,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 import { bound, contracts, formatUsdc, usdc } from "@bound/sdk";
-import { readEnv, changeTrust, invoke } from "./lib";
+import { readEnv, changeTrust, invoke, AMOUNT_SCALE as S } from "./lib";
 
 const env = readEnv();
 const need = (k: string): string => {
@@ -46,16 +46,16 @@ const counterparty = need("COUNTERPARTY_ADDRESS");
 // Amounts (USDC, 7 decimals). Deliberately smaller than the BoundExceeded
 // demo's: nothing here needs to exceed a bound, so the certificate only has to
 // be large enough that the de-minimis floor is a real number.
-const BOUND = usdc(500);
-const RESERVE = usdc(500); // funded in full: this operator is not lying about money
+const BOUND = usdc(500 * S);
+const RESERVE = usdc(500 * S); // funded in full: this operator is not lying about money
 // The auditor's slice bonded to THIS certificate. It cannot be smaller: the
 // AuditorStaking contract's `get_min_stake` is $500 and `allocate` panics with
 // `allocation_below_minimum` under it. An auditor's bond is meant to hurt.
-const ALLOCATION = usdc(500);
-const FLOAT_CAP = usdc(10);
-const LATE_PAYMENT = usdc(5); // 1% of the bound, vs a de-minimis floor of 0.1%
-const CHALLENGE_BOND = usdc(500); // the ChallengeManager's minimum, and not small
-const AGENT_FUNDING = usdc(20);
+const ALLOCATION = usdc(500 * S);
+const FLOAT_CAP = usdc(10 * S);
+const LATE_PAYMENT = usdc(5 * S); // 1% of the bound, vs a de-minimis floor of 0.1%
+const CHALLENGE_BOND = usdc(500 * S); // the ChallengeManager's minimum, and not small
+const AGENT_FUNDING = usdc(20 * S);
 
 // Half an hour. The term only has to be short enough that expiry is behind us
 // before the grace window starts running — every minute of term is a minute

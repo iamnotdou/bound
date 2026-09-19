@@ -3,8 +3,17 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const ENV_PATH = resolve(__dirname, "..", ".env.testnet");
+export const ENV_PATH = resolve(__dirname, "..", process.env.BOUND_ENV_FILE ?? ".env.testnet");
 export const NETWORK = "testnet";
+
+// Uniform scale for every USDC figure in the deploy and demo scripts. The
+// SEP-24 reference anchor caps a transfer at 10 units, so the anchor
+// deployment cannot source the hundreds of USDC these scenarios assume.
+// Scaling every amount by the same factor shrinks the scenario while
+// preserving each ratio the assertions depend on -- DE_MINIMIS_FLOOR_BPS is
+// in basis points, so it scales with the bound rather than against it.
+// Defaults to 1: unset, every existing script behaves exactly as before.
+export const AMOUNT_SCALE = Number(process.env.BOUND_AMOUNT_SCALE ?? 1);
 
 // USDC on Stellar uses 7 decimals — $1 = 1_0000000 stroops.
 export const USDC_DECIMALS = 7;

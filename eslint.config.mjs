@@ -1,43 +1,32 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import tseslint from "typescript-eslint";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-const eslintConfig = [
+export default tseslint.config(
   {
-    // `next lint` only ever looked at the app source directories. Running
-    // `eslint .` widens the scope to the whole repo, so build output and
-    // generated code have to be excluded explicitly or they dominate the
-    // report — .next alone accounts for ~2900 errors in emitted artifacts.
+    // `eslint .` covers the whole repo, so generated and emitted code has to be
+    // excluded explicitly or it dominates the report.
     ignores: [
-      ".next/**",
-      "apps/*/.next/**",
-      "out/**",
-      "apps/*/out/**",
-      // tsup output for packages/sdk — bundled, minified-ish, not authored here.
-      "packages/*/dist/**",
       "**/node_modules/**",
+      // tsup output for packages/* — bundled, not authored here.
+      "packages/*/dist/**",
+      // cargo output.
       "target/**",
       // Generated from the contract wasm by the Stellar CLI. Regenerated with
-      // `build:bindings`, never edited by hand, so linting them reports on
-      // code nobody can fix here.
+      // `build:bindings`, never edited by hand, so linting them reports on code
+      // nobody can fix here.
       "bindings/**",
-      // Written by Next on every build.
-      "**/next-env.d.ts",
       "**/*.tsbuildinfo",
     ],
   },
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // The repo is Rust contracts, a published TypeScript SDK, an MCP server and
+  // the deploy/demo scripts — all Node. It previously extended
+  // `eslint-config-next`, which only made sense while a Next.js app lived in
+  // `apps/`; the frontend now lives in its own repo (bound-web) and carries its
+  // own Next config, so this one lints plain TypeScript and nothing else.
+  ...tseslint.configs.recommended,
   {
-    // The verified backend SDK (apps/dashboard/app/lib, scripts, mcp) uses deliberate `any` at
-    // a few chain-boundary seams and a lazy `require("dotenv")` for non-Next
-    // contexts. Keep these as warnings so they don't block `next build`.
+    // The scripts and MCP server use deliberate `any` at a few chain-boundary
+    // seams and a lazy `require("dotenv")` for non-bundled contexts. Keep these
+    // as warnings so they report without blocking a build.
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-require-imports": "warn",
@@ -54,6 +43,4 @@ const eslintConfig = [
       ],
     },
   },
-];
-
-export default eslintConfig;
+);

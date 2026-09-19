@@ -4,10 +4,16 @@
 // browser wallet will sign. Pure reads/simulation; no funds move.
 //
 //   pnpm wallet-smoke
-import { buildActionXdr, buildTrustlineXdr } from "../apps/dashboard/app/lib/tx-build";
+import { buildActionXdr, buildTrustlineXdr } from "@bound/sdk";
+import { readEnv } from "./lib";
 
-const AGENT = process.env.AGENT_ADDRESS!;
-const COUNTERPARTY = process.env.COUNTERPARTY_ADDRESS!;
+// Read the env file explicitly. This used to arrive as a side effect of
+// importing the dashboard's tx-build shim, which pulled in accounts.ts and its
+// dotenv bootstrap. The shim was a pure re-export of @bound/sdk, so importing
+// the SDK directly dropped the hidden bootstrap with it.
+const env = readEnv();
+const AGENT = env.AGENT_ADDRESS;
+const COUNTERPARTY = env.COUNTERPARTY_ADDRESS;
 
 function ok(label: string, xdr: string) {
   const looksValid = typeof xdr === "string" && xdr.length > 50;

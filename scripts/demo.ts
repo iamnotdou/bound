@@ -32,7 +32,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 import { bound, contracts, formatUsdc, usdc } from "@bound/sdk";
-import { readEnv, changeTrust } from "./lib";
+import { readEnv, changeTrust, AMOUNT_SCALE as S } from "./lib";
 
 const env = readEnv();
 const need = (k: string): string => {
@@ -56,18 +56,18 @@ const agent = Keypair.random();
 // Amounts (USDC, 7 decimals). Small on purpose: every one of these is real
 // testnet money moving through real contracts, and the numbers are chosen so a
 // reader can do the arithmetic in their head.
-const AUDITOR_STAKE = usdc(1_500);
-const ALLOCATION = usdc(500); // the auditor's slice bonded to THIS certificate
-const BOUND = usdc(500);
-const RESERVE = usdc(500); // funded in full — this operator is not lying about money
-const FLOAT_CAP = usdc(200); // the most a stolen agent key can reach at any moment
-const PAYMENT = usdc(200);
+const AUDITOR_STAKE = usdc(1_500 * S);
+const ALLOCATION = usdc(500 * S); // the auditor's slice bonded to THIS certificate
+const BOUND = usdc(500 * S);
+const RESERVE = usdc(500 * S); // funded in full — this operator is not lying about money
+const FLOAT_CAP = usdc(200 * S); // the most a stolen agent key can reach at any moment
+const PAYMENT = usdc(200 * S);
 const PAYMENTS = 3; // 3 x $200 = $600 > the $500 bound
 // The ChallengeManager enforces a minimum bond, and it is not small. That is
 // the point: a challenge is an accusation backed by the challenger's own money,
 // and a bond you would not miss is not a deterrent to filing a false one.
-const CHALLENGE_BOND = usdc(500);
-const AGENT_FUNDING = usdc(1_000);
+const CHALLENGE_BOND = usdc(500 * S);
+const AGENT_FUNDING = usdc(1_000 * S);
 
 // A one-hour term. The premium is priced on bound x duration, so a short term
 // keeps the demo honest about accrual: yield you can watch arrive in a minute

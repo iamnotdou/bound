@@ -9,7 +9,16 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { existsSync, writeFileSync } from "node:fs";
-import { readEnv, writeEnvValues, deploy, initialize, invoke, usdc, NETWORK } from "./lib";
+import {
+  readEnv,
+  writeEnvValues,
+  deploy,
+  initialize,
+  invoke,
+  usdc,
+  NETWORK,
+  AMOUNT_SCALE,
+} from "./lib";
 import { serializeDeployment } from "@bound/sdk";
 
 const ROOT = resolve(__dirname, "..");
@@ -36,8 +45,8 @@ const WASM = {
 } as const;
 
 // Economic parameters
-const AUDITOR_MIN_STAKE = usdc(500); // min stake to be a registered auditor
-const CHALLENGE_MIN_BOND = usdc(100); // min bond to open a challenge
+const AUDITOR_MIN_STAKE = usdc(500 * AMOUNT_SCALE); // min stake to be a registered auditor
+const CHALLENGE_MIN_BOND = usdc(100 * AMOUNT_SCALE); // min bond to open a challenge
 // Coverage pricing. Deliberately simple and transparent — DESIGN-V2 §10 rules
 // out actuarial models and external underwriters, so the premium is
 // `bound * rate * duration` annualised and nothing more.
@@ -106,7 +115,10 @@ function main() {
   // Output of record: committed deployment data. .env.testnet still gets the
   // same addresses (above) for local secrets workflows; this file is what the
   // app and the SDK will read after step 3.3.
-  const deploymentPath = resolve(DEPLOYMENTS_DIR, `${NETWORK}.json`);
+  const deploymentPath = resolve(
+    DEPLOYMENTS_DIR,
+    `${process.env.BOUND_DEPLOYMENT_LABEL ?? NETWORK}.json`,
+  );
   writeFileSync(
     deploymentPath,
     serializeDeployment({
