@@ -246,6 +246,170 @@ cited only if they end up in the diff: `skills/integration-finder/SKILL.md` for
 choosing the second ecosystem integration, and `skills/soroswap/SKILL.md` if the
 TRY↔USDC swap at the anchor boundary lands.
 
+## Key design decisions and trade-offs
+
+Each of these cost something. The cost is stated, because a decision presented
+without its price is a decision nobody can evaluate.
+
+**A slash pays the treasury, never the victim or the challenger.**
+`settle_fraud` draws the victim's compensation and the challenger's fee
+(`CHALLENGER_FEE_BPS`, 10% of proven harm) from the _operator's own reserve_, and
+sends the auditor's slashed allocation somewhere neither party can reach.
+Otherwise an operator files a challenge against their own certificate, names an
+address they control as the victim, and collects the auditor's stake for the
+price of a bond. **The cost:** a victim whose harm exceeds the reserve is not
+made whole out of the auditor's capital, even though that capital was slashed.
+Bound bounds the loss; it does not always cover it.
+
+**The spend counter is evidence, not a payout trigger.**
+`PaymentRouter::spent(cert_id)` cannot be forged, so `spent > bound` is a sound
+predicate — and a worthless settlement rule, because a single dollar shuttled
+between two addresses one operator controls drives the counter past any bound for
+the price of gas. `contracts/spend-probe` is the executable proof and is kept in
+the workspace for no other reason. **The cost:** `BoundExceeded` settles in
+hygiene mode only — it can kill a certificate, not pay out on one.
+
+**The router custodies USDC instead of wrapping the SAC.**
+x402 facilitator settlement requires that paying for a resource is exactly one
+`transfer` call emitting exactly one event with no sub-invocations. A router that
+called through to the underlying SAC would emit two and break settlement, so it
+holds the asset and moves internal balances. **The cost:** a custodial contract
+is a larger thing to trust than a passthrough. Mitigated, not eliminated, by a
+per-certificate `float_cap` that bounds what a stolen agent key can reach, and by
+the operator's `halt` — and `transfer` may therefore make no cross-contract call
+at all, so everything the hot path needs is copied into router storage at
+`enroll`.
+
+**Capital unlocks at the settlement deadline, not at expiry.**
+A proof about post-expiry conduct only becomes provable _after_ expiry. If the
+reserve and the auditor's allocation both unlocked at `expires_at`, such a proof
+would settle against an empty pot every single time, so both read
+`expires_at + CHALLENGE_WINDOW_SECONDS`. **The cost:** an honest operator's
+capital is locked seven days longer than the cover it bought.
+
+**Money is walled off per certificate, not pooled.**
+`Balance(cert_id)`, `Allocation(cert_id)`, `Coverage(cert_id)`. Funding one
+certificate can never back another, and one bad certificate cannot destroy an
+auditor's whole book. **The cost:** capital efficiency. An auditor with ten
+certificates cannot let a quiet one's allocation absorb a loud one's claim.
+
+**A claim opens a window rather than paying immediately.**
+A proven challenge freezes the certificate for `CLAIM_WINDOW_SECONDS` (72 hours)
+and every admitted claim settles together, pro rata. Paying the first filer in
+full would make fraud detection a race, and the fastest bot would collect a
+collateral pool that other victims also have a claim on. **The cost:** a real victim
+waits three days before anything settles.
+
+**A de-minimis floor in basis points, not dollars.**
+`ExpiredCertificate` only counts a post-expiry payment as evidence if it is at
+least `DE_MINIMIS_FLOOR_BPS` (0.1%) of _that certificate's own_ bound. A flat
+floor would be irrelevant at a $1M bound and fatal at a $1k one; anchoring it to
+the bound keeps the band of unprovable late payments proportional to the number
+the certificate already advertises. **The cost:** small late payments are
+genuinely unprovable, and the check reads only the single largest late payment
+the router recorded — so a big one inside the grace window masks a smaller,
+later one that would have qualified. Upholding fewer real breaches is the safe
+direction to be wrong in.
+
+**Two published packages, one definition of the agent tools.**
+`packages/mcp/src/tools.ts` is the only place a tool is defined. The `bound-mcp`
+executable and any AI-SDK loop are adapters over it, and a consumer imports
+`@bound/mcp/tools` — a second entry point carrying the table without the server —
+so a Next build never bundles an MCP server. **The cost:** the package cannot
+reach into an app for credentials, so it carries its own `accounts.ts` reading
+the same five environment variables. Thirty duplicated lines is the price of the
+package standing on its own.
+
+**The anchor is configuration, not code.**
+`ANCHOR_HOME_DOMAIN` names one and every endpoint is read from its
+`stellar.toml` over SEP-1. **The cost:** an extra network round trip before any
+SEP-10 or SEP-24 call, cached for sixty seconds — short enough that a rotated
+signing key is not trusted for long.
+
+**A failed read is `null`, never `0`.**
+"The vault said nothing" and "the vault holds nothing" are different claims about
+money, and a UI that renders the first as the second is lying with a plausible
+number. Every chain read in the app degrades independently. **The cost:** more
+branches in every component — `SpendMeterPanel` and `CoveragePanel` each render
+three shapes rather than one shape with blanks.
+
+---
+
+## Technical challenges, and how they were solved
+
+**A well-formed envelope that could never succeed.**
+`AssembledTransaction.toXDR()` serialises whatever was assembled, _including an
+assembly whose simulation failed_. Verified against the deployed contracts:
+attesting an unfunded certificate, attesting as an unregistered auditor, and
+funding someone else's reserve all produced perfectly valid XDR. The build
+route's comment claimed the simulation caught those. It did not.
+`assertSignableXdr` re-simulates the envelope **as assembled** — carrying its
+auth entries, which is what makes it fail the cases the first simulation let
+through — and separately refuses any envelope needing a signature the connected
+wallet does not hold. One extra RPC round trip, in exchange for never asking
+somebody to sign a transaction that cannot land.
+
+**A transaction reported as rejected while the money was gone.**
+`/api/tx/submit` polls for thirty seconds and then throws, and the UI rendered
+that as "the network rejected this" — for transactions that, more often than not,
+landed a few seconds later. The hash is a property of the _signed envelope_, so
+it is knowable before the network sees it: `bound-web/lib/tx-journal.ts` writes it down
+first, and `GET /api/tx/[hash]` asks the chain what actually happened. `NOT_FOUND`
+is returned as a status rather than an error, because "never seen" and "failed"
+are different facts.
+
+**State archival aborts the transaction instead of returning a default.**
+Soroban reclaims instance and persistent entries whose TTL lapses, and _reaching_
+one aborts rather than returning zero — so an untouched certificate would stop
+being readable, and each contract instance is on the same clock, which would take
+a whole contract offline. Every write path now bumps to 120 days with a threshold
+at 60, sized against a certificate's own lifetime plus its challenge window, and
+the rent is charged to whoever was already paying for that call. The app detects
+the residual case by identity (`AssembledTransaction.Errors.ExpiredState`, not a
+string match) and tells "never issued" apart from "reclaimed" by reading the
+certificate count, which is a separate entry that survives either way.
+
+**Two of the generated bindings are real, unrelated packages on npm.**
+The Stellar CLI names them `registry` and `usdc`. Declaring either as a
+dependency would fetch a stranger's code, so the SDK imports all of them by
+relative path — which means a plain `tsc` would emit those specifiers into
+`dist/` and publish a package importing files outside its own tarball. tsup
+inlines them instead, and the `external` patterns are regexes rather than strings
+so the `@stellar/stellar-sdk/contract` and `/rpc` subpaths are not silently
+bundled too.
+
+**Two lockfiles resolved two different major versions.**
+The repo once carried both a `package-lock.json` and a `pnpm-lock.yaml`, which
+resolved `@stellar/stellar-sdk` 13.3.0 and 16.x respectively — and only one of
+those trees produces envelopes a wallet can sign. `bound-web/lib/toolchain.test.ts` now asserts 16.x on both resolution paths, the app's and the SDK's,
+because the two resolve it independently.
+
+**Asking a wallet to sign something a third party wrote.**
+A SEP-10 challenge arrives from the anchor. Before it reaches a wallet the server
+proves it is genuinely a challenge — `readChallengeTx` against the anchor's
+declared `SIGNING_KEY`, sequence zero, the home-domain operation, the anchor's own
+signature — and refuses a challenge minted for a different account. The subtlety
+that cost the most: SEP-10's `web_auth_domain` is the host of `WEB_AUTH_ENDPOINT`,
+**not** the home domain. They coincide on the reference anchor, so validating
+against the home domain looks correct and silently breaks against any anchor that
+serves auth elsewhere.
+
+**An anchor that moves ten dollars at a time.**
+The reference anchor caps every transfer at 10 units while the protocol's
+defaults are written in hundreds — a $500 minimum auditor stake cannot be reached
+through it. `BOUND_AMOUNT_SCALE` divides every USDC figure in the deploy and demo
+scripts by one factor, so each ratio the assertions depend on survives:
+`DE_MINIMIS_FLOOR_BPS` is in basis points and scales with the bound rather than
+against it. Unset, every script behaves exactly as before.
+
+**One helper import that would have shipped the chain SDK to the browser.**
+Fixing a gating bug, a pure function was imported from `bound-web/lib/anchor.ts` into a
+Client Component — and that module reads `process.env` at module scope and
+imports `@stellar/stellar-sdk` for challenge validation. The arithmetic now lives
+in `bound-web/lib/anchor-limits.ts`, which imports nothing; `bound-web/lib/anchor.ts` re-exports it so
+there is still one definition. Confirmed against the built output rather than
+assumed: the chunk carrying the panel is 20 KB and contains no SDK internals.
+
 ## Running it
 
 ```bash
