@@ -297,9 +297,19 @@ certificates cannot let a quiet one's allocation absorb a loud one's claim.
 A proven challenge freezes the certificate for `CLAIM_WINDOW_SECONDS` (72 hours)
 and every admitted claim settles together, pro rata. Paying the first filer in
 full would make fraud detection a race, and the fastest bot would collect a
-collateral pool that other victims also have a claim on. **The cost:** a real
-victim waits three days, and a claim below `DE_MINIMIS_FLOOR_BPS` of the bound is
-not admitted at all.
+collateral pool that other victims also have a claim on. **The cost:** a real victim
+waits three days before anything settles.
+
+**A de-minimis floor in basis points, not dollars.**
+`ExpiredCertificate` only counts a post-expiry payment as evidence if it is at
+least `DE_MINIMIS_FLOOR_BPS` (0.1%) of _that certificate's own_ bound. A flat
+floor would be irrelevant at a $1M bound and fatal at a $1k one; anchoring it to
+the bound keeps the band of unprovable late payments proportional to the number
+the certificate already advertises. **The cost:** small late payments are
+genuinely unprovable, and the check reads only the single largest late payment
+the router recorded — so a big one inside the grace window masks a smaller,
+later one that would have qualified. Upholding fewer real breaches is the safe
+direction to be wrong in.
 
 **Two published packages, one definition of the agent tools.**
 `packages/mcp/src/tools.ts` is the only place a tool is defined. The `bound-mcp`
