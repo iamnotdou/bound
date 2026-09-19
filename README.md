@@ -210,7 +210,7 @@ actually behind the certificate.
 ## Deployed contracts (Stellar Testnet)
 
 Generated from [`deployments/testnet.json`](./deployments/testnet.json), which the
-deploy script owns and `@bound/sdk/deployments` publishes. `test/readme-addresses.test.ts`
+deploy script owns and `@bound/sdk/deployments` publishes. `test/docs-integrity.test.ts`
 fails if this table and that record ever disagree, so an address here is an address
 you can paste into an explorer.
 

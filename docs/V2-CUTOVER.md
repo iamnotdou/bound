@@ -314,7 +314,7 @@ The order matters; steps 3 and 4 are the ones that bite.
    only; adding the key is part of this step. Ship as **0.3.0** at minimum — this is not a patch. `attest` gains an argument,
    `depositReserve` gains a certificate, `reserveBalance()` gains a certificate.
 
-6. **Update bound-web.** `lib/bound.ts` and `lib/tx.ts` are the only two modules
+6. **Update bound-web.** Its `lib/bound.ts` and `lib/tx.ts` are the only two modules
    that touch the SDK, which is what makes this survivable. `/app/new` can drop
    the "an arbitrary operator cannot fund a reserve" disclosure, because on v2
    they can.

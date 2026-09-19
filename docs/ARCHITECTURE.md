@@ -181,5 +181,5 @@ every existing script behaves exactly as before.
 Cited once, in the [README](../README.md#stellar-skills-used), against the code
 each one applies to. A second table here would be a second thing to keep in step
 — and the first version of it had already gone stale, pointing at
-`apps/dashboard/app/lib/wallet/kit.ts` after the frontend moved to its own
-repository.
+a wallet module under the old `apps/dashboard/` tree, after the frontend
+moved to its own repository.

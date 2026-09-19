@@ -79,6 +79,61 @@ describe("the docs point at things that exist", () => {
     }
   });
 
+  /**
+   * Backticked strings that look like a file in this repository.
+   *
+   * The dead `apps/dashboard/app/lib/wallet/kit.ts` citation was written this
+   * way, not as a markdown link, so the link rule above sailed past it — and it
+   * sat in the table that satisfies a submission requirement. Deliberately
+   * narrow: a path shape with a known extension, and nothing that is obviously
+   * not ours.
+   */
+  function citedPaths(text: string): string[] {
+    const found = new Set<string>();
+    for (const [, inner] of text.matchAll(/`([^`\n]+)`/g)) {
+      const value = inner.trim();
+      if (!/^[\w.-]+(\/[\w.-]+)+\.(ts|tsx|rs|mjs|mts|json|toml|md)$/.test(value)) continue;
+      // Placeholders, dependencies, and the Stellar skill files — which are
+      // cited by path on purpose and live at skills.stellar.org, not here.
+      if (/^(node_modules|skills)\//.test(value)) continue;
+      if (value.includes("<") || value.includes("*")) continue;
+      found.add(value);
+    }
+    return [...found];
+  }
+
+  /**
+   * Documents that describe the tree as it is now, and that a reader deciding
+   * whether to trust this project actually opens.
+   *
+   * `PROJECT.md` and `V2-CUTOVER.md` are deliberately outside it. They are a
+   * build plan and a migration log — records of what was intended and what was
+   * done at a point in time, and a path in one of them is a historical fact
+   * rather than a claim about the current tree. Correcting them to match today
+   * would be rewriting the record to pass a test, which is the opposite of what
+   * this file is for.
+   */
+  const CURRENT = new Set([
+    "README.md",
+    "AGENTS.md",
+    "docs/ARCHITECTURE.md",
+    "docs/ROADMAP.md",
+    "docs/QUICKSTART.md",
+    "docs/DELIVERABLES.md",
+  ]);
+
+  it.each(DOCS.filter(([path]) => CURRENT.has(path)))(
+    "%s cites no path in this repo that is missing",
+    (path, text) => {
+      for (const cited of citedPaths(text)) {
+        expect(
+          existsSync(join(root, cited)),
+          `${path} cites \`${cited}\`, which is not a file in this repository`,
+        ).toBe(true);
+      }
+    },
+  );
+
   it.each(DOCS)("%s claims no deployment record that is missing", (path, text) => {
     // ARCHITECTURE.md presented an anchor deployment as live before one existed.
     // A deployment named in prose has to be a deployment the package carries.
