@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { getDeployment, listNetworks, serializeDeployment } from "./deployments";
+import {
+  DEFAULT_NETWORK,
+  NETWORK_NAMES,
+  getDeployment,
+  isNetworkName,
+  listNetworks,
+  parseNetwork,
+  serializeDeployment,
+} from "./deployments";
 import type { Deployment } from "./deployments";
 
 describe("getDeployment()", () => {
@@ -66,8 +74,94 @@ describe("getDeployment()", () => {
 });
 
 describe("listNetworks()", () => {
-  it("lists every key in the static map", () => {
-    expect(listNetworks()).toEqual(["testnet"]);
+  it("lists every name in NETWORK_NAMES", () => {
+    expect(listNetworks()).toEqual([...NETWORK_NAMES]);
+  });
+
+  it("returns a fresh array a caller cannot use to mutate the set", () => {
+    const first = listNetworks();
+    first.push("nope" as never);
+    expect(listNetworks()).toEqual([...NETWORK_NAMES]);
+  });
+
+  it("names a deployment for every network, and no orphans", () => {
+    // The guard that makes adding a network safe: the tuple and the map cannot
+    // drift apart without this failing.
+    for (const name of listNetworks()) {
+      expect(getDeployment(name).network, name).toBe(name);
+    }
+  });
+});
+
+describe("DEFAULT_NETWORK", () => {
+  it("is one of the networks that actually exist", () => {
+    expect(listNetworks()).toContain(DEFAULT_NETWORK);
+  });
+
+  it("is what getDeployment() returns with no argument", () => {
+    expect(getDeployment()).toBe(getDeployment(DEFAULT_NETWORK));
+  });
+});
+
+describe("isNetworkName()", () => {
+  it("accepts every name the package carries", () => {
+    for (const name of NETWORK_NAMES) expect(isNetworkName(name)).toBe(true);
+  });
+
+  it("rejects an unknown name", () => {
+    expect(isNetworkName("mainnet")).toBe(false);
+    expect(isNetworkName("testnet-anchor")).toBe(false);
+  });
+
+  it("rejects non-strings rather than throwing on them", () => {
+    for (const value of [undefined, null, 0, {}, [], true]) {
+      expect(isNetworkName(value)).toBe(false);
+    }
+  });
+
+  it("does not accept a name inherited from Object.prototype", () => {
+    // `includes` on the tuple, not a key lookup on an object — so "toString"
+    // and friends are not networks.
+    expect(isNetworkName("toString")).toBe(false);
+    expect(isNetworkName("constructor")).toBe(false);
+  });
+});
+
+describe("parseNetwork()", () => {
+  it("treats unspecified as the default", () => {
+    expect(parseNetwork(undefined)).toBe(DEFAULT_NETWORK);
+    expect(parseNetwork(null)).toBe(DEFAULT_NETWORK);
+    expect(parseNetwork("")).toBe(DEFAULT_NETWORK);
+    // A variable set to whitespace is a variable nobody meant to set.
+    expect(parseNetwork("   ")).toBe(DEFAULT_NETWORK);
+  });
+
+  it("accepts a known name, trimmed", () => {
+    expect(parseNetwork("testnet")).toBe("testnet");
+    expect(parseNetwork("  testnet  ")).toBe("testnet");
+  });
+
+  it("refuses an unknown name and says which ones exist", () => {
+    // The message has to carry the known set: the whole failure mode this
+    // guards is somebody pointing at a deployment that was never committed.
+    expect(() => parseNetwork("testnet-anchor")).toThrow(/testnet-anchor/);
+    expect(() => parseNetwork("testnet-anchor")).toThrow(/known: testnet/);
+  });
+
+  it("is case-sensitive — a network name is an exact key", () => {
+    expect(() => parseNetwork("TESTNET")).toThrow();
+  });
+
+  it("reads no environment of its own", () => {
+    // It is exported from the browser-safe subpath, so it must stay pure.
+    const previous = process.env.STELLAR_NETWORK;
+    process.env.STELLAR_NETWORK = "testnet-anchor";
+    try {
+      expect(parseNetwork(undefined)).toBe(DEFAULT_NETWORK);
+    } finally {
+      if (previous === undefined) delete process.env.STELLAR_NETWORK;
+      else process.env.STELLAR_NETWORK = previous;
+    }
   });
 });
 
