@@ -12,10 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
-    "incremental": true,
-    "paths": {
-      "@/*": ["./apps/dashboard/*"]
-    }
+    "incremental": true
   },
   "include": ["scripts/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules"]
