@@ -230,21 +230,84 @@ Read-only simulations use the funded source account `GDOUNKJLAMAPLK7IZ2MGBE3S4RH
 
 ---
 
+## The anchor deployment (Stellar Testnet)
+
+The same seven contracts, deployed a second time and denominated in **money we
+do not issue**: the USDC of the SEP-24 reference anchor, which is also the asset
+the Turkish lira ramp delivers.
+
+It exists because of a gap the first deployment cannot close. There, the
+operator issues the token its own reserves are denominated in — so a reserve is
+funded by the operator printing what it promises, and the guarantee is circular.
+Here the operator cannot mint at any price. Every stroop in a reserve got there
+by crossing a fiat boundary, which is the only version of a surety bond that
+means anything.
+
+Generated from [`deployments/testnet-anchor.json`](./deployments/testnet-anchor.json).
+Select it with `STELLAR_NETWORK=testnet-anchor`; unset still means the deployment
+above, whose addresses have not moved.
+
+| Contract         | Address                                                    | What it does                                                             |
+| ---------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Registry         | `CD7OFMJ6PWVT4RT25N2PUFWTGCP3MUXC6OUON4KOSS5RU4YUORRADM5J` | Certificates. `publish` → `attest` → `verify`.                           |
+| ReserveVault     | `CBXRDBWMDES6QQYQCFG3F2DCHBD32KD3E6FL7OUG4LZ7ASAAPZE2OSPP` | The operator's locked USDC, walled off per certificate.                  |
+| AuditorStaking   | `CAG32DHMFD6NJVIZQDO3NWPEPPKMWY2OBICH2FONAR26A74RSW7NEVRX` | The auditor's own stake, allocated per certificate and slashable.        |
+| ChallengeManager | `CARLTFSSZBJ4OCOAQQZAWJW3TD4B4XYZG2SY4CPJN46QWN7QCIKUNPOC` | Four proofs, a 72-hour claim window, pro-rata settlement.                |
+| PaymentRouter    | `CCSEEDBRDXEN5HMVJOL7AMMGXCJGG4HSFZ4LHOT4EFRZIHR4QI5UXAHG` | SEP-41 wrapped USDC that meters an enrolled agent's spend.               |
+| PremiumVault     | `CCCK5M7DVY3IT6L2TYA5N2CSFHCNQM4HXX6CM3ZHTOXT5LI44YN34YGL` | Coverage priced bound × duration, accruing to the auditor as yield.      |
+| FeeEscrow        | `CB2QPKDOAL657X46KMELTWWK36JWFI7GYAXU5RKMLMBA7YP4IGOK2KZX` | Deployed and initialized, unused — superseded by PremiumVault.           |
+| USDC             | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` | **The anchor's own asset**, not ours: the SAC wrapping `USDC:GBBD47IF…`. |
+
+Deployed 2026-09-20 from commit [`467a9f386600`](https://github.com/iamnotdou/bound/commit/467a9f386600d2ca09cfebd04689e8864db43181).
+
+### How its money got in
+
+Both rails are real, and neither is a mock of the other half:
+
+| Rail   | Anchor                   | What happened                                                                                                                                                                                                                                                                                                                                                                   |
+| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SEP-24 | `testanchor.stellar.org` | 3.6 USD in → **3.3 USDC** out, completed, Stellar tx [`3f0fbed3…c89e9d`](https://stellar.expert/explorer/testnet/tx/3f0fbed34fe86e4ae5a40f79bc1651426e97cda76b40be3348f86e99d6c89e9d). That anchor's distribution account held 3.3766368 USDC when we got there, so this is not a chosen amount — it is what was left.                                                          |
+| SEP-6  | `tr-mock-anchor.fly.dev` | 4 900 TRY in → 24.38 TRY spread → **99.94 USDC** quoted at the Reflector USD/TRY rate. The anchor accepted the transfer and stalled before paying out: its last outgoing payment was `2026-09-19T23:10:02Z` and ours sits at `pending_anchor`. The integration is proven up to the anchor's own last hop; that hop has not happened, and this table is not going to say it did. |
+
+The scale follows from the first row. The SEP-24 anchor caps a transfer at 10
+units and had 3.3 to give, so the anchor deployment runs at **1/2000 scale** —
+`BOUND_AMOUNT_SCALE=0.0005`, every ratio the contracts assert on preserved, every
+figure divided by the same number. A $500 bond reads as $0.25 and is exactly as
+provable.
+
+### The lifecycle, on that money
+
+Certificate #1 on the anchor registry: published, reserve funded in full,
+attested by a staked auditor, agent enrolled in the router, three routed
+payments totalling **$0.30 against a $0.25 bound** — and `BoundExceeded` admitted
+from that on-chain state alone. A false claim filed alongside it was rejected and
+settled inside its own filing transaction, the challenger's bond forfeit, with no
+arbiter involved.
+
+```bash
+STELLAR_NETWORK=testnet-anchor BOUND_ENV_FILE=.env.anchor \
+  BOUND_AMOUNT_SCALE=0.0005 pnpm run demo
+```
+
+---
+
 ## Stellar Skills used
 
 The [official skill files](https://skills.stellar.org/) that bear on the code in
 this repo, cited by path as the submission requires. Each line names the part of
 the codebase it applies to, so a reader can check the claim rather than take it.
 
-| Skill file                  | Where it applies                                                                                                                                                                                                                                                                                                          |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `skills/anchors/SKILL.md`   | [`scripts/anchor-deposit.ts`](./scripts/anchor-deposit.ts), [`scripts/anchor-status.ts`](./scripts/anchor-status.ts), [`scripts/anchor-trustlines.ts`](./scripts/anchor-trustlines.ts) — SEP-10 challenge/sign/JWT, the SEP-24 interactive deposit, and the classic trustline the anchor's asset needs before it can land |
-| `skills/standards/SKILL.md` | The SEP choices themselves: SEP-41 for [`contracts/payment-router`](./contracts/payment-router), SEP-10/24 for the fiat rail, and why `transfer` may make no sub-invocation                                                                                                                                               |
+| Skill file                  | Where it applies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills/anchors/SKILL.md`   | [`scripts/anchor-deposit.ts`](./scripts/anchor-deposit.ts), [`scripts/anchor-status.ts`](./scripts/anchor-status.ts), [`scripts/anchor-trustlines.ts`](./scripts/anchor-trustlines.ts) — SEP-10 challenge/sign/JWT, the SEP-24 interactive deposit, and the classic trustline the anchor's asset needs before it can land. Also `bound-web/lib/anchor.ts`, where the same skill's SEP-6 half is implemented: a deposit against an anchor that hosts no form, which is what the Turkish lira ramps are |
+| `skills/standards/SKILL.md` | The SEP choices themselves: SEP-41 for [`contracts/payment-router`](./contracts/payment-router), SEP-10 for authentication, **SEP-24 or SEP-6 chosen from the anchor's own `stellar.toml`** rather than compiled in, SEP-38 for the TRY/USD quote the lira rail prices against, and why `transfer` may make no sub-invocation                                                                                                                                                                         |
 
-Two more are relevant to work in flight rather than to code already here, and are
-cited only if they end up in the diff: `skills/integration-finder/SKILL.md` for
-choosing the second ecosystem integration, and `skills/soroswap/SKILL.md` if the
-TRY↔USDC swap at the anchor boundary lands.
+`skills/integration-finder/SKILL.md` is cited for what it settled rather than for
+code it produced: the TRY↔USDC crossing belongs at the anchor, over SEP-6 and
+SEP-38, not at a DEX. A swap would have priced lira against a pool; the ramp
+prices it against a bank, which is the thing a bond has to pay out into.
+`skills/soroswap/SKILL.md` is therefore **not** cited — that integration was
+considered and deliberately not built.
 
 ## Key design decisions and trade-offs
 
