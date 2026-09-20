@@ -16,14 +16,22 @@ import {
   initialize,
   invoke,
   usdc,
+  assetLine,
   NETWORK,
+  ENV_PATH,
   AMOUNT_SCALE,
 } from "./lib";
-import { serializeDeployment } from "@bound/sdk";
+import { serializeDeployment, type NetworkName } from "@bound/sdk";
 
 const ROOT = resolve(__dirname, "..");
 const WASM_DIR = resolve(ROOT, "target", "wasm32v1-none", "release");
 const DEPLOYMENTS_DIR = resolve(ROOT, "deployments");
+
+/**
+ * Which deployment this run writes. `NETWORK` is the Stellar CLI's `--network`
+ * flag and stays `testnet` for both; the label is the deployment's own name.
+ */
+const LABEL = process.env.BOUND_DEPLOYMENT_LABEL ?? NETWORK;
 
 /** Current HEAD — recorded as deploy provenance in deployments/<network>.json. */
 function gitHead(): string {
@@ -115,14 +123,16 @@ function main() {
   // Output of record: committed deployment data. .env.testnet still gets the
   // same addresses (above) for local secrets workflows; this file is what the
   // app and the SDK will read after step 3.3.
-  const deploymentPath = resolve(
-    DEPLOYMENTS_DIR,
-    `${process.env.BOUND_DEPLOYMENT_LABEL ?? NETWORK}.json`,
-  );
+  const deploymentPath = resolve(DEPLOYMENTS_DIR, `${LABEL}.json`);
   writeFileSync(
     deploymentPath,
+    // The record names itself after the label, not after the CLI's network
+    // flag: both deployments live on testnet, and the name is what tells them
+    // apart. Cast because the record is always written before `deployments.ts`
+    // learns the name — that is the order the two steps can happen in, and the
+    // type is what makes the second step impossible to forget.
     serializeDeployment({
-      network: "testnet",
+      network: LABEL as NetworkName,
       networkPassphrase: env.STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
       rpcUrl: env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org",
       horizonUrl: env.STELLAR_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
@@ -130,6 +140,10 @@ function main() {
       deployCommit: gitHead(),
       // Public G... key used as the RPC simulation source — not a secret.
       readSource: operatorAddr,
+      // Read off the token rather than assumed to be the operator: on the
+      // anchor deployment it is the anchor, and the deploy script is the last
+      // place that still knows for certain.
+      usdcIssuer: assetLine(usdcAddr, operatorSecret).split(":")[1],
       // Demo actor public keys (G...). Secrets never leave .env.testnet.
       accounts: {
         operator: operatorAddr,
@@ -286,7 +300,7 @@ function main() {
   ]);
 
   console.log(
-    `\n✓ All 7 contracts deployed, initialized, router and premium vault wired, written to .env.testnet and deployments/${NETWORK}.json`,
+    `\n✓ All 7 contracts deployed, initialized, router and premium vault wired, written to ${ENV_PATH} and deployments/${LABEL}.json`,
   );
 }
 

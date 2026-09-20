@@ -110,7 +110,10 @@ describe("isNetworkName()", () => {
 
   it("rejects an unknown name", () => {
     expect(isNetworkName("mainnet")).toBe(false);
-    expect(isNetworkName("testnet-anchor")).toBe(false);
+    // `testnet-anchor` used to stand here as the name that did not exist. It
+    // does now, which is the point of the tuple: the set is data, and a test
+    // that hard-codes what is outside it has to move when the data moves.
+    expect(isNetworkName("futurenet")).toBe(false);
   });
 
   it("rejects non-strings rather than throwing on them", () => {
@@ -139,13 +142,16 @@ describe("parseNetwork()", () => {
   it("accepts a known name, trimmed", () => {
     expect(parseNetwork("testnet")).toBe("testnet");
     expect(parseNetwork("  testnet  ")).toBe("testnet");
+    // The second deployment: same chain, the anchor's USDC instead of a
+    // self-issued one. Selecting it is a name, not a code path.
+    expect(parseNetwork("testnet-anchor")).toBe("testnet-anchor");
   });
 
   it("refuses an unknown name and says which ones exist", () => {
     // The message has to carry the known set: the whole failure mode this
     // guards is somebody pointing at a deployment that was never committed.
-    expect(() => parseNetwork("testnet-anchor")).toThrow(/testnet-anchor/);
-    expect(() => parseNetwork("testnet-anchor")).toThrow(/known: testnet/);
+    expect(() => parseNetwork("futurenet")).toThrow(/futurenet/);
+    expect(() => parseNetwork("futurenet")).toThrow(/known: testnet, testnet-anchor/);
   });
 
   it("is case-sensitive — a network name is an exact key", () => {
@@ -176,6 +182,9 @@ describe("serializeDeployment()", () => {
     deployedAt: "2026-01-02T03:04:05.000Z",
     deployCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     readSource: "G" + "A".repeat(55),
+    // A different key from the operator on purpose: the issuer of the money is
+    // not the operator on any deployment that crosses a fiat rail.
+    usdcIssuer: "G" + "Z".repeat(55),
     accounts: {
       operator: "G" + "A".repeat(55),
       agent: "G" + "G".repeat(55),
@@ -203,6 +212,7 @@ describe("serializeDeployment()", () => {
   "deployedAt": "2026-01-02T03:04:05.000Z",
   "deployCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "readSource": "G${"A".repeat(55)}",
+  "usdcIssuer": "G${"Z".repeat(55)}",
   "accounts": {
     "operator": "G${"A".repeat(55)}",
     "agent": "G${"G".repeat(55)}",

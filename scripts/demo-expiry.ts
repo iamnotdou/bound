@@ -29,7 +29,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 import { bound, contracts, formatUsdc, usdc } from "@bound/sdk";
-import { readEnv, changeTrust, invoke, AMOUNT_SCALE as S } from "./lib";
+import { readEnv, seedUsdc, invoke, AMOUNT_SCALE as S } from "./lib";
 
 const env = readEnv();
 const need = (k: string): string => {
@@ -164,9 +164,8 @@ async function arm(prior: RunState | null): Promise<void> {
     state = { agentSecret: agent.secret(), agentPublic: agent.publicKey() };
     writeState(state);
     await friendbotFund(agent.publicKey());
-    changeTrust(`USDC:${operator.publicKey()}`, agent.secret());
-    await bound.mintUsdc(operator, agent.publicKey(), AGENT_FUNDING);
-    ok(`funded with XLM and ${formatUsdc(AGENT_FUNDING)} test USDC`);
+    const how = seedUsdc(contracts.usdc, operator.secret(), agent, AGENT_FUNDING);
+    ok(`funded with XLM and ${formatUsdc(AGENT_FUNDING)} USDC (${how})`);
   }
   const agent = Keypair.fromSecret(state.agentSecret);
 
