@@ -33,17 +33,28 @@ const DOCS: [string, string][] = [
     .map((f) => `docs/${f}`),
 ].map((path) => [path, readFileSync(join(root, path), "utf8")]);
 
-const deployment = getDeployment();
-const deployedIds = Object.values(deployment.contracts).filter(
-  (id): id is string => typeof id === "string",
+/**
+ * Every deployment the package carries, not just the default one.
+ *
+ * Bound is two deployments now — the same contracts against a self-issued token
+ * and against the anchor's USDC — and both have their addresses in the README.
+ * Checking only the default would make every anchor address read as drift from
+ * a previous deploy, which is the exact failure this file exists to catch and
+ * would have taught us to ignore it.
+ */
+const deployments = listNetworks().map((network) => getDeployment(network));
+const deployedIds = deployments.flatMap((d) =>
+  Object.values(d.contracts).filter((id): id is string => typeof id === "string"),
 );
 
 describe("contract ids in the docs", () => {
   it("states every deployed contract somewhere a reader can find it", () => {
     const readme = readFileSync(join(root, "README.md"), "utf8");
-    for (const [name, id] of Object.entries(deployment.contracts)) {
-      if (!id) continue;
-      expect(readme, `${name} (${id}) is missing from README.md`).toContain(id);
+    for (const d of deployments) {
+      for (const [name, id] of Object.entries(d.contracts)) {
+        if (!id) continue;
+        expect(readme, `${name} (${id}) on ${d.network} is missing from README.md`).toContain(id);
+      }
     }
   });
 

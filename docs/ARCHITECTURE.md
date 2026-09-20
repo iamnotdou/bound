@@ -1,7 +1,8 @@
 # Architecture
 
-> Seven Soroban contracts, one asset, and the rail that connects them to fiat.
-> Every contract ID below is live on Stellar testnet and linked to the explorer.
+> Seven Soroban contracts, two deployments, and the rails that connect them to
+> fiat — including a Turkish lira one. Every contract ID below is live on
+> Stellar testnet and linked to the explorer.
 
 ---
 
@@ -9,7 +10,9 @@
 
 ```mermaid
 graph TB
-  subgraph fiat["Fiat boundary"]
+  subgraph fiat["Fiat boundary — the anchor is configuration, not code"]
+    BANKTR["Turkish bank<br/>IBAN + reference"]
+    TRA["SEP-6 anchor<br/>tr-mock-anchor.fly.dev<br/>TRY ⇄ USDC"]
     BANK["Bank / card<br/>off-ramp rails"]
     ANCHOR["SEP-24 anchor<br/>testanchor.stellar.org"]
   end
@@ -38,8 +41,12 @@ graph TB
     PV["PremiumVault<br/>prices and accrues coverage"]
   end
 
-  USDC["USDC SAC<br/>anchor-issued, 7 decimals"]
+  USDC["USDC SAC<br/>anchor-issued, 7 decimals<br/>what the reserves hold"]
 
+  BANKTR -- "TRY in, priced at USD/TRY + 50bps" --> TRA
+  TRA -- "TRY out, to an IBAN" --> BANKTR
+  TRA -- "SEP-10 auth · SEP-6 deposit · SEP-38 quote" --> USDC
+  USDC -- "SEP-6 withdraw, memo-identified · a proven claim pays out in lira" --> TRA
   BANK <--> ANCHOR
   ANCHOR -- "SEP-10 auth · SEP-24 deposit" --> USDC
   USDC -- "SEP-24 withdraw · proven claim pays out" --> ANCHOR

@@ -10,15 +10,17 @@
 
 Not a prototype. The following is live and independently checkable:
 
-|                                  |                                                                                           |
-| -------------------------------- | ----------------------------------------------------------------------------------------- |
-| Seven Soroban contracts          | deployed to testnet, IDs in the [README](../README.md#deployed-contracts-stellar-testnet) |
-| `@bound/sdk`                     | published to npm, typed client for the whole lifecycle                                    |
-| `@bound/mcp`                     | published to npm, 15 tools, works with any MCP-capable agent                              |
-| Live app                         | [boundprotocol.dev/app](https://www.boundprotocol.dev/app)                                |
-| Docs                             | [docs.boundprotocol.dev](https://docs.boundprotocol.dev)                                  |
-| Threat model + disclosed defects | published, including the ones still open                                                  |
-| InstAward                        | month 1 delivered, month 2 in flight                                                      |
+|                                  |                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Seven Soroban contracts          | deployed to testnet, IDs in the [README](../README.md#deployed-contracts-stellar-testnet)                    |
+| `@bound/sdk`                     | published to npm, typed client for the whole lifecycle                                                       |
+| `@bound/mcp`                     | published to npm, 15 tools, works with any MCP-capable agent                                                 |
+| Live app                         | [boundprotocol.dev/app](https://www.boundprotocol.dev/app)                                                   |
+| Docs                             | [docs.boundprotocol.dev](https://docs.boundprotocol.dev)                                                     |
+| Threat model + disclosed defects | published, including the ones still open                                                                     |
+| InstAward                        | month 1 delivered, month 2 in flight                                                                         |
+| A second deployment              | the same contracts denominated in the anchor's USDC, funded across a real SEP-24 deposit                     |
+| A Turkish lira rail              | SEP-6 + SEP-38 against a TRY ⇄ USDC ramp, live at [bound-anchor.vercel.app](https://bound-anchor.vercel.app) |
 
 The relevant point for a funder: **there is no "if we get funded we will build it" step
 here.** The protocol exists, an award has already been delivered against it, and the
@@ -28,17 +30,30 @@ adversarial review that found the defects is public.
 
 ## 2. What this hackathon adds
 
-A working fiat boundary, and the honest statement of what it does not yet reach.
+A fiat boundary that reaches all the way to a bond, and the honest statement of
+where it still stops.
 
-What runs: SEP-1 discovery, SEP-10 authentication with the anchor's challenge
-validated before any wallet is asked to sign it, and SEP-24 transfers in both
-directions — verified against the live reference anchor, with transaction ids.
-`@bound/sdk` is ready to carry a second deployment holding the anchor's asset.
+**What runs.** SEP-1 discovery, SEP-10 with the anchor's challenge validated
+before any wallet is asked to sign it, and transfers in both directions over
+**whichever rail the anchor publishes** — SEP-24 where it hosts a form, SEP-6
+where it does not, which is what the Turkish lira ramps are. The toml decides;
+nothing is compiled in.
 
-What does not: that second deployment is not written yet, so the anchor's USDC
-and the reserve vault's USDC are still different money. A completed deposit funds
-a wallet; it does not fund a bond. The app says so on the page that offers the
-rail rather than letting a demo imply otherwise.
+The second deployment is live. The same seven contracts, denominated in the
+anchor's own USDC rather than a token the operator issues to itself, funded by a
+completed SEP-24 deposit. On that deployment `/api/anchor` reports
+`fundsReserve: true`: the money a deposit delivers is the money a reserve holds,
+so fiat in funds a bond rather than stopping in a wallet. A full lifecycle —
+publish, fund, attest, route payments, prove `BoundExceeded`, settle a false
+claim — has run on it.
+
+**What does not.** The TRY ramp we integrate is a sandbox: the bank is
+simulated, KYC is auto-approved, and during this event its payout worker stalled,
+leaving our 4 900 TRY deposit quoted at 99.94 USDC and sitting at
+`pending_anchor`. The SEP surface it exposes is the one a real Turkish anchor
+will expose, so that part of the integration is finished — but we have not yet
+watched lira become a reserve end to end, and this document is not going to say
+we have.
 
 The distinction matters because the rail is the whole difference between a closed
 on-chain demo and a product a business could be paid through. Everything Bound
@@ -52,13 +67,18 @@ edge on a diagram and most of the remaining work.
 
 Two honest weaknesses. Naming them is cheaper than being caught with them.
 
-**There is no TRY rail on Stellar.** Primary research, checked directly against each
-provider: no anchor issues a TRY-backed asset; none accepts TRY deposits or pays a
-Turkish IBAN; MoneyGram Ramps TR is cash-out only; MyKobo has been down since
-30 June 2026. A Turkish business cannot today receive money through Stellar without
-leaving the region's currency. This submission uses the reference anchor because
-that is the only live SEP-24 counterparty available — the integration is real, the
-currency is not yet the one that matters here.
+**There is still no production TRY rail on Stellar.** Primary research, checked
+directly against each provider: no anchor issues a TRY-backed asset; none accepts
+TRY deposits or pays a Turkish IBAN; MoneyGram Ramps TR is cash-out only; MyKobo
+has been down since 30 June 2026. A Turkish business cannot today receive money
+through Stellar without leaving the region's currency.
+
+What changed at this hackathon is our readiness for one, not the market. We
+integrated a TRY ⇄ USDC ramp over the SEP surface a real Turkish anchor (BiLira
+is the named candidate) would expose, so reaching production is a home domain and
+a network passphrase rather than a diff. What we cannot claim is a live lira
+counterparty: the one we built against simulates the bank, and the gap between
+those two is exactly the thing an SDF anchor contact would close.
 
 **Zero externally-committed payers.** The same research rated cross-chain demand
 evidence at 1–3 out of 5 across every candidate thesis. Bound has users and a grant;
