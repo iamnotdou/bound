@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { Keypair } from "@stellar/stellar-sdk";
 
 export const ENV_PATH = resolve(__dirname, "..", process.env.BOUND_ENV_FILE ?? ".env.testnet");
 export const NETWORK = "testnet";
@@ -198,6 +199,58 @@ export function changeTrust(line: string, sourceSecret: string): void {
 /** Mint `amount` of the SAC asset to `to`. Must be signed by the issuer. */
 export function mint(sac: string, issuerSecret: string, to: string, amount: string): void {
   invoke(sac, issuerSecret, "mint", ["--to", to, "--amount", amount]);
+}
+
+/**
+ * The classic asset a SAC wraps, as `CODE:ISSUER`.
+ *
+ * Read off the token rather than configured: the deployment record already
+ * names the token, and a second env var naming its issuer is a second thing
+ * that can disagree with it. A SAC's `name` is the asset it wraps.
+ */
+export function assetLine(sac: string, sourceSecret: string): string {
+  return invoke(sac, sourceSecret, "name", []).trim().replace(/^"|"$/g, "");
+}
+
+/**
+ * Put `amount` of the deployment's USDC in a fresh account's hands: open its
+ * trustline, then *mint* if the operator issues this asset and *transfer* if it
+ * does not.
+ *
+ * The two branches are not an implementation detail. On the mock deployment the
+ * operator is the issuer and a demo run costs nothing, so the script prints the
+ * money it needs. On the anchor deployment the money is the anchor's, it was
+ * deposited across a real SEP-24 rail, there is a finite amount of it, and a
+ * run spends it. Minting is not available at any price — which is the whole
+ * difference between a demo token and a fiat rail, expressed as a branch.
+ *
+ * Returns which branch it took, so a caller can say so rather than claim both.
+ */
+export function seedUsdc(
+  sac: string,
+  operatorSecret: string,
+  to: Keypair,
+  amount: bigint | string,
+): "minted" | "transferred" {
+  const line = assetLine(sac, operatorSecret);
+  const issuer = line.split(":")[1];
+  const operator = Keypair.fromSecret(operatorSecret).publicKey();
+
+  changeTrust(line, to.secret());
+
+  if (issuer === operator) {
+    mint(sac, operatorSecret, to.publicKey(), amount.toString());
+    return "minted";
+  }
+  invoke(sac, operatorSecret, "transfer", [
+    "--from",
+    operator,
+    "--to",
+    to.publicKey(),
+    "--amount",
+    amount.toString(),
+  ]);
+  return "transferred";
 }
 
 /** Initialize a contract, tolerating the "already initialized" case on re-runs. */

@@ -12,6 +12,7 @@
 // so the published package carries the addresses rather than reading them off
 // disk.
 import testnet from "../../../deployments/testnet.json";
+import testnetAnchor from "../../../deployments/testnet-anchor.json";
 
 /**
  * Every network this package carries a deployment for.
@@ -26,7 +27,7 @@ import testnet from "../../../deployments/testnet.json";
  * is itself a `NetworkName`, and deriving the union from the map would make the
  * two definitions circular.
  */
-export const NETWORK_NAMES = ["testnet"] as const;
+export const NETWORK_NAMES = ["testnet", "testnet-anchor"] as const;
 
 export type NetworkName = (typeof NETWORK_NAMES)[number];
 
@@ -86,6 +87,12 @@ export interface Deployment {
 
 const DEPLOYMENTS: Record<NetworkName, Deployment> = {
   testnet: testnet as Deployment,
+  // Same chain, different money: this one is denominated in the SEP-24
+  // reference anchor's USDC rather than a token the operator issues to itself,
+  // so its reserves hold value that crossed a real fiat rail. Both are live and
+  // neither replaces the other -- `testnet` is what the app, the docs and the
+  // published SDK have always pointed at.
+  "testnet-anchor": testnetAnchor as Deployment,
 };
 
 /** Whether an arbitrary value names a deployment this package carries. */
