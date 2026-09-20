@@ -54,6 +54,16 @@ export interface Deployment {
    * Same as `accounts.operator` for the current demo deployment.
    */
   readSource: string;
+  /**
+   * The classic issuer (G...) of the asset behind `contracts.usdc`.
+   *
+   * Stated rather than derived, because the obvious derivation is wrong on any
+   * deployment that matters: `accounts.operator` issues the mock token and
+   * nothing else. An anchor-denominated deployment holds money somebody else
+   * issues, and an app that assumes otherwise looks up balances under an
+   * issuer no trustline names — silently reading zero for a funded wallet.
+   */
+  usdcIssuer: string;
   /** Demo actor public keys (G...). Secrets for these live only in env. */
   accounts: {
     operator: string;
@@ -150,6 +160,7 @@ export function serializeDeployment(d: Deployment): string {
     deployedAt: d.deployedAt,
     deployCommit: d.deployCommit,
     readSource: d.readSource,
+    usdcIssuer: d.usdcIssuer,
     accounts: {
       operator: d.accounts.operator,
       agent: d.accounts.agent,

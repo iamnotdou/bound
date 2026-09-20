@@ -182,6 +182,9 @@ describe("serializeDeployment()", () => {
     deployedAt: "2026-01-02T03:04:05.000Z",
     deployCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     readSource: "G" + "A".repeat(55),
+    // A different key from the operator on purpose: the issuer of the money is
+    // not the operator on any deployment that crosses a fiat rail.
+    usdcIssuer: "G" + "Z".repeat(55),
     accounts: {
       operator: "G" + "A".repeat(55),
       agent: "G" + "G".repeat(55),
@@ -209,6 +212,7 @@ describe("serializeDeployment()", () => {
   "deployedAt": "2026-01-02T03:04:05.000Z",
   "deployCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "readSource": "G${"A".repeat(55)}",
+  "usdcIssuer": "G${"Z".repeat(55)}",
   "accounts": {
     "operator": "G${"A".repeat(55)}",
     "agent": "G${"G".repeat(55)}",

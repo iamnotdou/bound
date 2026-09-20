@@ -16,6 +16,7 @@ import {
   initialize,
   invoke,
   usdc,
+  assetLine,
   NETWORK,
   ENV_PATH,
   AMOUNT_SCALE,
@@ -139,6 +140,10 @@ function main() {
       deployCommit: gitHead(),
       // Public G... key used as the RPC simulation source — not a secret.
       readSource: operatorAddr,
+      // Read off the token rather than assumed to be the operator: on the
+      // anchor deployment it is the anchor, and the deploy script is the last
+      // place that still knows for certain.
+      usdcIssuer: assetLine(usdcAddr, operatorSecret).split(":")[1],
       // Demo actor public keys (G...). Secrets never leave .env.testnet.
       accounts: {
         operator: operatorAddr,
