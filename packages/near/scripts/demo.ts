@@ -66,9 +66,12 @@ mkdirSync(DEMO_KEYS_DIR, { recursive: true });
 const txtPath = join(EVIDENCE_DIR, `near-demo-${runId}.txt`);
 const jsonPath = join(EVIDENCE_DIR, `near-demo-${runId}.json`);
 const keysPath = join(DEMO_KEYS_DIR, `${runId}.json`);
+// Gate state is evidence for a recorded run; for --no-evidence it stays in the
+// gitignored keys dir.
+const gateDir = writeEvidence ? EVIDENCE_DIR : DEMO_KEYS_DIR;
 const gateFiles = {
-  ledger: join(EVIDENCE_DIR, `gate-${runId}-ledger.json`),
-  invoices: join(EVIDENCE_DIR, `gate-${runId}-invoices.json`),
+  ledger: join(gateDir, `gate-${runId}-ledger.json`),
+  invoices: join(gateDir, `gate-${runId}-invoices.json`),
 };
 
 function out(s = "") {
