@@ -1635,3 +1635,16 @@ fn deadline_boundary_is_consistent() {
     let e = panics(|| t.pay("agent.test", "service.test", U));
     assert!(e.contains("SettlementDeadlinePassed"), "{e}");
 }
+
+/// minor: a huge arbiter harm is capped at coverage instead of overflowing
+/// the waterfall and freezing the cert forever.
+#[test]
+fn huge_harm_capped_at_coverage() {
+    let mut t = verified();
+    let id = t.harm("challenger.test", u128::MAX / 2);
+    t.resolve(id, true, u128::MAX / 2);
+    assert_eq!(t.c.get_challenge(id).unwrap().harm.0, 300 * U);
+    t.now += 200;
+    let s = t.close().unwrap();
+    assert_eq!(s.victim_paid.0, 300 * U);
+}

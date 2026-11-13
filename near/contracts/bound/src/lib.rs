@@ -1160,8 +1160,10 @@ impl Bound {
     }
 
     /// The arbiter decides a `Harm` claim inside its open window.
-    /// `harm <= claimed`. A rejected claim is settled at once: its bond goes
-    /// to the treasury and its window slot is freed for another claim.
+    /// `harm <= claimed`; a proven harm above the certificate's coverage
+    /// (reserve_locked + allocation) is capped at it. A rejected claim is
+    /// settled at once: its bond goes to the treasury and its window slot is
+    /// freed for another claim.
     #[payable]
     pub fn resolve_by_arbiter(&mut self, challenge_id: u64, proven: bool, harm: U128) {
         assert_one_yocto();
@@ -1193,11 +1195,13 @@ impl Bound {
                 "InvalidHarm: 0 < harm <= claimed"
             );
         }
+        let cert_id = ch.cert_id;
+        let c = self.cert(cert_id);
+        let coverage = c.reserve_locked + c.allocation;
         ch.adjudicated = true;
         ch.proven = proven;
         ch.arbitrated = proven;
-        ch.harm = if proven { harm.0 } else { 0 };
-        let cert_id = ch.cert_id;
+        ch.harm = if proven { harm.0.min(coverage) } else { 0 };
         let h = ch.harm;
         if !proven {
             let t = self.treasury.clone();
