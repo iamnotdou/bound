@@ -44,8 +44,11 @@ Prerequisites: Rust via rustup (the pinned 1.95.0 toolchain installs itself),
      until 2026-11-30 (exit 0, "decision: deal").
    - `pnpm near:verify bound-agent-mwfgi0ij.testnet`: the demo agent after
      settlement (status Invalid, settlement numbers, exit 2).
-   - `pnpm near:evidence`: re-checks every tx hash in `near/evidence/*.json`
-     against RPC and prints OK per step.
+   - `pnpm near:evidence`: re-checks every tx hash in `near/evidence/near-demo-*.json`
+     against an archival RPC node (regular nodes forget transactions after a
+     few epochs) and prints OK per step.
+   - `pnpm near:mcp-smoke`: connects an MCP client to the `bound-near` server
+     in-process and calls every read tool against testnet (8 checks, exit 0).
 4. Replay the demo on testnet (optional): `pnpm near:demo`
    - creates fresh actors with the public faucet, runs acts 1-8, asserts every
      balance delta, writes new evidence. Needs the arbiter key of the canonical
@@ -53,6 +56,23 @@ Prerequisites: Rust via rustup (the pinned 1.95.0 toolchain installs itself),
      copy from a faucet account (that account is the arbiter). The faucet
      rate-limits per IP (we hit 429 after about 11 accounts); then the script
      needs `--funder <account>` with a local near-cli key.
+
+5. Agents over MCP: `pnpm near:mcp` runs the `bound-near` MCP server on stdio
+   with four tools: `near_verify_agent`, `near_get_certificate`,
+   `near_check_agent_keys` (read-only, no key) and `near_pay`, enabled only
+   when `BOUND_NEAR_AGENT_ID` and `BOUND_NEAR_AGENT_KEY` hold an agent account
+   and its pay-only function-call key. Example client config:
+   `{"command": "pnpm", "args": ["--dir", "<repo>", "near:mcp"]}`.
+   - `evidence/mcp-agent-mwfgqr0u.txt`: `pnpm near:agent-mcp` confined cert 6's
+     agent (`bound-agent2-mwfgqr0u.testnet`) to a pay-only key, then through
+     the MCP tools paid 1 to the allowlisted service (tx), was refused
+     `FloatExceeded` for 500 and `RecipientNotAllowed` for the treasury (txs),
+     and its float dropped by exactly 1. Replaying needs the run's local demo
+     keys (`near/.demo-keys/`, gitignored).
+6. Web, read-only, no wallet: bound-web branch `near-hackathon`, page
+   `/app/near` (verify box, certificate list, per-certificate key
+   confinement, claims and settlement waterfall, demo runs re-checked against
+   an archival node) and `GET /api/near/verify/<agent>`.
 
 ## Deployed on testnet
 
@@ -97,8 +117,8 @@ testnet now`, or `pnpm near:status`.
 ## Libraries
 
 near-sdk 5.30.1, near-contract-standards 5.30.1, near-sandbox 0.4, near-api
-0.8, cargo-near-build 0.11, tokio, testresult (Rust); near-api-js 7.5.3, tsx,
-vitest, typescript (TS). Tooling: cargo-near 0.23.0, near-cli-rs 0.31.1.
+0.8, cargo-near-build 0.11, tokio, testresult (Rust); near-api-js 7.5.3,
+@modelcontextprotocol/sdk 1.29, zod 3, tsx, vitest, typescript (TS). Tooling: cargo-near 0.23.0, near-cli-rs 0.31.1.
 
 ## AI disclosure
 
