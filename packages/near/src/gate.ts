@@ -7,16 +7,21 @@
 //       signed, paying this service through the Bound router. The gate reads
 //       the tx status from RPC, checks signer, receiver, success and the NEP-297
 //       `pay` event, and accepts each hash once (replays refused, ledger file);
-//   (b) on credit, up to `bound - outstanding invoices`, because a funded
-//       reserve and a slashable auditor stand behind the agent. Unpaid
-//       invoices are what a later Harm claim cites.
+//   (b) on credit, up to `min(bound, coverage) - outstanding invoices`, where
+//       coverage = reserve_locked + allocation is what a funded reserve and a
+//       slashable auditor can actually pay out. Unpaid invoices are what a
+//       later Harm claim cites. The limit is per gate: several services that
+//       each extend credit against the same certificate share one coverage
+//       pool (pro rata at settlement), so credit across services can be
+//       oversubscribed. A service that wants hard cover must coordinate or
+//       extend less.
 // Runs in-process (no port), so the demo and tests need no network binding.
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Provider } from "near-api-js";
 import { view } from "./client.js";
-import { assess, fmtUsdc, payEvents, type CertViewJson } from "./format.js";
+import { assess, coverageOf, fmtUsdc, payEvents, type CertViewJson } from "./format.js";
 
 export interface GateRequest {
   agent: string;
@@ -107,7 +112,9 @@ export class Gate {
       if (!("SuccessValue" in tx.status))
         return { status: 402, reason: "payment transaction failed" };
       const logs = tx.receipts_outcome.flatMap((o) => o.outcome.logs);
-      const paid = payEvents(logs).filter((e) => e.to === this.serviceId && e.agent === req.agent);
+      const paid = payEvents(logs).filter(
+        (e) => e.to === this.serviceId && e.agent === req.agent && e.cert_id === cert.cert_id,
+      );
       const total = paid.reduce((s, e) => s + e.amount, 0n);
       if (total < this.price)
         return { status: 402, reason: `paid ${fmtUsdc(total)} < price ${fmtUsdc(this.price)}` };
@@ -125,7 +132,10 @@ export class Gate {
       const outstanding = this.invoices()
         .filter((i) => i.agent === req.agent && i.certId === cert.cert_id && i.status === "unpaid")
         .reduce((s, i) => s + BigInt(i.amount), 0n);
-      const limit = BigInt(cert.bound) - outstanding;
+      const bound = BigInt(cert.bound);
+      const coverage = coverageOf(cert);
+      const cap = bound < coverage ? bound : coverage;
+      const limit = cap - outstanding;
       if (req.credit > limit) {
         return {
           status: 402,

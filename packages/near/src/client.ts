@@ -28,6 +28,20 @@ export const TGAS = 1_000_000_000_000n;
 export const ONE_YOCTO = 1n;
 export const MILLINEAR = 10n ** 21n;
 
+// near-api-js's FailoverRpcProvider prints every failed attempt with
+// console.error(errorObject) before it retries or fails over (a -429 from the
+// free RPC tier, or AccountDoesNotExist while polling for a new account).
+// The call itself still succeeds or throws normally, so those stack traces
+// only look like crashes. Drop bare Error objects from console.error unless
+// BOUND_NEAR_DEBUG=1; our own scripts always log strings.
+if (!process.env.BOUND_NEAR_DEBUG) {
+  const original = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    if (args.length === 1 && args[0] instanceof Error) return;
+    original(...args);
+  };
+}
+
 export function testnetProvider(urls: string[] = TESTNET_RPCS): Provider {
   return new FailoverRpcProvider(urls.map((url) => new JsonRpcProvider({ url })));
 }
@@ -211,4 +225,12 @@ export async function chainNow(provider: Provider): Promise<number> {
         1_000_000_000n,
     ),
   );
+}
+
+/** `view_account.code_hash` of `accountId` ("111...1" when no contract). */
+export async function codeHashOf(provider: Provider, accountId: string): Promise<string> {
+  const acc = (await withRetry(() =>
+    provider.viewAccount({ accountId, blockQuery: { finality: "final" } } as never),
+  )) as unknown as { code_hash: string };
+  return acc.code_hash;
 }

@@ -78,6 +78,18 @@ export interface DeployOpts {
   boundNear?: string;
   tokenNear?: string;
   log?: (s: string) => void;
+  /** Reuse the token, treasury and arbiter sub-accounts when they already
+   *  exist (redeploying only the Bound contract under a new name). */
+  reuseExisting?: boolean;
+}
+
+async function exists(provider: Provider, id: string): Promise<boolean> {
+  try {
+    await provider.viewAccount({ accountId: id, blockQuery: { finality: "final" } } as never);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function deployAll(
@@ -97,19 +109,32 @@ export async function deployAll(
   const push = (step: string, hash: string) => txs.push({ step, hash, url: explorerTx(hash) });
 
   log(`Deploying from ${p}`);
-  const t = await createSub(
-    parent,
-    tokenId,
-    opts.tokenNear ?? "1.8",
-    [actions.functionCall("new", {}, 30n * TGAS, 0n)],
-    token.code,
-    log,
-  );
-  push("deploy mock-usdc (create + deploy + new)", t.hash);
-  const tr = await createSub(parent, treasury, "0.05", [], undefined, log);
-  push("create treasury account", tr.hash);
-  const ar = await createSub(parent, arbiter, "0.3", [], undefined, log);
-  push("create arbiter account", ar.hash);
+  const reuse = async (id: string) => {
+    if (opts.reuseExisting && (await exists(provider, id))) {
+      log(`  reusing existing ${id}`);
+      return true;
+    }
+    return false;
+  };
+  if (!(await reuse(tokenId))) {
+    const t = await createSub(
+      parent,
+      tokenId,
+      opts.tokenNear ?? "1.8",
+      [actions.functionCall("new", {}, 30n * TGAS, 0n)],
+      token.code,
+      log,
+    );
+    push("deploy mock-usdc (create + deploy + new)", t.hash);
+  }
+  if (!(await reuse(treasury))) {
+    const tr = await createSub(parent, treasury, "0.05", [], undefined, log);
+    push("create treasury account", tr.hash);
+  }
+  if (!(await reuse(arbiter))) {
+    const ar = await createSub(parent, arbiter, "0.3", [], undefined, log);
+    push("create arbiter account", ar.hash);
+  }
   const b = await createSub(
     parent,
     boundId,

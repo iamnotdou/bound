@@ -120,7 +120,7 @@ describe("tx outcomes", () => {
   });
 });
 
-describe("isConfined", () => {
+describe("keysConfined / isConfined", () => {
   const C = "bound-v1.x.testnet";
   const fc = (receiver_id: string, method_names: string[]) => ({
     public_key: "ed25519:k",
@@ -130,7 +130,7 @@ describe("isConfined", () => {
     },
   });
   it("only pay keys on the Bound contract count as confined", async () => {
-    const { isConfined } = await import("../src/format.js");
+    const { keysConfined: isConfined } = await import("../src/format.js");
     expect(isConfined([fc(C, ["pay"])], C)).toBe(true);
     expect(isConfined([], C)).toBe(false);
     expect(isConfined([fc(C, ["pay", "withdraw"])], C)).toBe(false);
@@ -144,5 +144,12 @@ describe("isConfined", () => {
         C,
       ),
     ).toBe(false);
+  });
+  it("contract code on the agent account breaks confinement", async () => {
+    const { isConfined, NO_CODE_HASH } = await import("../src/format.js");
+    const keys = [fc(C, ["pay"])];
+    expect(isConfined(keys, C, NO_CODE_HASH)).toBe(true);
+    expect(isConfined(keys, C, "FstF2Tj8nHkco8AGLJ2gqfiAqdgaoTbgkpjaBLFCvJcD")).toBe(false);
+    expect(isConfined(keys, C, undefined)).toBe(false);
   });
 });

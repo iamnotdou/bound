@@ -38,6 +38,18 @@ export interface NearDeployment {
   config: Record<string, unknown>;
   rpc: string[];
   txs: TxRef[];
+  /** Earlier Bound contracts on the same token, superseded (kept for the
+   *  evidence they produced). */
+  previous?: Array<{
+    accountId: string;
+    codeHash: string;
+    wasmSha256: string;
+    deployedAt: string;
+    supersededAt: string;
+    reason: string;
+    txs: TxRef[];
+    demoRuns: NearDeployment["demoRuns"];
+  }>;
   demoRuns: Array<{
     runId: string;
     evidence: string;

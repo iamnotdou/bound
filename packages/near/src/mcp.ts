@@ -7,12 +7,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Provider } from "near-api-js";
 import { z } from "zod";
-import { accountFromKey, testnetProvider, tryCall, view, withRetry } from "./client.js";
+import { accountFromKey, codeHashOf, testnetProvider, tryCall, view, withRetry } from "./client.js";
 import { loadDeployment } from "./deployment.js";
 import {
   assess,
+  coverageOf,
   fmtUsdc,
   isConfined,
+  keysConfined,
+  NO_CODE_HASH,
   usdc,
   type AccessKeyInfo,
   type CertViewJson,
@@ -43,6 +46,9 @@ function money(v: CertViewJson) {
     reserve_locked: fmtUsdc(v.reserve_locked),
     reserve_promised: fmtUsdc(v.reserve_promised),
     auditor_allocation: fmtUsdc(v.allocation),
+    coverage: fmtUsdc(coverageOf(v)),
+    coverage_note:
+      "reserve_locked + auditor allocation: the most arbitrated victims can recover in total, shared by every service extending credit",
     spent: fmtUsdc(v.spent),
     float: fmtUsdc(v.float),
     float_cap: fmtUsdc(v.float_cap),
@@ -82,7 +88,7 @@ export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
     "near_verify_agent",
     {
       description:
-        "Before dealing with a NEAR agent account, read its Bound certificate: deal only if the result says deal=true (status Verified, not halted). Returns the reserve, auditor stake and spend meter behind the agent.",
+        "Before dealing with a NEAR agent account, read its Bound certificate: deal only if the result says deal=true (status Verified, not halted). Returns the reserve, auditor stake, coverage and spend meter behind the agent. Also call near_check_agent_keys: verify alone does not prove the agent is confined.",
       inputSchema: { agent: accountId },
       annotations: { readOnlyHint: true },
     },
@@ -111,7 +117,7 @@ export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
     "near_check_agent_keys",
     {
       description:
-        "List a NEAR account's access keys and say whether it is confined: every key a function-call key for the Bound contract's pay method, so NEAR itself refuses any other spend.",
+        "List a NEAR account's access keys and contract code hash and say whether it is confined: every key a function-call key for the Bound contract's pay method AND no contract code deployed on the account (code would run as the agent without a key), so NEAR itself refuses any other spend. Call this together with near_verify_agent: the Bound contract cannot check confinement itself.",
       inputSchema: { agent: accountId },
       annotations: { readOnlyHint: true },
     },
@@ -122,10 +128,14 @@ export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
           finalityQuery: { finality: "final" },
         } as never),
       )) as unknown as { keys: AccessKeyInfo[] };
+      const codeHash = await codeHashOf(provider, agent);
       return text({
         agent,
         contract: contractId,
-        confined: isConfined(r.keys, contractId),
+        confined: isConfined(r.keys, contractId, codeHash),
+        keys_confined: keysConfined(r.keys, contractId),
+        code_hash: codeHash,
+        no_contract_code: codeHash === NO_CODE_HASH,
         keys: r.keys,
       });
     }),

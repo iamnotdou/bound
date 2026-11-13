@@ -25,7 +25,7 @@ import {
   withRetry,
 } from "../src/client.js";
 import { DEMO_KEYS_DIR, EVIDENCE_DIR, loadDeployment } from "../src/deployment.js";
-import { isConfined, type AccessKeyInfo, type CertViewJson } from "../src/format.js";
+import { keysConfined, type AccessKeyInfo, type CertViewJson } from "../src/format.js";
 import { createNearMcpServer } from "../src/mcp.js";
 
 type Keys = Record<string, { accountId: string; secretKey: string }>;
@@ -66,7 +66,7 @@ async function main() {
 
   // 1. confine agent2 if needed
   let before = await keyList();
-  if (!isConfined(before, B)) {
+  if (!keysConfined(before, B)) {
     if (!keys.agent2) throw new Error(`no agent2 key in ${keysPath}`);
     const full = accountFromKey(provider, agentId, keys.agent2.secretKey as KeyPairString);
     const fc = KeyPair.fromRandom("ed25519");
@@ -79,7 +79,7 @@ async function main() {
       throwOnFailure: false,
     });
     const addO = decodeOutcome(add as never, agentId, agentId, "AddKey");
-    expect("agent2 adds a function-call key (bound-v1, [pay], 0.25 NEAR)", addO.ok, {
+    expect(`agent2 adds a function-call key (${B}, [pay], 0.25 NEAR)`, addO.ok, {
       tx: addO.url,
       error: addO.error,
     });
@@ -149,7 +149,11 @@ async function main() {
     { tx: off.explorer, error: off.error },
   );
   const k = await call("near_check_agent_keys", { agent: agentId });
-  expect("near_check_agent_keys(self) -> confined", k.confined === true, { keys: k.keys });
+  expect(
+    "near_check_agent_keys(self) -> confined (pay-only keys AND no contract code)",
+    k.confined === true && k.no_contract_code === true,
+    { keys: k.keys, code_hash: k.code_hash },
+  );
   const after = await view<CertViewJson>(provider, B, "get_cert", { cert_id: run.cert2Id });
   expect("float dropped by exactly 1", floatBefore - BigInt(after.float) === 1_000_000n, {
     before: cert.float,

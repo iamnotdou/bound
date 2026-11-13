@@ -14,8 +14,10 @@
 //   --no-evidence  do not write evidence files or update the deployment record.
 //   --no-faucet    skip the faucet; create actors through the testnet registrar
 //                  funded by --funder <id> (default boundproto-nh26.testnet,
-//                  key read from ~/.near-credentials). Also the automatic
-//                  fallback when the faucet rate-limits.
+//                  THE AUTHOR'S account: a reviewer passes its own), key read
+//                  from ~/.near-credentials/testnet. Also the automatic
+//                  fallback when the faucet rate-limits; without that key the
+//                  run stops with a message saying so.
 
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
@@ -35,6 +37,7 @@ import {
   TGAS,
   accountFromKey,
   chainNow,
+  codeHashOf,
   decodeOutcome,
   errorText,
   testnetProvider,
@@ -52,7 +55,14 @@ import {
   type NearDeployment,
 } from "../src/deployment.js";
 import { deployAll } from "../src/deploy-lib.js";
-import { describeCert, explorerAccount, fmtUsdc, usdc, type CertViewJson } from "../src/format.js";
+import {
+  NO_CODE_HASH,
+  describeCert,
+  explorerAccount,
+  fmtUsdc,
+  usdc,
+  type CertViewJson,
+} from "../src/format.js";
 import { Gate } from "../src/gate.js";
 
 const FAUCET = "https://helper.nearprotocol.com/account";
@@ -215,7 +225,22 @@ async function main() {
       }
     }
     if (faucetDown) {
-      funder ??= accountFromKey(provider, funderId, readCredential(funderId));
+      if (!funder) {
+        let key: KeyPairString;
+        try {
+          key = readCredential(funderId);
+        } catch {
+          throw new Error(
+            `the public faucet refused (it rate-limits per IP for hours) and there is no key for ` +
+              `the funder ${funderId} in ~/.near-credentials/testnet. The default funder is the ` +
+              `author's account. Pass --funder <your-testnet-account> (about 10 testnet NEAR for ` +
+              `--fresh, 4 without), or retry later. The zero-secret checks (near:status, ` +
+              `near:verify, near:evidence) need no account at all.`,
+          );
+        }
+        funder = accountFromKey(provider, funderId, key);
+        out(`  creating actors through the testnet registrar, funded by ${funderId}`);
+      }
       const near = role === "deployer" ? "6" : "0.5";
       const r = (await funder.createAccount({
         newAccountId: id,
@@ -450,6 +475,12 @@ async function main() {
     JSON.stringify(perm?.FunctionCall?.method_names ?? []),
     '["pay"]',
   );
+  // Keys are not the whole story: contract code on the agent account would
+  // run as the agent with no key at all. Confined = pay-only keys AND no code.
+  const agentCode = await codeHashOf(provider, agent.accountId);
+  extra.agentCodeHash = agentCode;
+  out(`  view_account(${agent.accountId}).code_hash = ${agentCode}`);
+  check("no contract code on the agent account (code_hash all ones)", agentCode, NO_CODE_HASH);
 
   const gate = new Gate(provider, B, service.accountId, usdc("5"), gateFiles);
   const g0 = await gate.handle({ agent: agent2.accountId });
@@ -485,7 +516,9 @@ async function main() {
   extra.gate = { refused: g0, prepaid: g1, replay: g2, credit: g3, invoices: gate.invoices() };
 
   // ------------------------------------------------------------ attacks
-  header(4, "a prompt-injected agent tries to drain");
+  // Scripted: these are the exact calls a prompt-injected agent would make
+  // with the key it holds. No language model runs in this demo.
+  header(4, "scripted attack: the calls a hijacked agent would make with its key");
   record(
     "agent pays 50 to service (float is 15)",
     await tryCall(agent, B, "pay", {
@@ -603,12 +636,12 @@ async function main() {
   header(5, "a false trustless claim is rejected in the same transaction");
   const t5 = await bal(treasury);
   const fc = record(
-    "challenger files InsufficientReserve (bond 10) against a fully funded cert",
+    "challenger files BoundExceeded (bond 10) while spent 5 <= bound 150",
     await tryCall(
       challenger,
       B,
       "challenge",
-      { cert_id: certId, proof: "InsufficientReserve", bond: usdc("10").toString() },
+      { cert_id: certId, proof: "BoundExceeded", bond: usdc("10").toString() },
       { deposit: 10n * MILLINEAR },
     ),
     true,
@@ -695,50 +728,51 @@ async function main() {
   out(`  settlement: ${JSON.stringify(s)}`);
   check("cert status", v7?.status ?? "null", "Invalid");
   check("payable = min(120, 100 + 200)", BigInt(s.payable ?? 0), usdc("120"));
-  check("victim paid from the reserve", BigInt(s.victim_paid ?? 0), usdc("100"));
+  check("victim paid in full: 100 reserve + 20 slash", BigInt(s.victim_paid ?? 0), usdc("120"));
   check("challenger fee = min(12, reserve left 0)", BigInt(s.fee_paid ?? 0), usdc("0"));
   check(
     "auditor slashed only the 20 the reserve could not cover",
     BigInt(s.slash ?? 0),
     usdc("20"),
   );
+  check("the whole slash went to the victim", BigInt(s.slash_to_victims ?? 0), usdc("20"));
   check("rest of the allocation back to the auditor", BigInt(s.auditor_returned ?? 0), usdc("180"));
-  check("treasury +20 (the slash)", (await bal(treasury)) - t7, usdc("20"));
+  check("treasury +0 at settlement (nothing left over)", (await bal(treasury)) - t7, usdc("0"));
   check(
-    "treasury over the run: 0.3 premium + 10 bond + 20 slash",
+    "treasury over the run: 0.3 premium + 10 forfeited bond",
     (await bal(treasury)) - treasury0,
-    usdc("30.3"),
+    usdc("10.3"),
   );
   const st = await stakeOf(auditor.accountId);
   check("auditor free stake 400 + 180", st.free, usdc("580"));
   check("auditor allocated stake", st.allocated, usdc("0"));
   check("unspent float 15 back to the operator", (await bal(operator.accountId)) - op7, usdc("15"));
   check(
-    "service bound balance: 5 prepaid + 100 compensation + 10 bond back",
+    "service bound balance: 5 prepaid + 120 compensation + 10 bond back",
     await bal(service.accountId),
-    usdc("115"),
+    usdc("135"),
   );
   const ft0 = await ft(service.accountId);
   const wd = record(
-    "service withdraws 115 to its token account",
+    "service withdraws 135 to its token account",
     await tryCall(
       service,
       B,
       "withdraw",
-      { amount: usdc("115").toString() },
+      { amount: usdc("135").toString() },
       { deposit: ONE_YOCTO, gas: 60n * TGAS },
     ),
     true,
   );
   check("withdraw callback reports success", String(wd.value), "true");
   check(
-    "service ft_balance_of on the token rose by 115",
+    "service ft_balance_of on the token rose by 135",
     (await ft(service.accountId)) - ft0,
-    usdc("115"),
+    usdc("135"),
   );
   check("service bound balance after withdraw", await bal(service.accountId), usdc("0"));
-  out(`  The service lost 120 and recovered 100: victims are covered up to the reserve.`);
-  out(`  The auditor's 20 slash goes to the treasury, never to a claimant (anti self-dealing).`);
+  out(`  The service lost 120 and recovered 120: 100 from the operator's reserve, 20 from the`);
+  out(`  auditor's slash. Coverage = reserve + allocation (300 here) caps what victims recover.`);
   const g7 = await gate.handle({ agent: agent.accountId, credit: usdc("1") });
   out(`  gate <- ${agent.accountId} after settlement: ${g7.status} ${g7.reason}`);
   check("gate refuses the settled agent", g7.status, 403);

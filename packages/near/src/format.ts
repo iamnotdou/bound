@@ -79,6 +79,8 @@ export interface CertViewJson {
   reserve_promised: string;
   reserve_locked: string;
   allocation: string;
+  /** reserve_locked + allocation: the most arbitrated victims can recover. */
+  coverage?: string;
   premium: string;
   float: string;
   float_cap: string;
@@ -112,6 +114,7 @@ export function describeCert(v: CertViewJson): string {
     `bound ${fmtUsdc(v.bound)}`,
     `reserve ${fmtUsdc(v.reserve_locked)}/${fmtUsdc(v.reserve_promised)}`,
     `auditor ${v.auditor} allocation ${fmtUsdc(v.allocation)}`,
+    `coverage ${fmtUsdc(coverageOf(v))}`,
     `spent ${fmtUsdc(v.spent)} float ${fmtUsdc(v.float)}/${fmtUsdc(v.float_cap)}`,
     `expires ${new Date(v.expires_at * 1000).toISOString()}`,
   ].join(" | ");
@@ -134,9 +137,19 @@ export interface AccessKeyInfo {
   };
 }
 
-/** True when every key is a FunctionCall key to `contractId` limited to `pay`:
- *  then NEAR itself refuses any transfer, token call or deposit by the agent. */
-export function isConfined(keys: AccessKeyInfo[], contractId: string): boolean {
+/** `code_hash` of an account with no contract deployed. */
+export const NO_CODE_HASH = "11111111111111111111111111111111";
+
+/** What a counterparty can rely on: reserve_locked + allocation. */
+export function coverageOf(v: CertViewJson): bigint {
+  return v.coverage !== undefined
+    ? BigInt(v.coverage)
+    : BigInt(v.reserve_locked) + BigInt(v.allocation);
+}
+
+/** True when the keys alone are confined: every key is a FunctionCall key to
+ *  `contractId` limited to `pay`. Not enough by itself: see `isConfined`. */
+export function keysConfined(keys: AccessKeyInfo[], contractId: string): boolean {
   return (
     keys.length > 0 &&
     keys.every((k) => {
@@ -149,4 +162,17 @@ export function isConfined(keys: AccessKeyInfo[], contractId: string): boolean {
       );
     })
   );
+}
+
+/** Confined = keys confined AND no contract code on the agent account
+ *  (`view_account.code_hash` is all ones). Code on the account would run as
+ *  the agent and could call `pay`, `ft_transfer` or add a full-access key
+ *  without any key. The Bound contract cannot check this itself, so a
+ *  counterparty reads `verify(agent)` AND both of these. */
+export function isConfined(
+  keys: AccessKeyInfo[],
+  contractId: string,
+  codeHash: string | undefined,
+): boolean {
+  return codeHash === NO_CODE_HASH && keysConfined(keys, contractId);
 }

@@ -2,21 +2,28 @@
 // counterparty reads before dealing with an agent. Exit 0 if Verified,
 // 2 if the agent has a certificate in any other state, 3 if none.
 
-import { testnetProvider, view } from "../src/client.js";
+import { codeHashOf, testnetProvider, view, withRetry } from "../src/client.js";
 import { loadDeployment } from "../src/deployment.js";
-import { assess, describeCert, fmtUsdc, type CertViewJson } from "../src/format.js";
+import {
+  NO_CODE_HASH,
+  assess,
+  coverageOf,
+  describeCert,
+  fmtUsdc,
+  isConfined,
+  type AccessKeyInfo,
+  type CertViewJson,
+} from "../src/format.js";
 
 async function main() {
   const agent = process.argv.slice(2).find((a) => !a.startsWith("--"));
   const d = loadDeployment();
   const target = agent ?? d.demoRuns.at(-1)?.agent2;
   if (!target) throw new Error("usage: pnpm near:verify <agent account id>");
-  const v = await view<CertViewJson | null>(
-    testnetProvider(),
-    d.contracts.bound.accountId,
-    "verify",
-    { agent: target },
-  );
+  const provider = testnetProvider();
+  const v = await view<CertViewJson | null>(provider, d.contracts.bound.accountId, "verify", {
+    agent: target,
+  });
   if (process.argv.includes("--json")) console.log(JSON.stringify(v, null, 2));
   if (!v) {
     console.log(`${target}: no Bound certificate. Do not extend credit.`);
@@ -25,7 +32,23 @@ async function main() {
   const a = assess(v);
   console.log(`${target}: ${describeCert(v)}`);
   console.log(
-    `  worst case covered: reserve ${fmtUsdc(v.reserve_locked)} + auditor allocation ${fmtUsdc(v.allocation)}`,
+    `  coverage ${fmtUsdc(coverageOf(v))} = reserve ${fmtUsdc(v.reserve_locked)} + auditor allocation ${fmtUsdc(v.allocation)} (the most arbitrated victims recover, shared by every creditor)`,
+  );
+  // verify() cannot see the agent's keys or code: read both here.
+  const keys = (
+    (await withRetry(() =>
+      provider.viewAccessKeyList({
+        accountId: target,
+        finalityQuery: { finality: "final" },
+      } as never),
+    )) as unknown as { keys: AccessKeyInfo[] }
+  ).keys;
+  const code = await codeHashOf(provider, target);
+  const confined = isConfined(keys, d.contracts.bound.accountId, code);
+  console.log(
+    `  confinement: ${confined ? "confined" : "NOT confined"} (${keys.length} key(s), ${
+      code === NO_CODE_HASH ? "no contract code" : `contract code ${code}`
+    })`,
   );
   if (v.settlement) console.log(`  settled: ${JSON.stringify(v.settlement)}`);
   console.log(`  decision: ${a.ok ? "deal (Verified)" : `refuse (${a.reason})`}`);
