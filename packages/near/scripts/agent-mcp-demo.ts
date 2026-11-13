@@ -1,15 +1,16 @@
 // pnpm near:agent-mcp [runId] -- an agent spends through the bound-near MCP
-// server, the way an LLM tool call would, on the Verified cert 2 of a recorded
-// demo run. Needs the run's local demo keys (near/.demo-keys/<runId>.json,
+// server with the same tool calls an LLM would make (no model runs here), on
+// the Verified second cert of a recorded demo run. Needs the run's local demo keys (near/.demo-keys/<runId>.json,
 // gitignored); writes near/evidence/mcp-agent-<runId>.{json,txt}.
 //
 // 1. If agent2 still holds a full-access key, it adds a function-call key
-//    (receiver bound-v1, methods ["pay"], 0.25 NEAR gas allowance) and deletes
-//    the full-access key, so cert 2's agent is confined like the demo agent.
+//    (receiver: the current Bound contract, methods ["pay"], 0.25 NEAR gas
+//    allowance) and deletes the full-access key, so the second cert's agent
+//    is confined like the demo agent.
 // 2. An MCP client calls the tools with ONLY that function-call key loaded:
 //    verify itself, pay 1 to the allowlisted service (succeeds), pay more than
 //    the float (refused by the contract), pay an account off the allowlist
-//    (refused), then check its keys (confined).
+//    (refused), then check its keys and account code (confined).
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
