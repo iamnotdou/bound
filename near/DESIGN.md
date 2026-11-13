@@ -148,7 +148,7 @@ catches). The demo's gate therefore extends credit up to
 
 ## 5. Test map
 
-Unit tests: `near/contracts/bound/src/tests.rs` (109) and `src/settle.rs` (9).
+Unit tests: `near/contracts/bound/src/tests.rs` (111) and `src/settle.rs` (12).
 Sandbox tests: `near/contracts/bound/tests/sandbox.rs` (2). Mock token: 4.
 
 | NEAR test                                                                                                                                                         | Corresponds to Soroban test (`contracts/integration-tests/tests/cross_contract.rs`)                                         |
@@ -175,6 +175,7 @@ Sandbox tests: `near/contracts/bound/tests/sandbox.rs` (2). Mock token: 4.
 | `c1_hygiene_settlement_keeps_liability_until_deadline`, `c1_tiny_fraud_settlement_keeps_liability_until_deadline`, `settled_cert_refuses_new_predicate_challenge` | (new, review 2026-11-14 C1, section 10)                                                                                     |
 | `c2_rejected_claims_free_slots_and_late_victim_is_heard`, `c2_duplicate_trustless_claim_refused`, `deadline_boundary_is_consistent`                               | (new, review 2026-11-14 C2 and deadline boundary)                                                                           |
 | `huge_harm_capped_at_coverage`, `conflicted_victim_rejected`, `excess_deposit_refunded`, `halted_or_empty_float_is_not_a_deal`, `superseded_cert_cannot_pay`      | (new, review 2026-11-14 minor findings)                                                                                     |
+| `large_coverage_settles_without_overflow`, `empty_second_settlement_keeps_the_first`, `settle::mul_div_is_exact_past_u128`, `settle::large_coverage_settles`      | (new, review 2026-11-14 round 2)                                                                                            |
 
 ## 6. Security checklist
 
@@ -300,7 +301,18 @@ predicates could squat too, so a window takes one claim per predicate kind.
 
 - _Harm overflow._ A proven harm near `u128::MAX` overflowed the waterfall and
   made `close_window` panic forever. `resolve_by_arbiter` caps it at
-  `reserve_locked + allocation`.
+  `reserve_locked + allocation`. A second review found that the cap alone was
+  not enough: `distribute` multiplied `pool * weight`, both up to the coverage,
+  so a coverage above about 1.8e19 base units still overflowed. The waterfall
+  now uses a 256-bit `mul_div` (`settle.rs`), exact for every u128 input
+  (`large_coverage_settles_without_overflow`, `mul_div_is_exact_past_u128`).
+- _Empty second settlement._ A Harm claim proven against an `Invalid` cert
+  with no coverage left is capped to 0, and its window used to overwrite the
+  original fraud settlement with an empty hygiene record. A window that moves
+  no funds now keeps the earlier `Settlement` (`empty_second_settlement_keeps_the_first`).
+- _Client verdict._ `assess()` in `packages/near` (used by the gate and the
+  MCP server) now follows the contract's `deal` flag when the view has it, so
+  a Verified cert with float 0 is not reported as `deal=true`.
 - _Deadline boundary._ At `now == deadline` the allocation could be released
   and a claim then accepted against it. Release needs `now >= deadline`;
   challenge and `pay` now need `now < deadline` (or, for a claim, the open
@@ -321,15 +333,32 @@ predicates could squat too, so a window takes one claim per predicate kind.
 
 - Freeing a squatted slot depends on the arbiter rejecting the junk claim in
   time. An arbiter that does not act leaves the slots full until the window
-  closes, and after the deadline that still locks a late victim out.
+  closes, and after the deadline that still locks a late victim out. With an
+  idle arbiter, 16 undecided claims cost the attacker only 16 half-bonds
+  (80 USDC with the demo config).
+- _Refile race._ A rejection frees its slot, but the attacker can refile into
+  it in the same block, ahead of the victim. Each cycle costs the attacker one
+  forfeited bond, yet a determined attacker can keep a late victim out until
+  the window closes after the deadline. A real fix is a bond that grows with
+  the number of claims in the window, or one slot held for claims that arrive
+  after a rejection; it is out of scope for the hackathon build.
 - After the deadline each accepted claim can still extend the open window by
-  a third of a window. Someone can keep the collateral locked a little longer
-  that way, but every rejected claim costs its full bond.
+  a third of a window. With no arbiter action this is bounded by the 16
+  slots (about +524 s past the deadline with the demo config); with arbiter
+  rejections it has no upper bound, but every rejected claim costs its full
+  bond. Capping `closes_at` at `deadline + claim_window_secs` would bound it.
 - The hygiene bounty still goes to whoever files the true predicate, which
   can be the operator's own sybil. It is paid from the operator's own reserve,
   so it is cost-neutral to the operator, but it no longer ends any liability.
-- A cert settled more than once keeps only the latest `Settlement` in its
-  view; the `settle` events carry every one.
+- A cert settled more than once keeps only the latest `Settlement` that moved
+  funds in its view; the `settle` events carry every one. In hygiene mode
+  `auditor_returned` reports the allocation that stays locked, although
+  nothing is returned at that point.
+- Value conservation is proven for the pure waterfall (`settle.rs`
+  `conserve()`) and by hand review of every contract path (pay, challenge,
+  resolve, close_window in fraud and hygiene mode, release_reserve,
+  release_allocation, withdraw). There is no contract-level test that sums
+  every balance, stake, reserve, float and escrowed premium at each step.
 - New view values (`Halted`, `Superseded`, `deal`). A client that acts only
   on status `Verified` already treats them as "do not deal"; a client that
   looks for specific bad statuses has to learn the two new ones.
