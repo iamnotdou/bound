@@ -1,0 +1,108 @@
+{
+  "runId": "mwfgqr0u",
+  "agent": "bound-agent2-mwfgqr0u.testnet",
+  "certId": 6,
+  "contract": "bound-v1.boundproto-nh26.testnet",
+  "at": "2026-11-13T21:31:30.608Z",
+  "keysBefore": [
+    {
+      "access_key": {
+        "nonce": 277565557000000,
+        "permission": {
+          "FunctionCall": {
+            "allowance": "250000000000000000000000",
+            "method_names": [
+              "pay"
+            ],
+            "receiver_id": "bound-v1.boundproto-nh26.testnet"
+          }
+        }
+      },
+      "public_key": "ed25519:6oBrirkzyhGNoBbBPrg5AzjXKGpMSxuekYkF7gaHfL63"
+    }
+  ],
+  "steps": [
+    {
+      "label": "agent2 adds a function-call key (bound-v1, [pay], 0.25 NEAR)",
+      "pass": true,
+      "detail": {
+        "tx": "https://testnet.nearblocks.io/txns/ax3T4wbKpS4m8jXocgcEDv9tUStmYbXvaAhQjny4zCk",
+        "error": null
+      }
+    },
+    {
+      "label": "agent2 deletes its full-access key",
+      "pass": true,
+      "detail": {
+        "tx": "https://testnet.nearblocks.io/txns/6bEvXYVxYPLESjex4waW4MhBjAtEKuha5Y2yV8zkbzDG",
+        "error": null
+      }
+    },
+    {
+      "label": "near_verify_agent(self) -> deal",
+      "pass": true,
+      "detail": {
+        "reason": "Verified"
+      }
+    },
+    {
+      "label": "near_pay 1 to allowlisted bound-service-mwfgqr0u.testnet succeeds",
+      "pass": true,
+      "detail": {
+        "tx": "https://testnet.nearblocks.io/txns/8Qd9XtJKbrk4aBxhTB7wScXqGuodmiJxDwNzXJk1VrU2",
+        "logs": [
+          "EVENT_JSON:{\"standard\":\"bound\",\"version\":\"1.0.0\",\"event\":\"pay\",\"data\":[{\"cert_id\":6,\"agent\":\"bound-agent2-mwfgqr0u.testnet\",\"to\":\"bound-service-mwfgqr0u.testnet\",\"amount\":\"1000000\",\"memo\":\"mcp tool call\",\"spent\":\"1000000\"}]}"
+        ]
+      }
+    },
+    {
+      "label": "near_pay 500 (over the float) is refused by the contract",
+      "pass": true,
+      "detail": {
+        "tx": "https://testnet.nearblocks.io/txns/3G3en8tC6VBtJkZPJGq1CXaiatMbUHb4VD3D9cRn31Pe",
+        "error": "FloatExceeded: amount 500000000 > float 9000000"
+      }
+    },
+    {
+      "label": "near_pay to an account off the allowlist is refused",
+      "pass": true,
+      "detail": {
+        "tx": "https://testnet.nearblocks.io/txns/4Xp1Xwuj9Jg1EHBmqWVx2KtgUjkNEb1gHnrhZd7TY7hH",
+        "error": "RecipientNotAllowed: treasury.boundproto-nh26.testnet is not on the operator allowlist"
+      }
+    },
+    {
+      "label": "near_check_agent_keys(self) -> confined",
+      "pass": true,
+      "detail": {
+        "keys": [
+          {
+            "access_key": {
+              "nonce": 277565557000003,
+              "permission": {
+                "FunctionCall": {
+                  "allowance": "249386594997493500000000",
+                  "method_names": [
+                    "pay"
+                  ],
+                  "receiver_id": "bound-v1.boundproto-nh26.testnet"
+                }
+              }
+            },
+            "public_key": "ed25519:6oBrirkzyhGNoBbBPrg5AzjXKGpMSxuekYkF7gaHfL63"
+          }
+        ]
+      }
+    },
+    {
+      "label": "float dropped by exactly 1",
+      "pass": true,
+      "detail": {
+        "before": "10000000",
+        "after": "9000000",
+        "spent": "1000000"
+      }
+    }
+  ],
+  "pass": true
+}
