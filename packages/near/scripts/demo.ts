@@ -246,7 +246,7 @@ async function main() {
       boundNear: "3.4",
       tokenNear: "1.8",
     });
-    saveDeployment(dep, join(EVIDENCE_DIR, `fresh-deployment-${runId}.json`));
+    if (writeEvidence) saveDeployment(dep, join(EVIDENCE_DIR, `fresh-deployment-${runId}.json`));
     arbiter = accountFromKey(provider, dep.accounts.arbiter, readCredential(dep.accounts.arbiter));
   } else {
     dep = loadDeployment();
