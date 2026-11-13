@@ -1,0 +1,863 @@
+{
+  "runId": "mwfgi0ij",
+  "startedAt": "2026-11-13T20:55:51.835Z",
+  "finishedAt": "2026-11-13T21:00:08.023Z",
+  "network": "testnet",
+  "contract": "bound-v1.boundproto-nh26.testnet",
+  "token": "usdc.boundproto-nh26.testnet",
+  "fresh": false,
+  "certId": 3,
+  "cert2Id": 4,
+  "harmChallengeId": 5,
+  "actors": {
+    "operator": "bound-operator-mwfgi0ij.testnet",
+    "agent": "bound-agent-mwfgi0ij.testnet",
+    "auditor": "bound-auditor-mwfgi0ij.testnet",
+    "challenger": "bound-challenger-mwfgi0ij.testnet",
+    "service": "bound-service-mwfgi0ij.testnet",
+    "agent2": "bound-agent2-mwfgi0ij.testnet",
+    "attacker": "bound-attacker-mwfgi0ij.testnet",
+    "arbiter": "arbiter.boundproto-nh26.testnet",
+    "treasury": "treasury.boundproto-nh26.testnet"
+  },
+  "agentKeyList": [
+    {
+      "access_key": {
+        "nonce": 277562097000000,
+        "permission": {
+          "FunctionCall": {
+            "allowance": "250000000000000000000000",
+            "method_names": [
+              "pay"
+            ],
+            "receiver_id": "bound-v1.boundproto-nh26.testnet"
+          }
+        }
+      },
+      "public_key": "ed25519:42BoAN5gwasHJRxQjPdEcWc6AUmPd2GdCAbwA6vF2N3t"
+    }
+  ],
+  "gate": {
+    "refused": {
+      "status": 403,
+      "reason": "no Bound certificate for this agent"
+    },
+    "prepaid": {
+      "status": 200,
+      "reason": "served (prepaid through Bound pay)",
+      "certId": 3,
+      "paidAmount": "5"
+    },
+    "replay": {
+      "status": 409,
+      "reason": "payment 3vsd4G8LnYfLikgSemeU2DaJ5f1nQ3f7PqiafHxU9hrr already used at 2026-11-13T20:57:42.541Z",
+      "certId": 3
+    },
+    "credit": {
+      "status": 200,
+      "reason": "served on credit (limit was 150)",
+      "certId": 3,
+      "invoiceId": "inv-1"
+    },
+    "invoices": [
+      {
+        "id": "inv-1",
+        "agent": "bound-agent-mwfgi0ij.testnet",
+        "certId": 3,
+        "amount": "120000000",
+        "description": "batch inference job, post-paid",
+        "issuedAt": "2026-11-13T20:57:42.696Z",
+        "status": "unpaid"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "act": 1,
+      "label": "mint 1330 mUSDC to bound-operator-mwfgi0ij.testnet",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "mint",
+      "hash": "9VBGR51kU4KUGy6pEF9dGb2uMQnSLtccdB7DtWCqF1nB",
+      "url": "https://testnet.nearblocks.io/txns/9VBGR51kU4KUGy6pEF9dGb2uMQnSLtccdB7DtWCqF1nB",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "mint 600 mUSDC to bound-auditor-mwfgi0ij.testnet",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "mint",
+      "hash": "CDWiPrbcbJDRTTuM4D4AK1TAkh7bRCUGaPgLj8qRcEYg",
+      "url": "https://testnet.nearblocks.io/txns/CDWiPrbcbJDRTTuM4D4AK1TAkh7bRCUGaPgLj8qRcEYg",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "mint 50 mUSDC to bound-challenger-mwfgi0ij.testnet",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "mint",
+      "hash": "7npYhJhQamidwdmcDi2bwXCJi94CsN5Wbf5ss1Yxzpiy",
+      "url": "https://testnet.nearblocks.io/txns/7npYhJhQamidwdmcDi2bwXCJi94CsN5Wbf5ss1Yxzpiy",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "mint 10 mUSDC to bound-service-mwfgi0ij.testnet",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "mint",
+      "hash": "BiZzUZ6iswZNtNbmMRuyt5s6j21ZqiWBxmBW1kCncNAb",
+      "url": "https://testnet.nearblocks.io/txns/BiZzUZ6iswZNtNbmMRuyt5s6j21ZqiWBxmBW1kCncNAb",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "bound-operator-mwfgi0ij.testnet storage_deposit on bound (0.01 NEAR)",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "storage_deposit",
+      "hash": "DJbn4BBxkGe9ZKtBS386nrbdZg3gzLbrRRyhp8StKqQx",
+      "url": "https://testnet.nearblocks.io/txns/DJbn4BBxkGe9ZKtBS386nrbdZg3gzLbrRRyhp8StKqQx",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "bound-auditor-mwfgi0ij.testnet storage_deposit on bound (0.01 NEAR)",
+      "signer": "bound-auditor-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "storage_deposit",
+      "hash": "855Ufzd1P2r7Gb2J4MTopMjQCSzxFBbC1HDAx4MsD82M",
+      "url": "https://testnet.nearblocks.io/txns/855Ufzd1P2r7Gb2J4MTopMjQCSzxFBbC1HDAx4MsD82M",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "bound-challenger-mwfgi0ij.testnet storage_deposit on bound (0.01 NEAR)",
+      "signer": "bound-challenger-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "storage_deposit",
+      "hash": "3R8aEBp5UCA9p4cCtQDm3x8Ubp1Nk5uX3xNepp8jtC5T",
+      "url": "https://testnet.nearblocks.io/txns/3R8aEBp5UCA9p4cCtQDm3x8Ubp1Nk5uX3xNepp8jtC5T",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 1,
+      "label": "bound-service-mwfgi0ij.testnet storage_deposit on bound (0.01 NEAR)",
+      "signer": "bound-service-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "storage_deposit",
+      "hash": "26DrN8zaLBJtvP2YKbs6RxChzPQ2dtucHsxYygFgvARt",
+      "url": "https://testnet.nearblocks.io/txns/26DrN8zaLBJtvP2YKbs6RxChzPQ2dtucHsxYygFgvARt",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "auditor stakes 600 via ft_transfer_call",
+      "signer": "bound-auditor-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "ft_transfer_call",
+      "hash": "7rbg3mRXpJw7xktAMovsZ2SZ2nbvgw2gQQaKDHWqHa2m",
+      "url": "https://testnet.nearblocks.io/txns/7rbg3mRXpJw7xktAMovsZ2SZ2nbvgw2gQQaKDHWqHa2m",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "operator deposits 1300 via ft_transfer_call",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "ft_transfer_call",
+      "hash": "556Ynf1hJnpmT1nhf6TuknDoJcYjDYDPMXQVA5oBdkAE",
+      "url": "https://testnet.nearblocks.io/txns/556Ynf1hJnpmT1nhf6TuknDoJcYjDYDPMXQVA5oBdkAE",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "challenger deposits 50",
+      "signer": "bound-challenger-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "ft_transfer_call",
+      "hash": "9fgKQdvnGBB4tAHJ2adCR1WhLXKUq2oym7RKKrwGDvXC",
+      "url": "https://testnet.nearblocks.io/txns/9fgKQdvnGBB4tAHJ2adCR1WhLXKUq2oym7RKKrwGDvXC",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "service deposits 10 (for its claim bond)",
+      "signer": "bound-service-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "ft_transfer_call",
+      "hash": "6jpam3mYSTMAnKL8mUMUzj482oUUMixbu8K9SznGzwpE",
+      "url": "https://testnet.nearblocks.io/txns/6jpam3mYSTMAnKL8mUMUzj482oUUMixbu8K9SznGzwpE",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "operator publishes cert: bound 150, reserve 100, float cap 20, allowlist [service], premium 3, expires +1h",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "publish",
+      "hash": "7ssazB48cEUJ2qn25xBGioHCgMdtzzNNeetUEMm2M9TZ",
+      "url": "https://testnet.nearblocks.io/txns/7ssazB48cEUJ2qn25xBGioHCgMdtzzNNeetUEMm2M9TZ",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "agent accepts (its full-access key, the last time it is used)",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "accept",
+      "hash": "BxyoUUv458LaAVS3b8VhvZM9PYHcPscFZGFuGH9bLudx",
+      "url": "https://testnet.nearblocks.io/txns/BxyoUUv458LaAVS3b8VhvZM9PYHcPscFZGFuGH9bLudx",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "operator funds reserve 100",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "fund_reserve",
+      "hash": "J3a3xsEjjA36xnS7Ns4WoAg6bmxDi7enQRzdWkDgM6LH",
+      "url": "https://testnet.nearblocks.io/txns/J3a3xsEjjA36xnS7Ns4WoAg6bmxDi7enQRzdWkDgM6LH",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "operator funds float 20",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "fund_float",
+      "hash": "Ga9Ntca7whpkRExYtNaf57CPXismBqkPgCBbwxQRJDy",
+      "url": "https://testnet.nearblocks.io/txns/Ga9Ntca7whpkRExYtNaf57CPXismBqkPgCBbwxQRJDy",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "auditor attests, locking 200 of its stake behind this cert",
+      "signer": "bound-auditor-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "attest",
+      "hash": "8Z6Uh557zxo1fmu6su6M9gUs9e8xd8QeoYF6kYAtijhr",
+      "url": "https://testnet.nearblocks.io/txns/8Z6Uh557zxo1fmu6su6M9gUs9e8xd8QeoYF6kYAtijhr",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "agent adds a function-call key: receiver bound-v1.boundproto-nh26.testnet, methods [\"pay\"], allowance 0.25 NEAR (gas only)",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-agent-mwfgi0ij.testnet",
+      "method": "AddKey",
+      "hash": "EuwrpdTLnAeEu4CEKwsfzdtkm6JwCwkcQkq82ucsJF9m",
+      "url": "https://testnet.nearblocks.io/txns/EuwrpdTLnAeEu4CEKwsfzdtkm6JwCwkcQkq82ucsJF9m",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "agent DELETES its full-access key",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-agent-mwfgi0ij.testnet",
+      "method": "DeleteKey",
+      "hash": "AsFEKopRhRvBiLqMHdRV2rPgghKBfGmAXJpXvfk9VQx6",
+      "url": "https://testnet.nearblocks.io/txns/AsFEKopRhRvBiLqMHdRV2rPgghKBfGmAXJpXvfk9VQx6",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "agent pays service 5 through bound pay (the function-call key, no deposit)",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "pay",
+      "hash": "3vsd4G8LnYfLikgSemeU2DaJ5f1nQ3f7PqiafHxU9hrr",
+      "url": "https://testnet.nearblocks.io/txns/3vsd4G8LnYfLikgSemeU2DaJ5f1nQ3f7PqiafHxU9hrr",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 4,
+      "label": "agent pays 50 to service (float is 15)",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "pay",
+      "hash": "3Va1wncCKm6rXBuTUxxZN3rM4iR5gAxwAtnH2XtzJQbn",
+      "url": "https://testnet.nearblocks.io/txns/3Va1wncCKm6rXBuTUxxZN3rM4iR5gAxwAtnH2XtzJQbn",
+      "ok": false,
+      "expectOk": false,
+      "expectError": "FloatExceeded",
+      "error": "FloatExceeded: amount 50000000 > float 15000000",
+      "pass": true
+    },
+    {
+      "act": 4,
+      "label": "agent pays 10 to bound-attacker-mwfgi0ij.testnet",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "pay",
+      "hash": "Cg8NqDngzcHY6rasXbN47ys2tpH3o89DaNssWuq7YqDY",
+      "url": "https://testnet.nearblocks.io/txns/Cg8NqDngzcHY6rasXbN47ys2tpH3o89DaNssWuq7YqDY",
+      "ok": false,
+      "expectOk": false,
+      "expectError": "RecipientNotAllowed",
+      "error": "RecipientNotAllowed: bound-attacker-mwfgi0ij.testnet is not on the operator allowlist",
+      "pass": true
+    },
+    {
+      "act": 4,
+      "label": "same key calls ft_transfer on the token",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "ft_transfer",
+      "hash": null,
+      "url": null,
+      "ok": false,
+      "expectOk": false,
+      "expectError": "DepositWithFunctionCall",
+      "error": "AccessKeyDepositWithFunctionCallActionError: Deposit is not allowed with function call",
+      "pass": true,
+      "note": "refused by NEAR itself: a function-call key cannot attach a deposit, and ft_transfer needs 1 yocto"
+    },
+    {
+      "act": 4,
+      "label": "same key calls mint on the token (no deposit needed)",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "mint",
+      "hash": null,
+      "url": null,
+      "ok": false,
+      "expectOk": false,
+      "expectError": "ReceiverMismatch",
+      "error": "AccessKeyReceiverMismatchActionError: Access key receiver bound-v1.boundproto-nh26.testnet does not match transaction receiver usdc.boundproto-nh26.testnet",
+      "pass": true,
+      "note": "refused by NEAR itself: the key may only call the bound contract"
+    },
+    {
+      "act": 4,
+      "label": "same key calls bound withdraw (needs 1 yocto)",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "withdraw",
+      "hash": null,
+      "url": null,
+      "ok": false,
+      "expectOk": false,
+      "expectError": "DepositWithFunctionCall",
+      "error": "AccessKeyDepositWithFunctionCallActionError: Deposit is not allowed with function call",
+      "pass": true,
+      "note": "refused by NEAR itself: no deposit from a function-call key (and withdraw is not in its method list)"
+    },
+    {
+      "act": 4,
+      "label": "same key sends 0.01 NEAR to the attacker",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-attacker-mwfgi0ij.testnet",
+      "method": "Transfer",
+      "hash": null,
+      "url": null,
+      "ok": false,
+      "expectOk": false,
+      "expectError": "RequiresFullAccess",
+      "error": "AccessKeyRequiresFullAccessActionError: Access key requires full access",
+      "pass": true,
+      "note": "refused by NEAR itself: a function-call key cannot sign a transfer"
+    },
+    {
+      "act": 4,
+      "label": "operator halts the cert",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "halt",
+      "hash": "3QZcWWjG3fi4xnee9mZbmWR8eWp945wYSN8vDscFCHx4",
+      "url": "https://testnet.nearblocks.io/txns/3QZcWWjG3fi4xnee9mZbmWR8eWp945wYSN8vDscFCHx4",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 4,
+      "label": "agent pays 1 to service while halted",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "pay",
+      "hash": "Hm7zjTU794pGbTh7PtYS9Y6EiVRkdFPKjnrRhUjmG1M8",
+      "url": "https://testnet.nearblocks.io/txns/Hm7zjTU794pGbTh7PtYS9Y6EiVRkdFPKjnrRhUjmG1M8",
+      "ok": false,
+      "expectOk": false,
+      "expectError": "CertHalted",
+      "error": "CertHalted: the operator halted this certificate",
+      "pass": true
+    },
+    {
+      "act": 5,
+      "label": "challenger files InsufficientReserve (bond 10) against a fully funded cert",
+      "signer": "bound-challenger-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "challenge",
+      "hash": "o5iPYqfe68ozr48qgZbXSTigfzS4ZxKqHMmJx2voDoN",
+      "url": "https://testnet.nearblocks.io/txns/o5iPYqfe68ozr48qgZbXSTigfzS4ZxKqHMmJx2voDoN",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 6,
+      "label": "service files Harm 120 citing near/evidence/gate-mwfgi0ij-invoices.json#inv-1 (bond 10)",
+      "signer": "bound-service-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "challenge",
+      "hash": "2ogFVYhnifKxgBieNoNV6xL83xkmTQyV7rrh5SEBgZ3i",
+      "url": "https://testnet.nearblocks.io/txns/2ogFVYhnifKxgBieNoNV6xL83xkmTQyV7rrh5SEBgZ3i",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 6,
+      "label": "anyone tries to close the window right away",
+      "signer": "bound-challenger-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "close_window",
+      "hash": "2h21JTecJ1ZW6hsyG1Xxay65PjbHE4cr2H18oYTyY6vr",
+      "url": "https://testnet.nearblocks.io/txns/2h21JTecJ1ZW6hsyG1Xxay65PjbHE4cr2H18oYTyY6vr",
+      "ok": false,
+      "expectOk": false,
+      "expectError": "WindowOpen",
+      "error": "WindowOpen: closes at 1794603574 (now 1794603487)",
+      "pass": true
+    },
+    {
+      "act": 6,
+      "label": "arbiter resolves: proven, harm 120",
+      "signer": "arbiter.boundproto-nh26.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "resolve_by_arbiter",
+      "hash": "3itWpS5aNnxLMoD1Fo5HwkVQAuqLvmTiQQQgpan83wdv",
+      "url": "https://testnet.nearblocks.io/txns/3itWpS5aNnxLMoD1Fo5HwkVQAuqLvmTiQQQgpan83wdv",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 6,
+      "label": "operator resumes (so the next refusal is the freeze, not the halt)",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "resume",
+      "hash": "EeCsd99w81ntwCAP3jPTzLbzr98MiuPXD27GWypcScZt",
+      "url": "https://testnet.nearblocks.io/txns/EeCsd99w81ntwCAP3jPTzLbzr98MiuPXD27GWypcScZt",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 6,
+      "label": "agent pays 1 while the claim window is open",
+      "signer": "bound-agent-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "pay",
+      "hash": "EXDJMuCTWUqVpVxAXiwMV7p9JMtJX77BJtaQqY7uDRhB",
+      "url": "https://testnet.nearblocks.io/txns/EXDJMuCTWUqVpVxAXiwMV7p9JMtJX77BJtaQqY7uDRhB",
+      "ok": false,
+      "expectOk": false,
+      "expectError": "CertFrozen",
+      "error": "CertFrozen: a claim window is open; payments are suspended",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "challenger (anyone) calls close_window",
+      "signer": "bound-challenger-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "close_window",
+      "hash": "7D1YhriCRBryqx7NAytgRJehJPhk8FuwGCgqSZAn8nqY",
+      "url": "https://testnet.nearblocks.io/txns/7D1YhriCRBryqx7NAytgRJehJPhk8FuwGCgqSZAn8nqY",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "service withdraws 115 to its token account",
+      "signer": "bound-service-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "withdraw",
+      "hash": "86qcLYCg93SSq2sfTW4DofyBcUCyDG4oKUTXp59eaQhz",
+      "url": "https://testnet.nearblocks.io/txns/86qcLYCg93SSq2sfTW4DofyBcUCyDG4oKUTXp59eaQhz",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "operator publishes cert 2 for agent2: bound 50, reserve 30, float cap 10, premium 1",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "publish",
+      "hash": "5CpXv7BFMTJ4eWbJTZ1U9mLkja6R2ycZw1A9AqExtU2w",
+      "url": "https://testnet.nearblocks.io/txns/5CpXv7BFMTJ4eWbJTZ1U9mLkja6R2ycZw1A9AqExtU2w",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "agent2 accepts",
+      "signer": "bound-agent2-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "accept",
+      "hash": "CRcZrZbJq13oxxWMZH6AVDf191F11dijSMKsiPsAyLba",
+      "url": "https://testnet.nearblocks.io/txns/CRcZrZbJq13oxxWMZH6AVDf191F11dijSMKsiPsAyLba",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "operator funds reserve 30 (ft_transfer_call with the reserve action)",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "usdc.boundproto-nh26.testnet",
+      "method": "ft_transfer_call",
+      "hash": "568C2YFVJzuLfPbK3ARSjvD5Y7K9MGazhfzUZqvRe3TZ",
+      "url": "https://testnet.nearblocks.io/txns/568C2YFVJzuLfPbK3ARSjvD5Y7K9MGazhfzUZqvRe3TZ",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "operator funds float 10",
+      "signer": "bound-operator-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "fund_float",
+      "hash": "Ctm8ZxZYtb8zAPZ48vgbzUF5jhjtXcfxKGgazTpkU9av",
+      "url": "https://testnet.nearblocks.io/txns/Ctm8ZxZYtb8zAPZ48vgbzUF5jhjtXcfxKGgazTpkU9av",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "auditor attests cert 2 with 100",
+      "signer": "bound-auditor-mwfgi0ij.testnet",
+      "receiver": "bound-v1.boundproto-nh26.testnet",
+      "method": "attest",
+      "hash": "GyMC9FNHYz3R1R3vckttLSEt23cnxqX9BMRj5WFg8do6",
+      "url": "https://testnet.nearblocks.io/txns/GyMC9FNHYz3R1R3vckttLSEt23cnxqX9BMRj5WFg8do6",
+      "ok": true,
+      "expectOk": true,
+      "error": null,
+      "pass": true
+    }
+  ],
+  "asserts": [
+    {
+      "act": 2,
+      "label": "auditor free stake",
+      "expected": "600",
+      "actual": "600",
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "verify status",
+      "expected": "Verified",
+      "actual": "Verified",
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "premium: auditor balance +2.7",
+      "expected": "2.7",
+      "actual": "2.7",
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "premium: treasury +0.3",
+      "expected": "0.3",
+      "actual": "0.3",
+      "pass": true
+    },
+    {
+      "act": 2,
+      "label": "operator balance 1300 - 3 - 100 - 20",
+      "expected": "1177",
+      "actual": "1177",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "agent has exactly one key",
+      "expected": "1",
+      "actual": "1",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "that key is FunctionCall scoped to the bound contract",
+      "expected": "bound-v1.boundproto-nh26.testnet",
+      "actual": "bound-v1.boundproto-nh26.testnet",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "its only method is pay",
+      "expected": "[\"pay\"]",
+      "actual": "[\"pay\"]",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "gate refuses an uncertified agent",
+      "expected": "403",
+      "actual": "403",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "gate serves the prepaid request",
+      "expected": "200",
+      "actual": "200",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "gate refuses a replayed payment hash",
+      "expected": "409",
+      "actual": "409",
+      "pass": true
+    },
+    {
+      "act": 3,
+      "label": "gate serves the certified agent on credit",
+      "expected": "200",
+      "actual": "200",
+      "pass": true
+    },
+    {
+      "act": 5,
+      "label": "verdict",
+      "expected": "Rejected",
+      "actual": "Rejected",
+      "pass": true
+    },
+    {
+      "act": 5,
+      "label": "bond forfeited to treasury (+10)",
+      "expected": "10",
+      "actual": "10",
+      "pass": true
+    },
+    {
+      "act": 5,
+      "label": "challenger balance 50 - 10",
+      "expected": "40",
+      "actual": "40",
+      "pass": true
+    },
+    {
+      "act": 6,
+      "label": "verify status",
+      "expected": "Challenged",
+      "actual": "Challenged",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "cert status",
+      "expected": "Invalid",
+      "actual": "Invalid",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "payable = min(120, 100 + 200)",
+      "expected": "120",
+      "actual": "120",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "victim paid from the reserve",
+      "expected": "100",
+      "actual": "100",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "challenger fee = min(12, reserve left 0)",
+      "expected": "0",
+      "actual": "0",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "auditor slashed only the 20 the reserve could not cover",
+      "expected": "20",
+      "actual": "20",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "rest of the allocation back to the auditor",
+      "expected": "180",
+      "actual": "180",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "treasury +20 (the slash)",
+      "expected": "20",
+      "actual": "20",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "treasury over the run: 0.3 premium + 10 bond + 20 slash",
+      "expected": "30.3",
+      "actual": "30.3",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "auditor free stake 400 + 180",
+      "expected": "580",
+      "actual": "580",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "auditor allocated stake",
+      "expected": "0",
+      "actual": "0",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "unspent float 15 back to the operator",
+      "expected": "15",
+      "actual": "15",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "service bound balance: 5 prepaid + 100 compensation + 10 bond back",
+      "expected": "115",
+      "actual": "115",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "withdraw callback reports success",
+      "expected": "true",
+      "actual": "true",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "service ft_balance_of on the token rose by 115",
+      "expected": "115",
+      "actual": "115",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "service bound balance after withdraw",
+      "expected": "0",
+      "actual": "0",
+      "pass": true
+    },
+    {
+      "act": 7,
+      "label": "gate refuses the settled agent",
+      "expected": "403",
+      "actual": "403",
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "cert 2 status",
+      "expected": "Verified",
+      "actual": "Verified",
+      "pass": true
+    },
+    {
+      "act": 8,
+      "label": "gate now asks agent2 to pay instead of refusing",
+      "expected": "402",
+      "actual": "402",
+      "pass": true
+    }
+  ],
+  "pass": true
+}

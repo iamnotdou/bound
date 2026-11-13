@@ -45,6 +45,8 @@ export interface NearDeployment {
     agent2: string;
     certId: number;
     cert2Id: number;
+    txs?: Array<{ act: number; step: string; hash: string; url: string; ok: boolean }>;
+    keyLevelRefusals?: Array<{ act: number; step: string; error: string }>;
   }>;
 }
 

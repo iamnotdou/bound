@@ -15,7 +15,9 @@ import {
 } from "near-api-js";
 import { explorerTx } from "./format.js";
 
-export const TESTNET_RPCS = ["https://test.rpc.fastnear.com", "https://rpc.testnet.near.org"];
+// rpc.testnet.near.org now answers every call with -429 "THIS ENDPOINT IS
+// DEPRECATED" (checked 2026-11-13), so both entries are FastNEAR hostnames.
+export const TESTNET_RPCS = ["https://test.rpc.fastnear.com", "https://rpc.testnet.fastnear.com"];
 
 export const TGAS = 1_000_000_000_000n;
 export const ONE_YOCTO = 1n;
@@ -188,8 +190,9 @@ export async function tryCall(
 
 export function errorText(e: unknown): string {
   if (e instanceof Error) {
-    const extra = (e as { type?: string }).type;
-    return `${extra ? `${extra}: ` : ""}${e.message}`.slice(0, 500);
+    const name =
+      e.constructor?.name && e.constructor.name !== "Error" ? `${e.constructor.name}: ` : "";
+    return `${name}${e.message}`.slice(0, 500);
   }
   return String(e).slice(0, 500);
 }
