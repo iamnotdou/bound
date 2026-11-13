@@ -112,9 +112,12 @@ pub struct Settlement {
     pub admitted: u32,
     pub payable: U128,
     pub reserve_draw: U128,
+    /// Total paid to victims: from the reserve plus from the slash.
     pub victim_paid: U128,
     pub fee_paid: U128,
     pub slash: U128,
+    /// Part of `slash` paid to victims (unpaid arbitrated harm first).
+    pub slash_to_victims: U128,
     pub to_treasury: U128,
     pub auditor_returned: U128,
     pub hygiene_bounty_paid: U128,
@@ -141,7 +144,6 @@ pub struct Cert {
     pub pay_count: u64,
     pub status: CertStatus,
     pub halted: bool,
-    pub frozen: bool,
     pub created_at: u64,
     pub attested_at: u64,
     pub settlement: Option<Settlement>,
@@ -224,6 +226,10 @@ pub struct CertView {
     pub reserve_promised: U128,
     pub reserve_locked: U128,
     pub allocation: U128,
+    /// reserve_locked + allocation: the most that arbitrated victims of this
+    /// certificate can recover in total. This, not `bound`, is the number a
+    /// counterparty can rely on.
+    pub coverage: U128,
     pub premium: U128,
     pub float: U128,
     pub float_cap: U128,
@@ -650,7 +656,6 @@ impl Bound {
             pay_count: 0,
             status: CertStatus::Pending,
             halted: false,
-            frozen: false,
             created_at: now_secs(),
             attested_at: 0,
             settlement: None,
@@ -779,20 +784,17 @@ impl Bound {
         if env::predecessor_account_id() != c.operator {
             fail("NotOperator", "");
         }
-        if c.frozen {
+        if self.is_frozen(&c) {
             fail("CertFrozen", "a claim window is open");
         }
         let deadline = self.deadline(&c);
+        let mut premium_refund = 0;
         match c.status {
             CertStatus::Pending | CertStatus::Accepted => {
                 c.status = CertStatus::Released;
                 // Unattested: refund an escrowed premium too.
-                let p = c.premium;
+                premium_refund = c.premium;
                 c.premium = 0;
-                if p > 0 {
-                    let op = c.operator.clone();
-                    self.credit(&op, p);
-                }
             }
             CertStatus::Verified => {
                 if now_secs() < deadline {
@@ -802,7 +804,8 @@ impl Bound {
             }
             CertStatus::Invalid | CertStatus::Released => {}
         }
-        let out = c.reserve_locked + c.float;
+        // An escrowed premium counts: a never-funded cert still refunds it.
+        let out = c.reserve_locked + c.float + premium_refund;
         if out == 0 {
             fail("NothingToRelease", "");
         }
@@ -827,7 +830,7 @@ impl Bound {
         if env::predecessor_account_id() != c.auditor {
             fail("NotAuditor", "");
         }
-        if c.frozen {
+        if self.is_frozen(&c) {
             fail("CertFrozen", "a claim window is open");
         }
         let deadline = self.deadline(&c);
@@ -877,10 +880,16 @@ impl Bound {
         if c.status != CertStatus::Verified {
             fail("CertNotVerified", format!("status {:?}", c.status));
         }
-        if c.frozen {
+        if self.is_frozen(&c) {
             fail(
                 "CertFrozen",
                 "a claim window is open; payments are suspended",
+            );
+        }
+        if now_secs() > self.deadline(&c) {
+            fail(
+                "SettlementDeadlinePassed",
+                "no payments after the settlement deadline (unchallengeable)",
             );
         }
         if c.halted {
@@ -992,9 +1001,17 @@ impl Bound {
         );
         let before = env::storage_usage();
         let challenger = env::predecessor_account_id();
-        let mut c = self.cert(cert_id);
+        let c = self.cert(cert_id);
+        // From here on only the stored id is used: never the argument.
+        let cert_id = c.id;
         if c.status != CertStatus::Verified {
             fail("NotChallengeable", format!("status {:?}", c.status));
+        }
+        if challenger == c.operator || challenger == c.agent || challenger == c.auditor {
+            fail(
+                "ConflictedChallenger",
+                "the operator, agent and auditor cannot challenge their own certificate",
+            );
         }
         let now = now_secs();
         let deadline = self.deadline(&c);
@@ -1073,11 +1090,15 @@ impl Bound {
         if w.claims.len() >= MAX_CLAIMS_PER_WINDOW {
             fail("WindowFull", "16 claims already filed in this window");
         }
+        // A claim filed late in a window extends it, so a late victim (and
+        // the arbiter) always get at least a third of a window.
+        let min_left = self.extension_secs();
+        if w.closes_at < now.saturating_add(min_left) {
+            w.closes_at = now.saturating_add(min_left);
+        }
         w.claims.push(id);
         let closes_at = w.closes_at;
         self.windows.insert(cert_id, w);
-        c.frozen = true;
-        self.put_cert(c);
         self.challenges.push(ch);
         self.challenges.flush();
         self.windows.flush();
@@ -1098,9 +1119,10 @@ impl Bound {
         if env::predecessor_account_id() != self.arbiter {
             fail("NotArbiter", "");
         }
+        let idx = self.challenge_index(challenge_id);
         let mut ch = self
             .challenges
-            .get(challenge_id as u32)
+            .get(idx)
             .cloned()
             .unwrap_or_else(|| fail("NoSuchChallenge", challenge_id.to_string()));
         let claimed = match &ch.proof {
@@ -1128,7 +1150,7 @@ impl Bound {
         ch.harm = if proven { harm.0 } else { 0 };
         let cert_id = ch.cert_id;
         let h = ch.harm;
-        self.challenges.replace(challenge_id as u32, ch);
+        self.challenges.replace(idx, ch);
         emit(
             "resolve",
             json!({ "challenge_id": challenge_id, "cert_id": cert_id, "proven": proven, "harm": U128(h) }),
@@ -1141,6 +1163,11 @@ impl Bound {
     #[payable]
     pub fn close_window(&mut self, cert_id: u64) -> Option<Settlement> {
         assert_one_yocto();
+        let mut c = self.cert(cert_id);
+        let cert_id = c.id;
+        if c.status != CertStatus::Verified {
+            fail("NotChallengeable", format!("status {:?}", c.status));
+        }
         let w = self
             .windows
             .get(&cert_id)
@@ -1153,7 +1180,20 @@ impl Bound {
                 format!("closes at {} (now {now})", w.closes_at),
             );
         }
-        let mut c = self.cert(cert_id);
+        // Arbiter grace: while a Harm claim is still undecided, nobody can
+        // front-run the arbiter by closing right at `closes_at`.
+        let grace_end = w.closes_at.saturating_add(self.extension_secs());
+        if now < grace_end
+            && w.claims.iter().any(|id| {
+                let ch = self.challenges.get(*id as u32).expect("claim");
+                !ch.adjudicated && matches!(ch.proof, Proof::Harm { .. })
+            })
+        {
+            fail(
+                "ArbiterGrace",
+                format!("an undecided claim; closable at {grace_end} (now {now})"),
+            );
+        }
         let treasury = self.treasury.clone();
 
         // Classify claims.
@@ -1163,8 +1203,12 @@ impl Bound {
         for id in &w.claims {
             let mut ch = self.challenges.get(*id as u32).cloned().expect("claim");
             if !ch.adjudicated {
+                // Freezing a certificate is not free: half the bond of a claim
+                // nobody decided goes to the treasury, half comes back.
                 let who = ch.challenger.clone();
-                self.credit(&who, ch.bond);
+                let back = ch.bond / 2;
+                self.credit(&who, back);
+                self.credit(&treasury, ch.bond - back);
                 ch.verdict = Verdict::Unadjudicated;
                 self.challenges.replace(*id as u32, ch);
             } else if !ch.proven {
@@ -1185,7 +1229,6 @@ impl Bound {
             }
         }
         self.windows.remove(&cert_id);
-        c.frozen = false;
 
         if admitted.is_empty() {
             self.put_cert(c);
@@ -1227,8 +1270,9 @@ impl Bound {
                 self.config.challenger_fee_bps as u128,
             );
             for (i, ch) in admitted.iter().enumerate() {
-                if p.victim_shares[i] > 0 {
-                    self.credit(&ch.victim, p.victim_shares[i]);
+                let to_victim = p.victim_shares[i] + p.slash_shares[i];
+                if to_victim > 0 {
+                    self.credit(&ch.victim, to_victim);
                 }
                 if p.fee_shares[i] > 0 {
                     self.credit(&ch.challenger, p.fee_shares[i]);
@@ -1239,9 +1283,10 @@ impl Bound {
             s.mode = "fraud".into();
             s.payable = U128(p.payable);
             s.reserve_draw = U128(p.reserve_draw);
-            s.victim_paid = U128(p.victim_paid());
+            s.victim_paid = U128(p.victim_paid() + p.slash_to_victims());
             s.fee_paid = U128(p.fee_paid());
             s.slash = U128(p.slash);
+            s.slash_to_victims = U128(p.slash_to_victims());
             s.to_treasury = U128(p.to_treasury());
             s.auditor_returned = U128(p.auditor_return);
             stake.allocated = U128(stake.allocated.0 - allocation);
@@ -1325,12 +1370,16 @@ impl Bound {
     pub fn verify(&self, agent: AccountId) -> Option<CertView> {
         self.agent_cert
             .get(&agent)
-            .and_then(|id| self.certs.get(*id as u32))
+            .and_then(|id| u32::try_from(*id).ok())
+            .and_then(|i| self.certs.get(i))
             .map(|c| self.view(c))
     }
 
     pub fn get_cert(&self, cert_id: u64) -> Option<CertView> {
-        self.certs.get(cert_id as u32).map(|c| self.view(c))
+        u32::try_from(cert_id)
+            .ok()
+            .and_then(|i| self.certs.get(i))
+            .map(|c| self.view(c))
     }
 
     pub fn list_certs(&self, from_index: Option<u64>, limit: Option<u64>) -> Vec<CertView> {
@@ -1351,8 +1400,9 @@ impl Bound {
     }
 
     pub fn get_challenge(&self, challenge_id: u64) -> Option<ChallengeView> {
-        self.challenges
-            .get(challenge_id as u32)
+        u32::try_from(challenge_id)
+            .ok()
+            .and_then(|i| self.challenges.get(i))
             .map(|ch| ChallengeView {
                 challenge_id: ch.id,
                 cert_id: ch.cert_id,
@@ -1369,6 +1419,7 @@ impl Bound {
     }
 
     pub fn get_window(&self, cert_id: u64) -> Option<WindowView> {
+        u32::try_from(cert_id).ok()?;
         self.windows.get(&cert_id).map(|w| WindowView {
             cert_id,
             opened_at: w.opened_at,
@@ -1383,11 +1434,35 @@ impl Bound {
 // ----------------------------------------------------------------------
 
 impl Bound {
+    /// Load a certificate. The ABI id is a u64 but storage is indexed by u32:
+    /// an id above u32::MAX is rejected, never truncated (a truncated id would
+    /// alias another certificate and open a second, independent window).
     fn cert(&self, cert_id: u64) -> Cert {
-        self.certs
-            .get(cert_id as u32)
+        let c = u32::try_from(cert_id)
+            .ok()
+            .and_then(|i| self.certs.get(i))
             .cloned()
-            .unwrap_or_else(|| fail("NoSuchCert", cert_id.to_string()))
+            .unwrap_or_else(|| fail("NoSuchCert", cert_id.to_string()));
+        debug_assert_eq!(c.id, cert_id);
+        c
+    }
+
+    fn challenge_index(&self, challenge_id: u64) -> u32 {
+        u32::try_from(challenge_id)
+            .ok()
+            .filter(|i| *i < self.challenges.len())
+            .unwrap_or_else(|| fail("NoSuchChallenge", challenge_id.to_string()))
+    }
+
+    /// Frozen = a claim window exists for this certificate's own id. Derived
+    /// from storage, never from a flag that a second window could reset.
+    fn is_frozen(&self, c: &Cert) -> bool {
+        self.windows.contains_key(&c.id)
+    }
+
+    /// Late-claim extension and arbiter grace: a third of a claim window.
+    fn extension_secs(&self) -> u64 {
+        (self.config.claim_window_secs / 3).max(1)
     }
 
     fn put_cert(&mut self, c: Cert) {
@@ -1409,7 +1484,7 @@ impl Bound {
 
     fn is_live(&self, c: &Cert) -> bool {
         matches!(c.status, CertStatus::Accepted | CertStatus::Verified)
-            && (c.frozen || now_secs() < c.expires_at)
+            && (self.is_frozen(c) || now_secs() < c.expires_at)
     }
 
     fn predicate_live(&self, c: &Cert, ch: &Challenge) -> bool {
@@ -1425,7 +1500,7 @@ impl Bound {
         let now = now_secs();
         let w = self.windows.get(&c.id);
         let status = match c.status {
-            CertStatus::Verified if c.frozen => "Challenged",
+            CertStatus::Verified if self.is_frozen(c) => "Challenged",
             CertStatus::Verified if now >= c.expires_at => "Expired",
             CertStatus::Pending => "Pending",
             CertStatus::Accepted => "Accepted",
@@ -1443,6 +1518,7 @@ impl Bound {
             reserve_promised: U128(c.reserve_promised),
             reserve_locked: U128(c.reserve_locked),
             allocation: U128(c.allocation),
+            coverage: U128(c.reserve_locked + c.allocation),
             premium: U128(c.premium),
             float: U128(c.float),
             float_cap: U128(c.float_cap),

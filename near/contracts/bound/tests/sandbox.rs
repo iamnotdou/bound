@@ -385,11 +385,12 @@ async fn full_lifecycle_settles_victim() -> testresult::TestResult<()> {
     )
     .await;
 
-    // A false trustless claim is rejected in the same tx; bond to treasury.
+    // A false trustless claim (spent <= bound) is rejected in the same tx;
+    // bond to treasury.
     e.bound_ok(
         "challenger",
         "challenge",
-        json!({ "cert_id": 0, "proof": "InsufficientReserve", "bond": (10 * U).to_string() }),
+        json!({ "cert_id": 0, "proof": "BoundExceeded", "bond": (10 * U).to_string() }),
         NearToken::from_millinear(10),
     )
     .await;
@@ -448,11 +449,13 @@ async fn full_lifecycle_settles_victim() -> testresult::TestResult<()> {
     let s = &v["settlement"];
     assert_eq!(s["mode"], "fraud");
     assert_eq!(s["payable"], (120 * U).to_string());
-    assert_eq!(s["victim_paid"], (100 * U).to_string());
+    // 100 from the reserve + 20 of the auditor's slash: the victim is whole.
+    assert_eq!(s["victim_paid"], (120 * U).to_string());
     assert_eq!(s["slash"], (20 * U).to_string());
+    assert_eq!(s["slash_to_victims"], (20 * U).to_string());
     assert_eq!(s["auditor_returned"], (180 * U).to_string());
-    assert_eq!(e.bound_bal("service").await, 115 * U);
-    assert_eq!(e.bound_bal("treasury").await, 300_000 + 30 * U);
+    assert_eq!(e.bound_bal("service").await, 135 * U);
+    assert_eq!(e.bound_bal("treasury").await, 300_000 + 10 * U);
     let stake: Value = e
         .view(
             &e.bound,
@@ -468,11 +471,11 @@ async fn full_lifecycle_settles_victim() -> testresult::TestResult<()> {
     e.bound_ok(
         "service",
         "withdraw",
-        json!({ "amount": (115 * U).to_string() }),
+        json!({ "amount": (135 * U).to_string() }),
         y,
     )
     .await;
-    assert_eq!(e.ft_bal("service").await, before + 115 * U);
+    assert_eq!(e.ft_bal("service").await, before + 135 * U);
     assert_eq!(e.bound_bal("service").await, 0);
     let _ = e.now().await;
     Ok(())

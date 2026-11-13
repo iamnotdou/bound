@@ -954,13 +954,16 @@ fn demo_vector_harm_above_reserve() {
     let s = t.close().expect("settled");
     assert_eq!(s.mode, "fraud");
     assert_eq!(s.payable.0, 120 * U);
-    assert_eq!(s.victim_paid.0, 100 * U);
+    // 100 from the reserve + 20 from the auditor's slash: made whole.
+    assert_eq!(s.victim_paid.0, 120 * U);
     assert_eq!(s.fee_paid.0, 0);
     assert_eq!(s.slash.0, 20 * U);
+    assert_eq!(s.slash_to_victims.0, 20 * U);
+    assert_eq!(s.to_treasury.0, 0);
     assert_eq!(s.auditor_returned.0, 180 * U);
-    // service: 10 minted - 10 bond + 5 paid + 100 compensation + 10 bond back
-    assert_eq!(t.bal("service.test"), 115 * U);
-    assert_eq!(t.bal("treasury.test"), treasury0 + 20 * U);
+    // service: 10 minted - 10 bond + 5 paid + 120 compensation + 10 bond back
+    assert_eq!(t.bal("service.test"), 135 * U);
+    assert_eq!(t.bal("treasury.test"), treasury0);
     let st = t.c.get_stake(a("auditor.test"));
     assert_eq!(st.allocated.0, 0);
     assert_eq!(st.free.0, 300 * U + 180 * U);
@@ -1000,7 +1003,7 @@ fn harm_above_reserve_plus_allocation_capped() {
     t.now += 90;
     let s = t.close().unwrap();
     assert_eq!(s.payable.0, 300 * U);
-    assert_eq!(s.victim_paid.0, 100 * U);
+    assert_eq!(s.victim_paid.0, 300 * U); // capped by coverage = 100 + 200
     assert_eq!(s.slash.0, 200 * U);
     assert_eq!(s.auditor_returned.0, 0);
 }
@@ -1015,11 +1018,11 @@ fn two_victims_pro_rata() {
     t.resolve(a2, true, 90 * U);
     t.now += 90;
     let s = t.close().unwrap();
-    assert_eq!(s.victim_paid.0, 100 * U);
-    // service: 10 - 10 + 25 + 10
-    assert_eq!(t.bal("service.test"), 35 * U);
-    // challenger: 51 - 10 + 75 + 10
-    assert_eq!(t.bal("challenger.test"), 126 * U);
+    assert_eq!(s.victim_paid.0, 120 * U);
+    // service: 10 - 10 + 25 reserve + 5 slash + 10
+    assert_eq!(t.bal("service.test"), 40 * U);
+    // challenger: 51 - 10 + 75 reserve + 15 slash + 10
+    assert_eq!(t.bal("challenger.test"), 141 * U);
 }
 
 #[test]
@@ -1037,12 +1040,14 @@ fn arbiter_rejected_claim_forfeits_bond_window_reopens_cert() {
 }
 
 #[test]
-fn unadjudicated_claim_returns_bond() {
+fn unadjudicated_claim_forfeits_half_the_bond() {
     let mut t = verified();
+    let treasury0 = t.bal("treasury.test");
     let id = t.harm("service.test", 50 * U);
-    t.now += 90;
+    t.now += 90 + 30; // window + arbiter grace
     assert!(t.close().is_none());
-    assert_eq!(t.bal("service.test"), 10 * U);
+    assert_eq!(t.bal("service.test"), 5 * U);
+    assert_eq!(t.bal("treasury.test"), treasury0 + 5 * U);
     assert_eq!(
         t.c.get_challenge(id).unwrap().verdict,
         Verdict::Unadjudicated
@@ -1154,7 +1159,7 @@ fn release_unattested_refunds_premium() {
     let id = t.publish(None);
     t.ctx("operator.test", yocto());
     t.c.fund_reserve(id, U128(100 * U));
-    assert_eq!(t.c.release_reserve(id).0, 100 * U);
+    assert_eq!(t.c.release_reserve(id).0, 103 * U); // reserve + premium
     assert_eq!(t.bal("operator.test"), 1_000 * U);
     assert_eq!(t.cert0().status, "Released");
 }
@@ -1193,4 +1198,195 @@ fn pay_emits_nep297_event() {
     assert_eq!(v["standard"], "bound");
     assert_eq!(v["data"][0]["to"], "service.test");
     assert_eq!(v["data"][0]["amount"], "5000000");
+}
+
+// ------------------------------------------------ regressions (judge review)
+
+fn harm_on(t: &mut T, who: &str, cert_id: u64) -> u64 {
+    t.ctx(who, CHALLENGE_DEPOSIT);
+    t.c.challenge(
+        cert_id,
+        Proof::Harm {
+            claimed: U128(U),
+            evidence_uri: "x".into(),
+        },
+        None,
+        U128(10 * U),
+    )
+}
+
+fn panics(f: impl FnOnce()) -> String {
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    match r {
+        Ok(_) => String::new(),
+        Err(e) => e
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default(),
+    }
+}
+
+/// B1: an id above u32::MAX never aliases cert 0 (challenge, pay, views).
+#[test]
+fn alias_cert_id_rejected_everywhere() {
+    let mut t = verified();
+    let alias: u64 = 1u64 << 32;
+    let e = panics(|| {
+        harm_on(&mut t, "challenger.test", alias);
+    });
+    assert!(e.contains("NoSuchCert"), "{e}");
+    let e = panics(|| {
+        t.ctx("agent.test", NearToken::from_yoctonear(0));
+        t.c.pay(alias, a("service.test"), U128(U), None);
+    });
+    assert!(e.contains("NoSuchCert"), "{e}");
+    let e = panics(|| {
+        t.ctx("anyone.test", yocto());
+        t.c.close_window(alias);
+    });
+    assert!(e.contains("NoSuchCert"), "{e}");
+    assert!(t.c.get_cert(alias).is_none());
+    assert!(t.c.get_window(alias).is_none());
+    assert!(t.c.get_challenge(1u64 << 32).is_none());
+}
+
+/// B1 exploit path: collateral cannot leave while the real window is open,
+/// and an upheld victim is paid.
+#[test]
+fn collateral_stays_locked_while_window_open() {
+    let mut t = verified();
+    t.now = T0 + 3600 + 300 - 10; // 10 s before the settlement deadline
+    let real = t.harm("service.test", 50 * U);
+    t.resolve(real, true, 50 * U);
+    t.now += 100; // past the deadline, window still open
+    let e = panics(|| {
+        t.ctx("auditor.test", yocto());
+        t.c.release_allocation(0);
+    });
+    assert!(e.contains("CertFrozen"), "{e}");
+    let e = panics(|| {
+        t.ctx("operator.test", yocto());
+        t.c.release_reserve(0);
+    });
+    assert!(e.contains("CertFrozen"), "{e}");
+    let before = t.bal("service.test");
+    let s = t.close().unwrap();
+    assert_eq!(s.victim_paid.0, 50 * U);
+    assert_eq!(t.bal("service.test") - before, 50 * U + 5 * U + 10 * U);
+}
+
+/// B1: a settled certificate cannot be settled again.
+#[test]
+fn close_window_refuses_settled_cert() {
+    let mut t = verified();
+    let id = t.harm("service.test", 50 * U);
+    t.resolve(id, true, 50 * U);
+    t.now += 90;
+    t.close().unwrap();
+    let e = panics(|| {
+        t.close();
+    });
+    assert!(e.contains("NotChallengeable"), "{e}");
+}
+
+/// B1: the 16-claim cap holds per certificate.
+#[test]
+fn window_cap_holds() {
+    let mut t = verified();
+    t.deposit("challenger.test", 200 * U, "");
+    for _ in 0..16 {
+        harm_on(&mut t, "challenger.test", 0);
+    }
+    let e = panics(|| {
+        harm_on(&mut t, "challenger.test", 0);
+    });
+    assert!(e.contains("WindowFull"), "{e}");
+}
+
+/// M3: operator, agent and auditor cannot challenge their own certificate.
+#[test]
+fn conflicted_challenger_rejected() {
+    for who in ["operator.test", "agent.test", "auditor.test"] {
+        let mut t = verified();
+        if who == "agent.test" {
+            t.register("agent.test");
+            t.deposit("agent.test", 20 * U, "");
+        }
+        let e = panics(|| {
+            harm_on(&mut t, who, 0);
+        });
+        assert!(e.contains("ConflictedChallenger"), "{who}: {e}");
+    }
+}
+
+/// M3: repeated freezing costs half a bond each time.
+#[test]
+fn grief_freeze_costs_bond() {
+    let mut t = verified();
+    let b0 = t.bal("challenger.test");
+    for _ in 0..3 {
+        harm_on(&mut t, "challenger.test", 0);
+        t.now += 90 + 30;
+        assert!(t.close().is_none());
+        t.now += 1;
+    }
+    assert_eq!(b0 - t.bal("challenger.test"), 15 * U);
+}
+
+/// M3: a claim late in a window extends it to a third of a window.
+#[test]
+fn late_claim_extends_window() {
+    let mut t = verified();
+    harm_on(&mut t, "challenger.test", 0);
+    let w0 = t.c.get_window(0).unwrap().closes_at;
+    t.now += 80; // 10 s left
+    t.harm("service.test", 10 * U);
+    let w1 = t.c.get_window(0).unwrap().closes_at;
+    assert_eq!(w1, t.now + 30);
+    assert!(w1 > w0);
+}
+
+/// M3: nobody can close at `closes_at` to front-run an undecided Harm claim;
+/// the arbiter can still resolve during the grace period.
+#[test]
+fn arbiter_grace_blocks_front_run() {
+    let mut t = verified();
+    let id = t.harm("service.test", 50 * U);
+    t.now += 90;
+    let e = panics(|| {
+        t.close();
+    });
+    assert!(e.contains("ArbiterGrace"), "{e}");
+    t.resolve(id, true, 50 * U);
+    let s = t.close().unwrap(); // decided: closable now
+    assert_eq!(s.victim_paid.0, 50 * U);
+}
+
+/// m1: an escrowed premium comes back even if nothing was ever funded.
+#[test]
+fn premium_refunded_when_reserve_never_funded() {
+    let mut t = funded();
+    let before = t.bal("operator.test");
+    let id = t.publish(None);
+    t.ctx("operator.test", yocto());
+    assert_eq!(t.c.release_reserve(id).0, 3 * U);
+    assert_eq!(t.bal("operator.test"), before);
+}
+
+/// m2: no payments after the settlement deadline.
+#[test]
+fn pay_after_deadline_rejected() {
+    let mut t = verified();
+    t.now = T0 + 3600 + 300 + 1;
+    let e = panics(|| t.pay("agent.test", "service.test", U));
+    assert!(e.contains("SettlementDeadlinePassed"), "{e}");
+}
+
+/// M1: coverage = reserve_locked + allocation is exposed by verify.
+#[test]
+fn verify_reports_coverage() {
+    let t = verified();
+    let v = t.c.verify(a("agent.test")).unwrap();
+    assert_eq!(v.coverage.0, 300 * U);
 }

@@ -35,15 +35,24 @@ pub struct Payouts {
     pub fee_shares: Vec<u128>,
     /// fee_pool minus what challengers received (rounding), to the treasury.
     pub fee_remainder: u128,
-    /// min(payable - reserve_draw, allocation), to the treasury only.
+    /// min(payable - reserve_draw, allocation): the auditor's slash.
     pub slash: u128,
+    /// Per claim, the part of the slash paid to its victim: unpaid
+    /// arbitrated harm first (NEAR port; Soroban sent the whole slash to the
+    /// treasury). Whatever the victims do not need goes to the treasury.
+    pub slash_shares: Vec<u128>,
     /// allocation - slash, back to the auditor's free stake.
     pub auditor_return: u128,
 }
 
 impl Payouts {
+    /// What victims received from the reserve.
     pub fn victim_paid(&self) -> u128 {
         self.victim_shares.iter().sum()
+    }
+    /// What victims received from the auditor's slash.
+    pub fn slash_to_victims(&self) -> u128 {
+        self.slash_shares.iter().sum()
     }
     pub fn fee_paid(&self) -> u128 {
         self.fee_shares.iter().sum()
@@ -54,7 +63,7 @@ impl Payouts {
     }
     /// Total credited to the treasury.
     pub fn to_treasury(&self) -> u128 {
-        self.victim_remainder + self.fee_remainder + self.slash
+        self.victim_remainder + self.fee_remainder + (self.slash - self.slash_to_victims())
     }
 }
 
@@ -110,9 +119,18 @@ pub fn settle(reserve: u128, allocation: u128, claims: &[ClaimIn], fee_bps: u128
     let fee_remainder = fee_pool - fee_paid;
 
     // 3. Auditor slash: only the part of payable the reserve could not cover,
-    //    capped by this certificate's allocation, to the treasury only.
+    //    capped by this certificate's allocation. It goes to the arbitrated
+    //    victims' unpaid harm first, pro rata; the rest to the treasury.
     let residual = payable - reserve_draw;
     let slash = min(residual, allocation);
+    let unpaid: Vec<u128> = victim_weights
+        .iter()
+        .zip(victim_shares.iter())
+        .map(|(w, p)| w - p)
+        .collect();
+    let unpaid_total: u128 = unpaid.iter().sum();
+    let slash_pool = min(slash, unpaid_total);
+    let slash_shares = distribute(slash_pool, &unpaid, unpaid_total);
 
     // 5. The unslashed allocation goes back to the auditor's free stake.
     let auditor_return = allocation - slash;
@@ -126,6 +144,7 @@ pub fn settle(reserve: u128, allocation: u128, claims: &[ClaimIn], fee_bps: u128
         fee_shares,
         fee_remainder,
         slash,
+        slash_shares,
         auditor_return,
     }
 }
@@ -161,6 +180,7 @@ mod tests {
             allocation,
             "allocation conserved"
         );
+        assert!(p.slash_to_victims() <= p.slash, "slash conserved");
         assert!(p.reserve_draw + p.slash <= p.payable.max(p.reserve_draw + p.slash));
     }
 
@@ -188,8 +208,9 @@ mod tests {
         assert_eq!(p.victim_shares, vec![100 * U]);
         assert_eq!(p.fee_pool, 0); // min(12, 0)
         assert_eq!(p.slash, 20 * U);
+        assert_eq!(p.slash_shares, vec![20 * U]); // the victim is made whole
         assert_eq!(p.auditor_return, 180 * U);
-        assert_eq!(p.to_treasury(), 20 * U);
+        assert_eq!(p.to_treasury(), 0);
         conserve(100 * U, 200 * U, &p);
     }
 
@@ -200,6 +221,7 @@ mod tests {
         assert_eq!(p.reserve_draw, 100 * U);
         assert_eq!(p.victim_shares, vec![100 * U]);
         assert_eq!(p.slash, 200 * U);
+        assert_eq!(p.slash_shares, vec![200 * U]);
         assert_eq!(p.auditor_return, 0);
         conserve(100 * U, 200 * U, &p);
     }
@@ -211,6 +233,8 @@ mod tests {
         assert_eq!(p.victim_shares, vec![25 * U, 75 * U]);
         assert_eq!(p.victim_remainder, 0);
         assert_eq!(p.slash, 20 * U);
+        assert_eq!(p.slash_shares, vec![5 * U, 15 * U]); // unpaid 5 and 15
+        assert_eq!(p.to_treasury(), 0);
         conserve(100 * U, 200 * U, &p);
     }
 
@@ -251,6 +275,25 @@ mod tests {
         assert_eq!(p.victim_remainder, 40 * U);
         // fee: 10% of 80 = 8, split 4/4 between both challengers
         assert_eq!(p.fee_shares, vec![4 * U, 4 * U]);
+        conserve(100 * U, 100 * U, &p);
+    }
+
+    /// The slash only tops up unpaid arbitrated harm; a predicate claim's
+    /// part of the slash still goes to the treasury.
+    #[test]
+    fn slash_beyond_unpaid_harm_goes_to_treasury() {
+        let claims = [
+            arb(40 * U),
+            ClaimIn {
+                weight: 100 * U,
+                arbitrated: false,
+            },
+        ];
+        let p = settle(100 * U, 100 * U, &claims, 1000);
+        assert_eq!(p.victim_shares, vec![40 * U, 0]);
+        assert_eq!(p.slash, 40 * U);
+        assert_eq!(p.slash_shares, vec![0, 0]);
+        assert_eq!(p.to_treasury(), 60 * U + 40 * U);
         conserve(100 * U, 100 * U, &p);
     }
 
