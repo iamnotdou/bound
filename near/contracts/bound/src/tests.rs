@@ -1731,3 +1731,26 @@ fn large_coverage_settles_without_overflow() {
     assert_eq!(s.slash.0, 0);
 }
 
+/// minor: a window that moves no funds on a drained Invalid cert does not
+/// overwrite the original fraud settlement with an empty hygiene record.
+#[test]
+fn empty_second_settlement_keeps_the_first() {
+    let mut t = verified();
+    let id = t.harm("service.test", 300 * U);
+    t.resolve(id, true, 300 * U);
+    t.now += 90;
+    let s = t.close().unwrap();
+    assert_eq!(s.mode, "fraud");
+    assert_eq!(s.victim_paid.0, 300 * U);
+    assert_eq!(t.cert0().reserve_locked.0 + t.cert0().allocation.0, 0);
+    let id = t.harm("service.test", 50 * U);
+    t.resolve(id, true, 50 * U);
+    assert_eq!(t.c.get_challenge(id).unwrap().harm.0, 0);
+    t.now += 90;
+    let s2 = t.close().unwrap();
+    assert_eq!(s2.mode, "hygiene");
+    assert_eq!(s2.hygiene_bounty_paid.0, 0);
+    let kept = t.cert0().settlement.unwrap();
+    assert_eq!(kept.mode, "fraud");
+    assert_eq!(kept.victim_paid.0, 300 * U);
+}

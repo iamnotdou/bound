@@ -1417,7 +1417,13 @@ impl Bound {
         }
         c.halted = true;
         c.status = CertStatus::Invalid;
-        c.settlement = Some(s.clone());
+        // A later window that moved no funds (e.g. a Harm claim proven at 0
+        // against a cert with no coverage left) keeps the earlier record; the
+        // `settle` event still logs it.
+        let moved = s.payable.0 > 0 || s.hygiene_bounty_paid.0 > 0;
+        if c.settlement.is_none() || moved {
+            c.settlement = Some(s.clone());
+        }
         self.put_cert(c);
         emit("settle", json!({ "cert_id": cert_id, "settlement": s }));
         Some(s)
