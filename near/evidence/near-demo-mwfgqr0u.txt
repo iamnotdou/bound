@@ -1,0 +1,169 @@
+Bound on NEAR testnet: demo run mwfgqr0u (started 2026-11-13T21:02:39.438Z)
+Every [OK] line was checked by this script; any FAIL makes it exit 1.
+
+== Act 1: actors, mock USDC, registration
+  contract   bound-v1.boundproto-nh26.testnet
+  token      usdc.boundproto-nh26.testnet (mock USDC, open mint, play money)
+  treasury   treasury.boundproto-nh26.testnet   arbiter arbiter.boundproto-nh26.testnet
+  faucet refused (faucet 429: Rate limit exceeded, retry in 11 hours.); falling back to boundproto-nh26.testnet
+  operator   bound-operator-mwfgqr0u.testnet (registrar, 0.5 NEAR from boundproto-nh26.testnet) https://testnet.nearblocks.io/address/bound-operator-mwfgqr0u.testnet tx Dc4xkQ5B8bahszjn4tgF9SJWjNWVDAw9dg49CcCPxqAc
+  agent      bound-agent-mwfgqr0u.testnet (registrar, 0.5 NEAR from boundproto-nh26.testnet) https://testnet.nearblocks.io/address/bound-agent-mwfgqr0u.testnet tx G6JtwozYiR3HqXuWY47sEzMmbKmMLVrXzewYsh7TwSzJ
+  auditor    bound-auditor-mwfgqr0u.testnet (registrar, 0.5 NEAR from boundproto-nh26.testnet) https://testnet.nearblocks.io/address/bound-auditor-mwfgqr0u.testnet tx 9G9P1xeYk5gPdGbPcsnTBU8Na3sG7gUypLGYTJBDfFzS
+  challenger bound-challenger-mwfgqr0u.testnet (registrar, 0.5 NEAR from boundproto-nh26.testnet) https://testnet.nearblocks.io/address/bound-challenger-mwfgqr0u.testnet tx ELj2aMRAxVqgzASx49xUBfd9X5DCZLeHGt4bMQnan5kN
+  service    bound-service-mwfgqr0u.testnet (registrar, 0.5 NEAR from boundproto-nh26.testnet) https://testnet.nearblocks.io/address/bound-service-mwfgqr0u.testnet tx CVtw3Yey5e3gGtXsM8LQs7tLdZgMV1XydNLeJXaSuTA9
+  agent2     bound-agent2-mwfgqr0u.testnet (registrar, 0.5 NEAR from boundproto-nh26.testnet) https://testnet.nearblocks.io/address/bound-agent2-mwfgqr0u.testnet tx 7iVmzpmsN3RvCxsAphJ5fZi9dqRPgEG2quX92KckpkCd
+[OK  ] mint 1330 mUSDC to bound-operator-mwfgqr0u.testnet: succeeded
+       tx https://testnet.nearblocks.io/txns/286wrpbgUBPBhRNB9sgwwx8yTNqjhTHX1bsqGbemSNR3
+[OK  ] mint 600 mUSDC to bound-auditor-mwfgqr0u.testnet: succeeded
+       tx https://testnet.nearblocks.io/txns/6dgE2n4HHsXVThVCfwcoATHsokGNWkmmJFUAcy2reqwg
+[OK  ] mint 50 mUSDC to bound-challenger-mwfgqr0u.testnet: succeeded
+       tx https://testnet.nearblocks.io/txns/8cPXs2eYHXpkM5RbnvVJJmRnjQnzTsGUhMopwrpYCs6N
+[OK  ] mint 10 mUSDC to bound-service-mwfgqr0u.testnet: succeeded
+       tx https://testnet.nearblocks.io/txns/eBcczm7XfJZ9JiDrj9EU4j9ck7BwUUNuDMU67aZjbXH
+[OK  ] bound-operator-mwfgqr0u.testnet storage_deposit on bound (0.01 NEAR): succeeded
+       tx https://testnet.nearblocks.io/txns/BZULGpXxNvFS5DyNbK41SotiifRA9j46pENyhMsaaGwt
+[OK  ] bound-auditor-mwfgqr0u.testnet storage_deposit on bound (0.01 NEAR): succeeded
+       tx https://testnet.nearblocks.io/txns/788RC9PE4Gsp7qRWF1Z3pEDBuLTkvDcv9JmQbxUixpqW
+[OK  ] bound-challenger-mwfgqr0u.testnet storage_deposit on bound (0.01 NEAR): succeeded
+       tx https://testnet.nearblocks.io/txns/AkixqCUn8iMArZ7EiJ4WojwyoiyJDVDQW4iWtQeqD5gx
+[OK  ] bound-service-mwfgqr0u.testnet storage_deposit on bound (0.01 NEAR): succeeded
+       tx https://testnet.nearblocks.io/txns/9Y3zyrALANHVnKjSe5LJjKajdNZtKKVtAKvs6KUCC4oX
+
+== Act 2: stake, publish, accept, fund, attest, verify
+[OK  ] auditor stakes 600 via ft_transfer_call: succeeded
+       tx https://testnet.nearblocks.io/txns/9WVCCBQMAQGwTyeYJ5odBhivKXn4Tjj3ALdytCQF1xZw
+[OK  ] operator deposits 1300 via ft_transfer_call: succeeded
+       tx https://testnet.nearblocks.io/txns/9PN5ANeag1cRrp5wPzgR8fcqowqoey8wsp3S2Y69PS1H
+[OK  ] challenger deposits 50: succeeded
+       tx https://testnet.nearblocks.io/txns/5tcjpC3kZLykoQEhKPf1p3AstiDtqJpov8EnmZJxJMyr
+[OK  ] service deposits 10 (for its claim bond): succeeded
+       tx https://testnet.nearblocks.io/txns/GiZx5FxkCXqkCLqPEDVGrkGwFmnt8WfCZLjK3cv8ZkHZ
+[OK  ] assert auditor free stake: 600
+[OK  ] operator publishes cert: bound 150, reserve 100, float cap 20, allowlist [service], premium 3, expires +1h: succeeded
+       tx https://testnet.nearblocks.io/txns/3zSaNjvRKr7hTTnpoc7WjBuHw1PpJ2hyBxim9p4yvv43
+       cert_id 5
+[OK  ] agent accepts (its full-access key, the last time it is used): succeeded
+       tx https://testnet.nearblocks.io/txns/7UNmLf6z5zp6RJfrhEEnF1YZLt19vnadNXv2d9iu6Gp6
+[OK  ] operator funds reserve 100: succeeded
+       tx https://testnet.nearblocks.io/txns/F2jo3mtnRLAkz1JVo1vMxErLJg5AewE1Jwksg1Fxtsb5
+[OK  ] operator funds float 20: succeeded
+       tx https://testnet.nearblocks.io/txns/FTjGM424RARPEDFgfZEC5E9ZtunaEC3xwBXExLPFQAwi
+[OK  ] auditor attests, locking 200 of its stake behind this cert: succeeded
+       tx https://testnet.nearblocks.io/txns/AfmgeEk6R97Nb7TmyZR8jcWm6nYJMPT8SCBHxHiMm2GX
+  verify(bound-agent-mwfgqr0u.testnet) -> cert 5 Verified | agent bound-agent-mwfgqr0u.testnet | bound 150 | reserve 100/100 | auditor bound-auditor-mwfgqr0u.testnet allocation 200 | spent 0 float 20/20 | expires 2026-11-13T22:03:57.000Z
+[OK  ] assert verify status: Verified
+[OK  ] assert premium: auditor balance +2.7: 2.7
+[OK  ] assert premium: treasury +0.3: 0.3
+[OK  ] assert operator balance 1300 - 3 - 100 - 20: 1177
+
+== Act 3: confine the agent to one function-call key; the gate
+[OK  ] agent adds a function-call key: receiver bound-v1.boundproto-nh26.testnet, methods ["pay"], allowance 0.25 NEAR (gas only): succeeded
+       tx https://testnet.nearblocks.io/txns/2QQppDKf13ixTtp4dFoEXP5CJdMvdmQbJwX4U873g7iG
+[OK  ] agent DELETES its full-access key: succeeded
+       tx https://testnet.nearblocks.io/txns/BADPtdNL9dhppqW9CvqBmtt16XzjGFzR2T12C5Vuvvth
+  view_access_key_list(bound-agent-mwfgqr0u.testnet):
+    [{"access_key":{"nonce":277562786000000,"permission":{"FunctionCall":{"allowance":"250000000000000000000000","method_names":["pay"],"receiver_id":"bound-v1.boundproto-nh26.testnet"}}},"public_key":"ed25519:FSNNbBQSXPq1TKNrDKhEwWYhRUJ5dDqtoj2ihFiudZQr"}]
+[OK  ] assert agent has exactly one key: 1
+[OK  ] assert that key is FunctionCall scoped to the bound contract: bound-v1.boundproto-nh26.testnet
+[OK  ] assert its only method is pay: ["pay"]
+  gate <- bound-agent2-mwfgqr0u.testnet (no certificate): 403 no Bound certificate for this agent
+[OK  ] assert gate refuses an uncertified agent: 403
+[OK  ] agent pays service 5 through bound pay (the function-call key, no deposit): succeeded
+       tx https://testnet.nearblocks.io/txns/C82AGLZSwJEA9a7t2P35vwaLCwqXj1mECAwbcXLSukpn
+  gate <- bound-agent-mwfgqr0u.testnet with payment C82AGLZSwJEA9a7t2P35vwaLCwqXj1mECAwbcXLSukpn: 200 served (prepaid through Bound pay)
+[OK  ] assert gate serves the prepaid request: 200
+  gate <- same payment hash again: 409 payment C82AGLZSwJEA9a7t2P35vwaLCwqXj1mECAwbcXLSukpn already used at 2026-11-13T21:04:28.500Z
+[OK  ] assert gate refuses a replayed payment hash: 409
+  gate <- bound-agent-mwfgqr0u.testnet asks for 120 on credit: 200 served on credit (limit was 150) (inv-1)
+[OK  ] assert gate serves the certified agent on credit: 200
+
+== Act 4: a prompt-injected agent tries to drain
+[OK  ] agent pays 50 to service (float is 15): rejected: FloatExceeded: amount 50000000 > float 15000000
+       tx https://testnet.nearblocks.io/txns/GpZfQ1PVJCfZCUonWesK1wXJNjL2wjMNszV1tTyiRYbz
+[OK  ] agent pays 10 to bound-attacker-mwfgqr0u.testnet: rejected: RecipientNotAllowed: bound-attacker-mwfgqr0u.testnet is not on the operator allowlist
+       tx https://testnet.nearblocks.io/txns/3awsZd9GUVyRANEtMf4AaFk7DcYtw5rhEXEwY8qhrkqR
+[OK  ] same key calls ft_transfer on the token: rejected: AccessKeyDepositWithFunctionCallActionError: Deposit is not allowed with function call
+       no transaction exists: the network refused it before execution
+       refused by NEAR itself: a function-call key cannot attach a deposit, and ft_transfer needs 1 yocto
+[OK  ] same key calls mint on the token (no deposit needed): rejected: AccessKeyReceiverMismatchActionError: Access key receiver bound-v1.boundproto-nh26.testnet does not match transaction receiver usdc.boundproto-nh26.testnet
+       no transaction exists: the network refused it before execution
+       refused by NEAR itself: the key may only call the bound contract
+[OK  ] same key calls bound withdraw (needs 1 yocto): rejected: AccessKeyDepositWithFunctionCallActionError: Deposit is not allowed with function call
+       no transaction exists: the network refused it before execution
+       refused by NEAR itself: no deposit from a function-call key (and withdraw is not in its method list)
+[OK  ] same key sends 0.01 NEAR to the attacker: rejected: AccessKeyRequiresFullAccessActionError: Access key requires full access
+       no transaction exists: the network refused it before execution
+       refused by NEAR itself: a function-call key cannot sign a transfer
+[OK  ] operator halts the cert: succeeded
+       tx https://testnet.nearblocks.io/txns/78GcZXHzAr4RsTSNjA6HzYmMPcsCL12TuATcbrqaqsCY
+[OK  ] agent pays 1 to service while halted: rejected: CertHalted: the operator halted this certificate
+       tx https://testnet.nearblocks.io/txns/8obtmcCiVCdHrQSuwmQJwDv1e7TDcuZpsAPZDVTAqCw4
+  the agent never pays invoice inv-1 (120 USDC)
+
+== Act 5: a false trustless claim is rejected in the same transaction
+[OK  ] challenger files InsufficientReserve (bond 10) against a fully funded cert: succeeded
+       tx https://testnet.nearblocks.io/txns/4DHoVDTFhbUBFJAezmYjv9NccsCRpJoST6AQSbW4NAbH
+[OK  ] assert verdict: Rejected
+[OK  ] assert bond forfeited to treasury (+10): 10
+[OK  ] assert challenger balance 50 - 10: 40
+
+== Act 6: the service claims its unpaid invoice; the arbiter decides
+[OK  ] service files Harm 120 citing near/evidence/gate-mwfgqr0u-invoices.json#inv-1 (bond 10): succeeded
+       tx https://testnet.nearblocks.io/txns/9KcoUx9k8vifu4vpWqEAUcdw49YoFbDDk3xae8xY8kLE
+[OK  ] anyone tries to close the window right away: rejected: WindowOpen: closes at 1794603979 (now 1794603893)
+       tx https://testnet.nearblocks.io/txns/3mNipy5ZtQdscLnbYs6K9bx48WV8MRaVfLYpdezuLThU
+[OK  ] arbiter resolves: proven, harm 120: succeeded
+       tx https://testnet.nearblocks.io/txns/2PiycH3yGEjc6suXt4sjqcU1drWQfcX4PdKwQKBxm5nM
+[OK  ] assert verify status: Challenged
+[OK  ] operator resumes (so the next refusal is the freeze, not the halt): succeeded
+       tx https://testnet.nearblocks.io/txns/Gd8N7Lb6rYUTmJ45ktsCiQTvU6nFnM3tBvgcLZQ2xHhq
+[OK  ] agent pays 1 while the claim window is open: rejected: CertFrozen: a claim window is open; payments are suspended
+       tx https://testnet.nearblocks.io/txns/8EZK63GGpkApobASGDGxY6yQU7VQwGiek8wjEbMAihhW
+
+== Act 7: the window closes; one atomic settlement
+  window closes at 2026-11-13T21:06:19.000Z (chain time); waiting
+[OK  ] challenger (anyone) calls close_window: succeeded
+       tx https://testnet.nearblocks.io/txns/FFxMuwRh7F1RNJUUJ5G2XtGj9HxdFKFZLdmV5RAHQX8c
+  settlement: {"mode":"fraud","settled_at":1794603988,"admitted":1,"payable":"120000000","reserve_draw":"100000000","victim_paid":"100000000","fee_paid":"0","slash":"20000000","to_treasury":"20000000","auditor_returned":"180000000","hygiene_bounty_paid":"0"}
+[OK  ] assert cert status: Invalid
+[OK  ] assert payable = min(120, 100 + 200): 120
+[OK  ] assert victim paid from the reserve: 100
+[OK  ] assert challenger fee = min(12, reserve left 0): 0
+[OK  ] assert auditor slashed only the 20 the reserve could not cover: 20
+[OK  ] assert rest of the allocation back to the auditor: 180
+[OK  ] assert treasury +20 (the slash): 20
+[OK  ] assert treasury over the run: 0.3 premium + 10 bond + 20 slash: 30.3
+[OK  ] assert auditor free stake 400 + 180: 580
+[OK  ] assert auditor allocated stake: 0
+[OK  ] assert unspent float 15 back to the operator: 15
+[OK  ] assert service bound balance: 5 prepaid + 100 compensation + 10 bond back: 115
+[OK  ] service withdraws 115 to its token account: succeeded
+       tx https://testnet.nearblocks.io/txns/25HU1vNdgptmrjmS6y9tXrBBufGHcqqfRrVSPtVkATvL
+[OK  ] assert withdraw callback reports success: true
+[OK  ] assert service ft_balance_of on the token rose by 115: 115
+[OK  ] assert service bound balance after withdraw: 0
+  The service lost 120 and recovered 100: victims are covered up to the reserve.
+  The auditor's 20 slash goes to the treasury, never to a claimant (anti self-dealing).
+  gate <- bound-agent-mwfgqr0u.testnet after settlement: 403 certificate status is Invalid
+[OK  ] assert gate refuses the settled agent: 403
+
+== Act 8: a second cert left Verified for judging (agent2, expires 2026-11-30)
+[OK  ] operator publishes cert 2 for agent2: bound 50, reserve 30, float cap 10, premium 1: succeeded
+       tx https://testnet.nearblocks.io/txns/22xv7eSDjxqsfft4VFdLFkHQi2cFf3YxqiMvRo93XPae
+[OK  ] agent2 accepts: succeeded
+       tx https://testnet.nearblocks.io/txns/21dP8FoZuy3eovKmaHALEUhcMb2FBZad8qAWp8yQbwEh
+[OK  ] operator funds reserve 30 (ft_transfer_call with the reserve action): succeeded
+       tx https://testnet.nearblocks.io/txns/6fiGv4rqnvTG3DM6fTDZVrYCxVTxAN3Z4tQKtF1N2LeP
+[OK  ] operator funds float 10: succeeded
+       tx https://testnet.nearblocks.io/txns/9d6GxfsPQAfyQc5vpUhRMHCYZ5rMdPtk3du3UKSdXTtJ
+[OK  ] auditor attests cert 2 with 100: succeeded
+       tx https://testnet.nearblocks.io/txns/C8wMnchfjNek1TvAADVJNSCney8UeHFQURPyDLkFzgpx
+  verify(bound-agent2-mwfgqr0u.testnet) -> cert 6 Verified | agent bound-agent2-mwfgqr0u.testnet | bound 50 | reserve 30/30 | auditor bound-auditor-mwfgqr0u.testnet allocation 100 | spent 0 float 10/10 | expires 2026-11-30T00:00:00.000Z
+[OK  ] assert cert 2 status: Verified
+  gate <- bound-agent2-mwfgqr0u.testnet now certified, no payment: 402 payment required: 5 USDC via Bound pay to bound-service-mwfgqr0u.testnet
+[OK  ] assert gate now asks agent2 to pay instead of refusing: 402
+
+== Summary: 41 steps (37 transactions), 34 assertions
+   failed steps: 0, failed assertions: 0
+   re-check every hash without NearBlocks: pnpm near:evidence near/evidence/near-demo-mwfgqr0u.json
+   evidence: near/evidence/near-demo-mwfgqr0u.txt and .json
