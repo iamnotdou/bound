@@ -43,7 +43,10 @@
     "wallet-smoke": "ts-node --transpile-only --project scripts/tsconfig.json scripts/wallet-smoke.ts",
     "test:e2e": "pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm wallet-smoke",
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm format:contracts && pnpm lint:contracts && pnpm test:contracts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "near:mcp": "pnpm --filter @bound/near run mcp",
+    "near:mcp-smoke": "pnpm --filter @bound/near run mcp-smoke",
+    "near:agent-mcp": "pnpm --filter @bound/near run agent-mcp"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,mjs,cjs,json,md,css,yml,yaml}": [

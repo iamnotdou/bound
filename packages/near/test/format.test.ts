@@ -119,3 +119,30 @@ describe("tx outcomes", () => {
     expect(o.value).toBe(7);
   });
 });
+
+describe("isConfined", () => {
+  const C = "bound-v1.x.testnet";
+  const fc = (receiver_id: string, method_names: string[]) => ({
+    public_key: "ed25519:k",
+    access_key: {
+      nonce: 1,
+      permission: { FunctionCall: { allowance: null, receiver_id, method_names } },
+    },
+  });
+  it("only pay keys on the Bound contract count as confined", async () => {
+    const { isConfined } = await import("../src/format.js");
+    expect(isConfined([fc(C, ["pay"])], C)).toBe(true);
+    expect(isConfined([], C)).toBe(false);
+    expect(isConfined([fc(C, ["pay", "withdraw"])], C)).toBe(false);
+    expect(isConfined([fc("usdc.x.testnet", ["pay"])], C)).toBe(false);
+    expect(
+      isConfined(
+        [
+          fc(C, ["pay"]),
+          { public_key: "ed25519:f", access_key: { nonce: 1, permission: "FullAccess" } },
+        ],
+        C,
+      ),
+    ).toBe(false);
+  });
+});

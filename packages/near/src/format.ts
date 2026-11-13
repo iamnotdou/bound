@@ -116,3 +116,37 @@ export function describeCert(v: CertViewJson): string {
     `expires ${new Date(v.expires_at * 1000).toISOString()}`,
   ].join(" | ");
 }
+
+/** One entry of RPC `view_access_key_list`. */
+export interface AccessKeyInfo {
+  public_key: string;
+  access_key: {
+    nonce: number;
+    permission:
+      | "FullAccess"
+      | {
+          FunctionCall: {
+            allowance: string | null;
+            receiver_id: string;
+            method_names: string[];
+          };
+        };
+  };
+}
+
+/** True when every key is a FunctionCall key to `contractId` limited to `pay`:
+ *  then NEAR itself refuses any transfer, token call or deposit by the agent. */
+export function isConfined(keys: AccessKeyInfo[], contractId: string): boolean {
+  return (
+    keys.length > 0 &&
+    keys.every((k) => {
+      const p = k.access_key.permission;
+      return (
+        p !== "FullAccess" &&
+        p.FunctionCall.receiver_id === contractId &&
+        p.FunctionCall.method_names.length > 0 &&
+        p.FunctionCall.method_names.every((m) => m === "pay")
+      );
+    })
+  );
+}

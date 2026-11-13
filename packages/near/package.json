@@ -12,10 +12,15 @@
     "verify": "tsx scripts/verify.ts",
     "evidence": "tsx scripts/evidence.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ."
+    "test": "vitest run --root .",
+    "mcp": "tsx scripts/mcp.ts",
+    "mcp-smoke": "tsx scripts/mcp-smoke.ts",
+    "agent-mcp": "tsx scripts/agent-mcp-demo.ts"
   },
   "dependencies": {
-    "near-api-js": "7.5.3"
+    "near-api-js": "7.5.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.56"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
