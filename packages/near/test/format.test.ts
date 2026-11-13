@@ -82,6 +82,13 @@ describe("cert views", () => {
     expect(assess(view({ status: "Invalid" })).ok).toBe(false);
     expect(assess(view({ halted: true })).ok).toBe(false);
   });
+  it("follows the contract's deal flag when present", () => {
+    expect(assess(view({ deal: true })).ok).toBe(true);
+    expect(assess(view({ deal: false, float: "0" }))).toEqual({
+      ok: false,
+      reason: "certificate has no float to pay from",
+    });
+  });
   it("describes a cert in one line", () => {
     expect(describeCert(view())).toContain("reserve 100/100");
   });

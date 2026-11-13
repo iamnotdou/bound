@@ -88,7 +88,7 @@ export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
     "near_verify_agent",
     {
       description:
-        "Before dealing with a NEAR agent account, read its Bound certificate: deal only if the result says deal=true (status Verified, not halted). Returns the reserve, auditor stake, coverage and spend meter behind the agent. Also call near_check_agent_keys: verify alone does not prove the agent is confined.",
+        "Before dealing with a NEAR agent account, read its Bound certificate: deal only if the result says deal=true (status Verified, not halted, float > 0). Returns the reserve, auditor stake, coverage and spend meter behind the agent. Also call near_check_agent_keys: verify alone does not prove the agent is confined.",
       inputSchema: { agent: accountId },
       annotations: { readOnlyHint: true },
     },

@@ -95,6 +95,8 @@ export interface CertViewJson {
   open_claims: number;
   settlement: Record<string, unknown> | null;
   now: number;
+  /** The contract's own verdict: Verified, not halted and float > 0. */
+  deal?: boolean;
 }
 
 /** A counterparty's decision from a cert view: deal only with "Verified". */
@@ -103,6 +105,8 @@ export function assess(view: CertViewJson | null | undefined): { ok: boolean; re
   if (view.status !== "Verified")
     return { ok: false, reason: `certificate status is ${view.status}` };
   if (view.halted) return { ok: false, reason: "certificate halted by its operator" };
+  // Newer contracts also require float > 0; trust their verdict when present.
+  if (view.deal === false) return { ok: false, reason: "certificate has no float to pay from" };
   return { ok: true, reason: "Verified" };
 }
 
