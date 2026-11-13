@@ -178,8 +178,10 @@ development runs and carry no evidence. Do not use bound-v1.
    (`CertFrozen`).
 7. After 90 s anyone calls `close_window`. Payable is 120. The victim gets 120:
    100 from the reserve and 20 from the auditor's slash. The challenger fee is
-   0 because the reserve is exhausted, 180 goes back to the auditor, the
-   treasury gets 0, and the cert is Invalid. The service withdraws 135 (5
+   0 because the reserve is exhausted, the treasury gets 0, and the cert is
+   Invalid. The unslashed 180 stays allocated to the cert, still answering
+   later Harm claims, and goes back to the auditor at the settlement deadline
+   (expires_at + post_expiry) via `release_allocation`. The service withdraws 135 (5
    prepaid + 120 + 10 bond back) and its token balance rises by 135.
 8. A second cert (cert 1, agent2, expires 2026-11-30) is left Verified for
    judging.

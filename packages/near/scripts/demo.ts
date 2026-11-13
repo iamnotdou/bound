@@ -736,7 +736,11 @@ async function main() {
     usdc("20"),
   );
   check("the whole slash went to the victim", BigInt(s.slash_to_victims ?? 0), usdc("20"));
-  check("rest of the allocation back to the auditor", BigInt(s.auditor_returned ?? 0), usdc("180"));
+  check(
+    "unslashed allocation (released to the auditor at the deadline)",
+    BigInt(s.auditor_returned ?? 0),
+    usdc("180"),
+  );
   check("treasury +0 at settlement (nothing left over)", (await bal(treasury)) - t7, usdc("0"));
   check(
     "treasury over the run: 0.3 premium + 10 forfeited bond",
@@ -744,8 +748,10 @@ async function main() {
     usdc("10.3"),
   );
   const st = await stakeOf(auditor.accountId);
-  check("auditor free stake 400 + 180", st.free, usdc("580"));
-  check("auditor allocated stake", st.allocated, usdc("0"));
+  // The unslashed 180 stays locked behind cert 0 until its settlement deadline
+  // (expires_at + post_expiry); release_allocation then frees it (580 free).
+  check("auditor free stake unchanged until the deadline", st.free, usdc("400"));
+  check("unslashed 180 still allocated to cert 0 until the deadline", st.allocated, usdc("180"));
   check("unspent float 15 back to the operator", (await bal(operator.accountId)) - op7, usdc("15"));
   check(
     "service bound balance: 5 prepaid + 120 compensation + 10 bond back",
