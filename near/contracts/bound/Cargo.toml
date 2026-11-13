@@ -1,0 +1,33 @@
+[package]
+name = "bound"
+description = "Bound protocol on NEAR: agent certificates, reserve, auditor stake, spend router, claim window"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.22.0-rust-1.99.1"
+image_digest = "sha256:c9655eaf7436b90c87ea8b25739f91063032c5c30ba24cfeafe72c142943b5bb"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
+
+[dependencies]
+near-sdk.workspace = true
+
+[dev-dependencies]
+near-sdk = { workspace = true, features = ["unit-testing"] }
+near-sandbox = "0.4.0"
+near-api = "0.8"
+cargo-near-build = "0.11.0"
+tokio = { version = "1.12.0", features = ["full"] }
+testresult = "0.4.1"
+serde_json = "1"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(near)']
