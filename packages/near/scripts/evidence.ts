@@ -5,7 +5,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { testnetProvider, withRetry } from "../src/client.js";
+import { TESTNET_ARCHIVAL_RPCS, testnetProvider, withRetry } from "../src/client.js";
 import { EVIDENCE_DIR, REPO_ROOT } from "../src/deployment.js";
 
 interface Step {
@@ -25,7 +25,7 @@ async function main() {
         .filter((f) => /^near-demo-.*\.json$/.test(f))
         .map((f) => join(EVIDENCE_DIR, f));
   if (!files.length) throw new Error(`no evidence files in ${EVIDENCE_DIR}`);
-  const p = testnetProvider();
+  const p = testnetProvider(TESTNET_ARCHIVAL_RPCS);
   let bad = 0;
   for (const f of files) {
     const ev = JSON.parse(readFileSync(f, "utf8")) as {
@@ -41,6 +41,8 @@ async function main() {
         );
         continue;
       }
+      // Paced: the free archival tier answers -429 to bursts of ~40 lookups.
+      await new Promise((r) => setTimeout(r, 300));
       try {
         const r = (await withRetry(() =>
           p.viewTransactionStatus({

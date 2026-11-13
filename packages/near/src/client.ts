@@ -19,6 +19,11 @@ import { explorerTx } from "./format.js";
 // DEPRECATED" (checked 2026-11-13), so both entries are FastNEAR hostnames.
 export const TESTNET_RPCS = ["https://test.rpc.fastnear.com", "https://rpc.testnet.fastnear.com"];
 
+// Regular nodes garbage-collect transactions after a few epochs (about 2.5
+// days on testnet), and judging runs after the demo. Transaction lookups in
+// near:evidence ask an archival node first.
+export const TESTNET_ARCHIVAL_RPCS = ["https://archival-rpc.testnet.fastnear.com", ...TESTNET_RPCS];
+
 export const TGAS = 1_000_000_000_000n;
 export const ONE_YOCTO = 1n;
 export const MILLINEAR = 10n ** 21n;
