@@ -1660,3 +1660,51 @@ fn conflicted_victim_rejected() {
         assert!(e.contains("ConflictedVictim"), "{who}: {e}");
     }
 }
+
+fn transfers_to(who: &str) -> Vec<NearToken> {
+    near_sdk::test_utils::get_created_receipts()
+        .into_iter()
+        .filter(|r| r.receiver_id == a(who))
+        .flat_map(|r| r.actions)
+        .filter_map(|x| match x {
+            near_sdk::mock::MockAction::Transfer { deposit, .. } => Some(deposit),
+            _ => None,
+        })
+        .collect()
+}
+
+/// minor: excess NEAR attached to publish and challenge is refunded.
+#[test]
+fn excess_deposit_refunded() {
+    let mut t = funded();
+    t.ctx("operator.test", NearToken::from_near(1));
+    t.c.publish(
+        a("agent.test"),
+        U128(150 * U),
+        U128(100 * U),
+        t.now + 3600,
+        a("auditor.test"),
+        U128(20 * U),
+        None,
+        None,
+    );
+    assert_eq!(
+        transfers_to("operator.test"),
+        vec![NearToken::from_millinear(950)]
+    );
+    let mut t = verified();
+    t.ctx("challenger.test", NearToken::from_millinear(110));
+    t.c.challenge(
+        0,
+        Proof::Harm {
+            claimed: U128(U),
+            evidence_uri: "x".into(),
+        },
+        None,
+        U128(10 * U),
+    );
+    assert_eq!(
+        transfers_to("challenger.test"),
+        vec![NearToken::from_millinear(100)]
+    );
+}

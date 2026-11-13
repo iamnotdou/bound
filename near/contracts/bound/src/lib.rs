@@ -353,6 +353,16 @@ fn bps(amount: u128, bps: u16) -> u128 {
     amount.checked_mul(bps as u128).expect("overflow") / 10_000
 }
 
+/// Refund whatever was attached above `required` to the caller.
+fn refund_excess(required: NearToken) {
+    let excess = env::attached_deposit().saturating_sub(required);
+    if !excess.is_zero() {
+        Promise::new(env::predecessor_account_id())
+            .transfer(excess)
+            .detach();
+    }
+}
+
 fn assert_one_yocto() {
     require!(
         env::attached_deposit() == NearToken::from_yoctonear(1),
@@ -582,9 +592,10 @@ impl Bound {
     // ------------------------------------------------------------------
 
     /// Operator publishes a certificate for `agent`. Requires 0.05 NEAR
-    /// attached (state for the certificate, its meter and its window). An
-    /// optional `premium` is escrowed from the operator's balance now and paid
-    /// at attest (90% auditor, 10% treasury with the demo config).
+    /// attached (state for the certificate, its meter and its window); any
+    /// excess is refunded. An optional `premium` is escrowed from the
+    /// operator's balance now and paid at attest (90% auditor, 10% treasury
+    /// with the demo config).
     #[payable]
     #[allow(clippy::too_many_arguments)]
     pub fn publish(
@@ -673,6 +684,7 @@ impl Bound {
         // The deposit also prepays the agent index entry written at `accept`
         // and the window record written at the first claim.
         self.assert_storage_covered_with_reserve(before, PUBLISH_DEPOSIT, 400);
+        refund_excess(PUBLISH_DEPOSIT);
         emit(
             "publish",
             json!({ "cert_id": id, "operator": operator, "agent": agent, "auditor": auditor,
@@ -1001,10 +1013,10 @@ impl Bound {
     // ------------------------------------------------------------------
 
     /// File a claim against a Verified certificate, posting `bond` from the
-    /// caller's balance. Requires 0.01 NEAR attached. A trustless predicate
-    /// that is false at filing is rejected in the same call and the bond goes
-    /// to the treasury. Any other claim opens (or joins) the claim window and
-    /// freezes the certificate.
+    /// caller's balance. Requires 0.01 NEAR attached; any excess is refunded.
+    /// A trustless predicate that is false at filing is rejected in the same
+    /// call and the bond goes to the treasury. Any other claim opens (or
+    /// joins) the claim window and freezes the certificate.
     ///
     /// A settled (Invalid) certificate still accepts `Harm` claims until the
     /// settlement deadline: they are paid from what is left. New claims are
@@ -1115,6 +1127,7 @@ impl Bound {
             self.challenges.push(ch);
             self.challenges.flush();
             self.assert_storage_covered(before, CHALLENGE_DEPOSIT);
+            refund_excess(CHALLENGE_DEPOSIT);
             emit(
                 "challenge_rejected",
                 json!({ "challenge_id": id, "cert_id": cert_id, "challenger": challenger,
@@ -1157,6 +1170,7 @@ impl Bound {
         self.challenges.flush();
         self.windows.flush();
         self.assert_storage_covered(before, CHALLENGE_DEPOSIT);
+        refund_excess(CHALLENGE_DEPOSIT);
         emit(
             "challenge",
             json!({ "challenge_id": id, "cert_id": cert_id, "challenger": challenger,
