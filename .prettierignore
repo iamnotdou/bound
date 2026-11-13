@@ -28,3 +28,4 @@ Cargo.lock
 near/evidence/
 near/deployments/
 near/target/
+near/.demo-keys/
