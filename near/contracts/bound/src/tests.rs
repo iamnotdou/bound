@@ -1031,9 +1031,12 @@ fn two_victims_pro_rata() {
 fn arbiter_rejected_claim_forfeits_bond_window_reopens_cert() {
     let mut t = verified();
     let id = t.harm("service.test", 50 * U);
-    t.resolve(id, false, 0);
-    t.now += 90;
     let treasury0 = t.bal("treasury.test");
+    t.resolve(id, false, 0);
+    // Settled at rejection: bond to the treasury, slot freed.
+    assert_eq!(t.bal("treasury.test"), treasury0 + 10 * U);
+    assert!(t.c.get_window(0).unwrap().claims.is_empty());
+    t.now += 90;
     assert!(t.close().is_none());
     assert_eq!(t.bal("treasury.test"), treasury0 + 10 * U);
     assert_eq!(t.c.get_challenge(id).unwrap().verdict, Verdict::Rejected);
@@ -1561,4 +1564,74 @@ fn c1_tiny_fraud_settlement_keeps_liability_until_deadline() {
     t.ctx("auditor.test", yocto());
     assert_eq!(t.c.release_allocation(0).0, 178_900_000);
     assert_eq!(t.c.get_stake(a("auditor.test")).free.0, 478_900_000);
+}
+
+/// C2: an arbiter-rejected claim frees its slot at once (bond to the
+/// treasury), and a victim can still file after the deadline while the
+/// window opened before it is open.
+#[test]
+fn c2_rejected_claims_free_slots_and_late_victim_is_heard() {
+    let mut t = verified();
+    t.register("victim.test");
+    // 20: the refused filing below is not rolled back by the unit-test mock.
+    t.deposit("victim.test", 20 * U, "");
+    t.deposit("attacker.test", 160 * U, "");
+    let deadline = t.cert0().settlement_deadline;
+    t.now = deadline - 5;
+    for _ in 0..16 {
+        t.harm("attacker.test", 1);
+    }
+    let e = panics(|| {
+        harm_for(&mut t, "victim.test", None, 100 * U);
+    });
+    assert!(e.contains("WindowFull"), "{e}");
+    let treasury0 = t.bal("treasury.test");
+    for id in 0..16u64 {
+        t.resolve(id, false, 0);
+    }
+    assert_eq!(t.bal("treasury.test"), treasury0 + 160 * U);
+    assert!(t.c.get_window(0).unwrap().claims.is_empty());
+    t.now = deadline + 10; // past the deadline, window still open
+    let id = harm_for(&mut t, "victim.test", None, 100 * U);
+    t.resolve(id, true, 100 * U);
+    t.now = t.c.get_window(0).unwrap().closes_at;
+    let s = t.close().unwrap();
+    assert_eq!(s.victim_paid.0, 100 * U);
+    // No new window can open after the deadline.
+    let e = panics(|| {
+        harm_for(&mut t, "victim.test", None, U);
+    });
+    assert!(e.contains("SettlementDeadlinePassed"), "{e}");
+}
+
+/// C2: true trustless claims cannot squat a window either: one per kind.
+#[test]
+fn c2_duplicate_trustless_claim_refused() {
+    let mut t = verified();
+    t.now = T0 + 3600 + 61;
+    t.pay("agent.test", "service.test", 2 * U);
+    t.ctx("challenger.test", CHALLENGE_DEPOSIT);
+    t.c.challenge(0, Proof::ExpiredSpend, None, U128(10 * U));
+    let e = panics(|| {
+        t.ctx("challenger.test", CHALLENGE_DEPOSIT);
+        t.c.challenge(0, Proof::ExpiredSpend, None, U128(10 * U));
+    });
+    assert!(e.contains("DuplicateClaim"), "{e}");
+}
+
+/// minor: at now == deadline the collateral is releasable and no claim is
+/// accepted, so a claim never lands on released collateral.
+#[test]
+fn deadline_boundary_is_consistent() {
+    let mut t = verified();
+    let deadline = t.cert0().settlement_deadline;
+    t.now = deadline;
+    t.ctx("auditor.test", yocto());
+    assert_eq!(t.c.release_allocation(0).0, 200 * U);
+    let e = panics(|| {
+        t.harm("challenger.test", 150 * U);
+    });
+    assert!(e.contains("SettlementDeadlinePassed"), "{e}");
+    let e = panics(|| t.pay("agent.test", "service.test", U));
+    assert!(e.contains("SettlementDeadlinePassed"), "{e}");
 }

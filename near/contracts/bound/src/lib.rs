@@ -896,10 +896,10 @@ impl Bound {
                 "a claim window is open; payments are suspended",
             );
         }
-        if now_secs() > self.deadline(&c) {
+        if now_secs() >= self.deadline(&c) {
             fail(
                 "SettlementDeadlinePassed",
-                "no payments after the settlement deadline (unchallengeable)",
+                "no payments from the settlement deadline on (unchallengeable)",
             );
         }
         // Only the certificate `verify(agent)` reports can pay, so what a
@@ -1007,7 +1007,9 @@ impl Bound {
     /// freezes the certificate.
     ///
     /// A settled (Invalid) certificate still accepts `Harm` claims until the
-    /// settlement deadline: they are paid from what is left.
+    /// settlement deadline: they are paid from what is left. New claims are
+    /// accepted while `now < deadline`, or after it only into a window that
+    /// opened before the deadline and is still open.
     #[payable]
     pub fn challenge(
         &mut self,
@@ -1043,7 +1045,11 @@ impl Bound {
         }
         let now = now_secs();
         let deadline = self.deadline(&c);
-        if now > deadline {
+        let open_window = self.windows.get(&cert_id).cloned();
+        // From the deadline on, the collateral is releasable: only a window
+        // that opened before it, and is still open, takes more claims.
+        let window_open = open_window.as_ref().is_some_and(|w| now < w.closes_at);
+        if now >= deadline && !window_open {
             fail("SettlementDeadlinePassed", format!("deadline {deadline}"));
         }
         if bond.0 < self.config.min_challenge_bond.0 {
@@ -1110,13 +1116,27 @@ impl Bound {
             );
             return id;
         }
-        let mut w = self.windows.get(&cert_id).cloned().unwrap_or(Window {
+        let mut w = open_window.unwrap_or(Window {
             opened_at: now,
             closes_at: now + self.config.claim_window_secs,
             claims: vec![],
         });
         if w.claims.len() >= MAX_CLAIMS_PER_WINDOW {
             fail("WindowFull", "16 claims already filed in this window");
+        }
+        // A true trustless predicate settles the same way however many times
+        // it is filed: one per kind per window, so they cannot squat slots.
+        if !is_harm
+            && w.claims.iter().any(|id| {
+                self.challenges
+                    .get(*id as u32)
+                    .is_some_and(|x| x.proof == proof)
+            })
+        {
+            fail(
+                "DuplicateClaim",
+                "this predicate is already filed in the window",
+            );
         }
         // A claim filed late in a window extends it, so a late victim (and
         // the arbiter) always get at least a third of a window.
@@ -1140,7 +1160,8 @@ impl Bound {
     }
 
     /// The arbiter decides a `Harm` claim inside its open window.
-    /// `harm <= claimed`.
+    /// `harm <= claimed`. A rejected claim is settled at once: its bond goes
+    /// to the treasury and its window slot is freed for another claim.
     #[payable]
     pub fn resolve_by_arbiter(&mut self, challenge_id: u64, proven: bool, harm: U128) {
         assert_one_yocto();
@@ -1178,6 +1199,14 @@ impl Bound {
         ch.harm = if proven { harm.0 } else { 0 };
         let cert_id = ch.cert_id;
         let h = ch.harm;
+        if !proven {
+            let t = self.treasury.clone();
+            self.credit(&t, ch.bond);
+            ch.verdict = Verdict::Rejected;
+            let mut w = self.windows.get(&cert_id).cloned().expect("window");
+            w.claims.retain(|id| *id != challenge_id);
+            self.windows.insert(cert_id, w);
+        }
         self.challenges.replace(idx, ch);
         emit(
             "resolve",
@@ -1240,6 +1269,9 @@ impl Bound {
                 ch.verdict = Verdict::Unadjudicated;
                 self.challenges.replace(*id as u32, ch);
             } else if !ch.proven {
+                // Trustless claims that were false never enter a window, and
+                // arbiter-rejected claims leave it at `resolve_by_arbiter`.
+                // Kept as a guard: never reached.
                 self.credit(&treasury, ch.bond);
                 ch.verdict = Verdict::Rejected;
                 self.challenges.replace(*id as u32, ch);
