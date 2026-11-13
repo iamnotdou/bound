@@ -1059,6 +1059,12 @@ impl Bound {
             );
         }
         let victim = victim.unwrap_or_else(|| challenger.clone());
+        if victim == c.operator || victim == c.agent || victim == c.auditor {
+            fail(
+                "ConflictedVictim",
+                "the operator, agent and auditor cannot be the victim",
+            );
+        }
         self.assert_registered(&victim);
         self.debit(&challenger, bond.0);
 

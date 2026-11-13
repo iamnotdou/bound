@@ -1648,3 +1648,15 @@ fn huge_harm_capped_at_coverage() {
     let s = t.close().unwrap();
     assert_eq!(s.victim_paid.0, 300 * U);
 }
+
+/// minor: the victim cannot be the operator, the agent or the auditor.
+#[test]
+fn conflicted_victim_rejected() {
+    for who in ["operator.test", "agent.test", "auditor.test"] {
+        let mut t = verified();
+        let e = panics(|| {
+            harm_for(&mut t, "challenger.test", Some(who), U);
+        });
+        assert!(e.contains("ConflictedVictim"), "{who}: {e}");
+    }
+}
