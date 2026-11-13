@@ -1,0 +1,26 @@
+{
+  "name": "@bound/near",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bound on NEAR: typed client, testnet deploy, demo, verify, evidence and the agent gate. NEAR HACKATHON integration.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "deploy": "tsx scripts/deploy.ts",
+    "demo": "tsx scripts/demo.ts",
+    "status": "tsx scripts/status.ts",
+    "verify": "tsx scripts/verify.ts",
+    "evidence": "tsx scripts/evidence.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ."
+  },
+  "dependencies": {
+    "near-api-js": "7.5.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

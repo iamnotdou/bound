@@ -1,0 +1,118 @@
+// Pure helpers: amounts, explorer links, NEP-297 event parsing, cert views.
+// No network, so they are unit tested with vitest.
+
+export const USDC_DECIMALS = 6;
+export const USDC = 10n ** 6n;
+
+export const explorerTx = (hash: string) => `https://testnet.nearblocks.io/txns/${hash}`;
+export const explorerAccount = (id: string) => `https://testnet.nearblocks.io/address/${id}`;
+
+/** "12.5" -> 12500000n (USDC base units). */
+export function usdc(amount: string | number): bigint {
+  const s = String(amount).trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(s)) throw new Error(`invalid USDC amount: ${s}`);
+  const [whole, frac = ""] = s.split(".");
+  return BigInt(whole) * USDC + BigInt(frac.padEnd(USDC_DECIMALS, "0"));
+}
+
+/** 12500000n -> "12.5" */
+export function fmtUsdc(base: bigint | string): string {
+  const v = BigInt(base);
+  const neg = v < 0n;
+  const a = neg ? -v : v;
+  const whole = a / USDC;
+  const frac = (a % USDC).toString().padStart(USDC_DECIMALS, "0").replace(/0+$/, "");
+  return `${neg ? "-" : ""}${whole}${frac ? `.${frac}` : ""}`;
+}
+
+export interface BoundEvent {
+  standard: string;
+  version: string;
+  event: string;
+  data: Array<Record<string, unknown>>;
+}
+
+/** Parse every `EVENT_JSON:` log with standard "bound". */
+export function parseEvents(logs: string[]): BoundEvent[] {
+  const out: BoundEvent[] = [];
+  for (const l of logs) {
+    if (!l.startsWith("EVENT_JSON:")) continue;
+    try {
+      const e = JSON.parse(l.slice("EVENT_JSON:".length)) as BoundEvent;
+      if (e.standard === "bound") out.push(e);
+    } catch {
+      // not ours
+    }
+  }
+  return out;
+}
+
+export interface PayEvent {
+  cert_id: number;
+  agent: string;
+  to: string;
+  amount: bigint;
+  memo: string;
+}
+
+export function payEvents(logs: string[]): PayEvent[] {
+  return parseEvents(logs)
+    .filter((e) => e.event === "pay")
+    .flatMap((e) => e.data)
+    .map((d) => ({
+      cert_id: Number(d.cert_id),
+      agent: String(d.agent),
+      to: String(d.to),
+      amount: BigInt(String(d.amount)),
+      memo: String(d.memo ?? ""),
+    }));
+}
+
+/** JSON shape returned by `verify` / `get_cert`. Amounts are decimal strings. */
+export interface CertViewJson {
+  cert_id: number;
+  status: string;
+  operator: string;
+  agent: string;
+  auditor: string;
+  bound: string;
+  reserve_promised: string;
+  reserve_locked: string;
+  allocation: string;
+  premium: string;
+  float: string;
+  float_cap: string;
+  spent: string;
+  post_expiry_spent: string;
+  pay_count: number;
+  allowlist: string[] | null;
+  expires_at: number;
+  settlement_deadline: number;
+  halted: boolean;
+  window_closes_at: number | null;
+  open_claims: number;
+  settlement: Record<string, unknown> | null;
+  now: number;
+}
+
+/** A counterparty's decision from a cert view: deal only with "Verified". */
+export function assess(view: CertViewJson | null | undefined): { ok: boolean; reason: string } {
+  if (!view) return { ok: false, reason: "no Bound certificate for this agent" };
+  if (view.status !== "Verified")
+    return { ok: false, reason: `certificate status is ${view.status}` };
+  if (view.halted) return { ok: false, reason: "certificate halted by its operator" };
+  return { ok: true, reason: "Verified" };
+}
+
+/** One-line human summary of a cert view. */
+export function describeCert(v: CertViewJson): string {
+  return [
+    `cert ${v.cert_id} ${v.status}`,
+    `agent ${v.agent}`,
+    `bound ${fmtUsdc(v.bound)}`,
+    `reserve ${fmtUsdc(v.reserve_locked)}/${fmtUsdc(v.reserve_promised)}`,
+    `auditor ${v.auditor} allocation ${fmtUsdc(v.allocation)}`,
+    `spent ${fmtUsdc(v.spent)} float ${fmtUsdc(v.float)}/${fmtUsdc(v.float_cap)}`,
+    `expires ${new Date(v.expires_at * 1000).toISOString()}`,
+  ].join(" | ");
+}

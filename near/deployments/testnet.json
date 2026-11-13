@@ -1,0 +1,65 @@
+{
+  "network": "testnet",
+  "deployedAt": "2026-11-13T20:34:49.588Z",
+  "deployer": "boundproto-nh26.testnet",
+  "contracts": {
+    "bound": {
+      "accountId": "bound-v1.boundproto-nh26.testnet",
+      "wasmSha256": "dd0c98c308c2f4bf6e22862f79c7335e494de9deef4b39f7d770e371512f58d6",
+      "codeHash": "FstF2Tj8nHkco8AGLJ2gqfiAqdgaoTbgkpjaBLFCvJcD",
+      "wasmBytes": 289934
+    },
+    "token": {
+      "accountId": "usdc.boundproto-nh26.testnet",
+      "wasmSha256": "f40f5337da2aa21d6884a6c83bd930e8ebc9cb49a9e6634a2e66e7ca4dd2c674",
+      "codeHash": "HRi2r4HbNpjb9Z1p9gSXGXpiHG8kG372jK7Lf3S8NzjM",
+      "wasmBytes": 148990,
+      "note": "Mock USDC, 6 decimals, OPEN mint: testnet play money, not Circle USDC."
+    }
+  },
+  "accounts": {
+    "treasury": "treasury.boundproto-nh26.testnet",
+    "arbiter": "arbiter.boundproto-nh26.testnet",
+    "owner": "boundproto-nh26.testnet"
+  },
+  "config": {
+    "claim_window_secs": 90,
+    "post_expiry_secs": 300,
+    "grace_secs": 60,
+    "min_stake": "10000000",
+    "min_challenge_bond": "10000000",
+    "challenger_fee_bps": 1000,
+    "de_minimis_bps": 10,
+    "hygiene_bounty": "10000000",
+    "protocol_fee_bps": 1000
+  },
+  "rpc": ["https://test.rpc.fastnear.com", "https://rpc.testnet.near.org"],
+  "txs": [
+    {
+      "step": "deploy mock-usdc (create + deploy + new)",
+      "hash": "HuKMhoxcRwAMm7gcuyCSQCoKc1C5Ahux5jvCMxWCQyth",
+      "url": "https://testnet.nearblocks.io/txns/HuKMhoxcRwAMm7gcuyCSQCoKc1C5Ahux5jvCMxWCQyth"
+    },
+    {
+      "step": "create treasury account",
+      "hash": "E8sFpZo37sBmcDo9pSeGZNtCCfXrA1dQSyYN1DJWZamH",
+      "url": "https://testnet.nearblocks.io/txns/E8sFpZo37sBmcDo9pSeGZNtCCfXrA1dQSyYN1DJWZamH"
+    },
+    {
+      "step": "create arbiter account",
+      "hash": "6kDdHkCSYsdrcfQd5LnmVEMSb8P9TqkT28aD672kep4u",
+      "url": "https://testnet.nearblocks.io/txns/6kDdHkCSYsdrcfQd5LnmVEMSb8P9TqkT28aD672kep4u"
+    },
+    {
+      "step": "deploy bound (create + deploy + new)",
+      "hash": "9rboE9oaxPf6ZRVfduUcYe6ppTVKGU7JNSyxMfu8r7ux",
+      "url": "https://testnet.nearblocks.io/txns/9rboE9oaxPf6ZRVfduUcYe6ppTVKGU7JNSyxMfu8r7ux"
+    },
+    {
+      "step": "register bound on mock-usdc (storage_deposit)",
+      "hash": "9Df7dtgG55eqtb3JRoEqEgvaNBHGp9EB5tVg12qyqGxA",
+      "url": "https://testnet.nearblocks.io/txns/9Df7dtgG55eqtb3JRoEqEgvaNBHGp9EB5tVg12qyqGxA"
+    }
+  ],
+  "demoRuns": []
+}
