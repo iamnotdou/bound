@@ -964,9 +964,10 @@ fn demo_vector_harm_above_reserve() {
     // service: 10 minted - 10 bond + 5 paid + 120 compensation + 10 bond back
     assert_eq!(t.bal("service.test"), 135 * U);
     assert_eq!(t.bal("treasury.test"), treasury0);
+    // The unslashed 180 stays allocated until the settlement deadline.
     let st = t.c.get_stake(a("auditor.test"));
-    assert_eq!(st.allocated.0, 0);
-    assert_eq!(st.free.0, 300 * U + 180 * U);
+    assert_eq!(st.allocated.0, 180 * U);
+    assert_eq!(st.free.0, 300 * U);
     let v = t.c.verify(a("agent.test")).unwrap();
     assert_eq!(v.status, "Invalid");
     assert_eq!(v.reserve_locked.0, 0);
@@ -989,8 +990,9 @@ fn harm_below_reserve_no_slash_fee_from_reserve() {
     assert_eq!(s.auditor_returned.0, 200 * U);
     // 0 + 60 + 6 fee + 10 bond back
     assert_eq!(t.bal("service.test"), 76 * U);
-    // 34 left in the reserve for the operator to release
+    // 34 left in the reserve for the operator to release at the deadline
     assert_eq!(t.cert0().reserve_locked.0, 34 * U);
+    t.now = t.cert0().settlement_deadline;
     t.ctx("operator.test", yocto());
     assert_eq!(t.c.release_reserve(0).0, 34 * U); // float went back at settlement
 }
@@ -1092,13 +1094,17 @@ fn expired_spend_settles_in_hygiene_mode() {
 
 #[test]
 #[should_panic(expected = "NotChallengeable")]
-fn settled_cert_refuses_new_challenge() {
+fn settled_cert_refuses_new_predicate_challenge() {
     let mut t = verified();
     let id = t.harm("service.test", 120 * U);
     t.resolve(id, true, 120 * U);
     t.now += 90;
     t.close();
+    // A Harm claim is still accepted until the deadline (see the C1
+    // regressions); a trustless predicate is not.
     t.harm("challenger.test", U);
+    t.ctx("challenger.test", CHALLENGE_DEPOSIT);
+    t.c.challenge(0, Proof::InsufficientReserve, None, U128(10 * U));
 }
 
 #[test]
@@ -1276,7 +1282,8 @@ fn collateral_stays_locked_while_window_open() {
     assert_eq!(t.bal("service.test") - before, 50 * U + 5 * U + 10 * U);
 }
 
-/// B1: a settled certificate cannot be settled again.
+/// B1: a settled window cannot be settled again; a settled certificate is
+/// settled again only through a new window of Harm claims.
 #[test]
 fn close_window_refuses_settled_cert() {
     let mut t = verified();
@@ -1284,6 +1291,13 @@ fn close_window_refuses_settled_cert() {
     t.resolve(id, true, 50 * U);
     t.now += 90;
     t.close().unwrap();
+    let e = panics(|| {
+        t.close();
+    });
+    assert!(e.contains("NoOpenWindow"), "{e}");
+    t.now = t.cert0().settlement_deadline;
+    t.ctx("operator.test", yocto());
+    t.c.release_reserve(0);
     let e = panics(|| {
         t.close();
     });
@@ -1427,4 +1441,124 @@ fn superseded_cert_cannot_pay() {
     assert!(!t.cert0().deal);
     let e = panics(|| t.pay("agent.test", "service.test", U));
     assert!(e.contains("NotCurrentCert"), "{e}");
+}
+
+/// Demo cert without an allowlist, so the agent can pay an operator sybil.
+fn open_cert(t: &mut T) {
+    let id = t.publish(None);
+    t.accept(id);
+    t.ctx("operator.test", yocto());
+    t.c.fund_reserve(id, U128(100 * U));
+    t.ctx("auditor.test", yocto());
+    t.c.attest(id, U128(200 * U));
+}
+
+fn harm_for(t: &mut T, who: &str, victim: Option<&str>, claimed: u128) -> u64 {
+    t.ctx(who, CHALLENGE_DEPOSIT);
+    t.c.challenge(
+        0,
+        Proof::Harm {
+            claimed: U128(claimed),
+            evidence_uri: "x".into(),
+        },
+        victim.map(a),
+        U128(10 * U),
+    )
+}
+
+/// C1: a self-inflicted hygiene settlement does not end the operator's
+/// liability. Collateral stays locked until the deadline and a later victim
+/// is still paid from it.
+#[test]
+fn c1_hygiene_settlement_keeps_liability_until_deadline() {
+    let mut t = funded();
+    t.register("sybil.test");
+    t.register("victim.test");
+    t.deposit("sybil.test", 10 * U, "");
+    t.deposit("victim.test", 10 * U, "");
+    open_cert(&mut t);
+    // Shuttle 8 x 20 = 160 > bound 150 through the sybil (gross flow).
+    for _ in 0..8 {
+        t.ctx("operator.test", yocto());
+        t.c.fund_float(0, U128(20 * U));
+        t.pay("agent.test", "sybil.test", 20 * U);
+    }
+    t.ctx("sybil.test", CHALLENGE_DEPOSIT);
+    t.c.challenge(0, Proof::BoundExceeded, None, U128(10 * U));
+    t.now += 91;
+    let s = t.close().unwrap();
+    assert_eq!(s.mode, "hygiene");
+    let v = t.cert0();
+    assert_eq!(v.status, "Invalid");
+    assert!(v.halted);
+    assert!(!v.deal);
+    assert!(t.now + 3000 < v.settlement_deadline);
+    // Nothing leaves before the deadline.
+    let e = panics(|| {
+        t.ctx("operator.test", yocto());
+        t.c.release_reserve(0);
+    });
+    assert!(e.contains("Locked"), "{e}");
+    let e = panics(|| {
+        t.ctx("auditor.test", yocto());
+        t.c.release_allocation(0);
+    });
+    assert!(e.contains("Locked"), "{e}");
+    assert_eq!(t.c.get_stake(a("auditor.test")).allocated.0, 200 * U);
+    // A later victim is still heard and paid.
+    let id = harm_for(&mut t, "victim.test", None, 50 * U);
+    t.resolve(id, true, 50 * U);
+    t.now += 90;
+    let s = t.close().unwrap();
+    assert_eq!(s.mode, "fraud");
+    assert_eq!(s.victim_paid.0, 50 * U);
+    // 10 - 10 bond + 50 + 5 fee + 10 bond back
+    assert_eq!(t.bal("victim.test"), 65 * U);
+    // Trustless predicates cannot drain a settled cert again.
+    let e = panics(|| {
+        t.ctx("sybil.test", CHALLENGE_DEPOSIT);
+        t.c.challenge(0, Proof::BoundExceeded, None, U128(10 * U));
+    });
+    assert!(e.contains("NotChallengeable"), "{e}");
+    // After the deadline the rest comes back: 100 - 10 bounty - 50 - 5 fee.
+    t.now = t.cert0().settlement_deadline;
+    t.ctx("operator.test", yocto());
+    assert_eq!(t.c.release_reserve(0).0, 35 * U);
+    t.ctx("auditor.test", yocto());
+    assert_eq!(t.c.release_allocation(0).0, 200 * U);
+    assert_eq!(t.cert0().status, "Released");
+}
+
+/// C1, fraud variant: settling a tiny real harm does not free the rest of
+/// the collateral before the deadline.
+#[test]
+fn c1_tiny_fraud_settlement_keeps_liability_until_deadline() {
+    let mut t = verified();
+    t.register("victim.test");
+    t.deposit("victim.test", 10 * U, "");
+    let id = t.harm("service.test", U);
+    t.resolve(id, true, U);
+    t.now += 90;
+    let s = t.close().unwrap();
+    assert_eq!(s.victim_paid.0, U);
+    assert_eq!(t.cert0().reserve_locked.0, 98_900_000);
+    assert_eq!(t.cert0().allocation.0, 200 * U);
+    let e = panics(|| {
+        t.ctx("auditor.test", yocto());
+        t.c.release_allocation(0);
+    });
+    assert!(e.contains("Locked"), "{e}");
+    let id = harm_for(&mut t, "victim.test", None, 120 * U);
+    t.resolve(id, true, 120 * U);
+    t.now += 90;
+    let s = t.close().unwrap();
+    assert_eq!(s.victim_paid.0, 120 * U);
+    assert_eq!(s.slash.0, 21_100_000);
+    assert_eq!(s.auditor_returned.0, 178_900_000);
+    let st = t.c.get_stake(a("auditor.test"));
+    assert_eq!(st.allocated.0, 178_900_000);
+    t.now = t.cert0().settlement_deadline;
+    t.ctx("auditor.test", yocto());
+    assert_eq!(t.c.release_allocation(0).0, 178_900_000);
+    assert_eq!(t.c.get_stake(a("auditor.test")).free.0, 478_900_000);
 }

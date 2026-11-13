@@ -98,7 +98,8 @@ pub enum CertStatus {
     Accepted,
     /// Attested by the auditor; the agent may pay.
     Verified,
-    /// Settled against: dead.
+    /// Settled against: no more spending, but still answers Harm claims
+    /// and keeps what is left of its collateral until the deadline.
     Invalid,
     /// Collateral returned: dead.
     Released,
@@ -119,6 +120,9 @@ pub struct Settlement {
     /// Part of `slash` paid to victims (unpaid arbitrated harm first).
     pub slash_to_victims: U128,
     pub to_treasury: U128,
+    /// The allocation left unslashed. It stays locked behind the certificate
+    /// and returns to the auditor's free stake by `release_allocation` after
+    /// the settlement deadline (the field name predates that rule).
     pub auditor_returned: U128,
     pub hygiene_bounty_paid: U128,
 }
@@ -779,8 +783,10 @@ impl Bound {
     }
 
     /// After the settlement deadline (expires_at + post_expiry_secs) with no
-    /// open window, or at any time before attestation, or after settlement:
-    /// the operator takes back what is left of the reserve and the float.
+    /// open window, or at any time before attestation: the operator takes
+    /// back what is left of the reserve and the float. A settled (Invalid)
+    /// certificate stays locked until the deadline too, so later victims can
+    /// still be paid from what is left.
     #[payable]
     pub fn release_reserve(&mut self, cert_id: u64) -> U128 {
         assert_one_yocto();
@@ -800,13 +806,13 @@ impl Bound {
                 premium_refund = c.premium;
                 c.premium = 0;
             }
-            CertStatus::Verified => {
+            CertStatus::Verified | CertStatus::Invalid => {
                 if now_secs() < deadline {
                     fail("Locked", format!("reserve locked until {deadline}"));
                 }
                 c.status = CertStatus::Released;
             }
-            CertStatus::Invalid | CertStatus::Released => {}
+            CertStatus::Released => {}
         }
         // An escrowed premium counts: a never-funded cert still refunds it.
         let out = c.reserve_locked + c.float + premium_refund;
@@ -999,6 +1005,9 @@ impl Bound {
     /// that is false at filing is rejected in the same call and the bond goes
     /// to the treasury. Any other claim opens (or joins) the claim window and
     /// freezes the certificate.
+    ///
+    /// A settled (Invalid) certificate still accepts `Harm` claims until the
+    /// settlement deadline: they are paid from what is left.
     #[payable]
     pub fn challenge(
         &mut self,
@@ -1016,8 +1025,15 @@ impl Bound {
         let c = self.cert(cert_id);
         // From here on only the stored id is used: never the argument.
         let cert_id = c.id;
-        if c.status != CertStatus::Verified {
-            fail("NotChallengeable", format!("status {:?}", c.status));
+        let is_harm = matches!(proof, Proof::Harm { .. });
+        match c.status {
+            CertStatus::Verified => {}
+            CertStatus::Invalid if is_harm => {}
+            CertStatus::Invalid => fail(
+                "NotChallengeable",
+                "a settled certificate accepts only Harm claims",
+            ),
+            s => fail("NotChallengeable", format!("status {s:?}")),
         }
         if challenger == c.operator || challenger == c.agent || challenger == c.auditor {
             fail(
@@ -1177,7 +1193,7 @@ impl Bound {
         assert_one_yocto();
         let mut c = self.cert(cert_id);
         let cert_id = c.id;
-        if c.status != CertStatus::Verified {
+        if !matches!(c.status, CertStatus::Verified | CertStatus::Invalid) {
             fail("NotChallengeable", format!("status {:?}", c.status));
         }
         let w = self
@@ -1300,12 +1316,15 @@ impl Bound {
             s.slash = U128(p.slash);
             s.slash_to_victims = U128(p.slash_to_victims());
             s.to_treasury = U128(p.to_treasury());
+            // The unslashed allocation stays locked behind this certificate
+            // until the deadline (`release_allocation`).
             s.auditor_returned = U128(p.auditor_return);
-            stake.allocated = U128(stake.allocated.0 - allocation);
-            stake.free = U128(stake.free.0 + p.auditor_return);
+            stake.allocated = U128(stake.allocated.0 - p.slash);
+            c.allocation = p.auditor_return;
         } else {
             // Hygiene: covenant broken, nobody proven harmed. One flat bounty,
-            // split equally, from the reserve; allocation returned whole.
+            // split equally, from the reserve. The allocation is not slashed
+            // and stays locked until the deadline.
             let bounty = self.config.hygiene_bounty.0.min(c.reserve_locked);
             let share = bounty / admitted.len() as u128;
             for ch in &admitted {
@@ -1318,8 +1337,6 @@ impl Bound {
             s.mode = "hygiene".into();
             s.hygiene_bounty_paid = U128(paid);
             s.auditor_returned = U128(allocation);
-            stake.allocated = U128(stake.allocated.0 - allocation);
-            stake.free = U128(stake.free.0 + allocation);
         }
         self.stakes.insert(auditor, stake);
 
@@ -1332,15 +1349,17 @@ impl Bound {
             self.challenges.replace(id as u32, ch);
         }
 
-        // The certificate is dead; the float goes back to the operator. What
-        // is left of the reserve is released by `release_reserve`.
+        // The certificate is dead for spending: halted, float back to the
+        // operator. It still answers Harm claims until the deadline; what is
+        // left of the reserve and allocation is released after it by
+        // `release_reserve` / `release_allocation`.
         let f = c.float;
         c.float = 0;
         if f > 0 {
             let op = c.operator.clone();
             self.credit(&op, f);
         }
-        c.allocation = 0;
+        c.halted = true;
         c.status = CertStatus::Invalid;
         c.settlement = Some(s.clone());
         self.put_cert(c);
