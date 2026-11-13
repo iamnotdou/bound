@@ -71,27 +71,62 @@ fn min(a: u128, b: u128) -> u128 {
     if a < b { a } else { b }
 }
 
+/// Full 256-bit product of two u128 values, as (high, low) halves.
+fn mul_wide(a: u128, b: u128) -> (u128, u128) {
+    const M: u128 = u64::MAX as u128;
+    let (a1, a0) = (a >> 64, a & M);
+    let (b1, b0) = (b >> 64, b & M);
+    let p00 = a0 * b0;
+    let p01 = a0 * b1;
+    let p10 = a1 * b0;
+    let p11 = a1 * b1;
+    let mid = (p00 >> 64) + (p01 & M) + (p10 & M);
+    let lo = (p00 & M) | (mid << 64);
+    let hi = p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64);
+    (hi, lo)
+}
+
+/// floor(a * b / d) with a 256-bit intermediate, so `a * b` may exceed
+/// u128. Panics only when `d == 0` or the quotient itself does not fit.
+pub fn mul_div(a: u128, b: u128, d: u128) -> u128 {
+    assert!(d > 0, "division by zero");
+    let (hi, lo) = mul_wide(a, b);
+    if hi == 0 {
+        return lo / d;
+    }
+    assert!(hi < d, "overflow in mul_div");
+    // Long division of (hi, lo) by d; the remainder stays below d.
+    let mut r = hi;
+    let mut q: u128 = 0;
+    for i in (0..128).rev() {
+        let carry = r >> 127;
+        r = (r << 1) | ((lo >> i) & 1);
+        q <<= 1;
+        if carry == 1 || r >= d {
+            r = r.wrapping_sub(d);
+            q |= 1;
+        }
+    }
+    q
+}
+
 /// Hand out `pool` in proportion to `weights` over `total`. Truncating
-/// division, so the shares can sum to slightly less than `pool`.
+/// division, so the shares can sum to slightly less than `pool`. The product
+/// `pool * w` is taken in 256 bits, so no coverage size overflows it.
 pub fn distribute(pool: u128, weights: &[u128], total: u128) -> Vec<u128> {
     if pool == 0 || total == 0 {
         return vec![0; weights.len()];
     }
-    weights
-        .iter()
-        .map(|w| {
-            pool.checked_mul(*w)
-                .expect("overflow in distribute")
-                .checked_div(total)
-                .expect("division by zero")
-        })
-        .collect()
+    weights.iter().map(|w| mul_div(pool, *w, total)).collect()
 }
 
 /// The fraud-mode waterfall. Caller guarantees `claims` is non-empty and the
 /// total weight is > 0 (otherwise the window settles in hygiene mode).
 pub fn settle(reserve: u128, allocation: u128, claims: &[ClaimIn], fee_bps: u128) -> Payouts {
-    let total_harm: u128 = claims.iter().map(|c| c.weight).sum();
+    let total_harm: u128 = claims
+        .iter()
+        .try_fold(0u128, |t, c| t.checked_add(c.weight))
+        .expect("overflow");
     let collateral = reserve.checked_add(allocation).expect("overflow");
     let payable = min(total_harm, collateral);
 
@@ -111,7 +146,7 @@ pub fn settle(reserve: u128, allocation: u128, claims: &[ClaimIn], fee_bps: u128
 
     // 2. Challenger fees: fee_bps of proven harm, out of what is left of the
     //    reserve, never out of the stake; pro rata by weight.
-    let fee_target = total_harm.checked_mul(fee_bps).expect("overflow") / 10_000;
+    let fee_target = mul_div(total_harm, fee_bps, 10_000);
     let fee_pool = min(fee_target, reserve_left);
     let weights: Vec<u128> = claims.iter().map(|c| c.weight).collect();
     let fee_shares = distribute(fee_pool, &weights, total_harm);
@@ -301,5 +336,36 @@ mod tests {
     fn zero_pool_distributes_nothing() {
         assert_eq!(distribute(0, &[1, 2], 3), vec![0, 0]);
         assert_eq!(distribute(5, &[0, 0], 0), vec![0, 0]);
+    }
+
+    #[test]
+    fn mul_div_is_exact_past_u128() {
+        assert_eq!(mul_div(6, 7, 3), 14);
+        assert_eq!(mul_div(u128::MAX, u128::MAX, u128::MAX), u128::MAX);
+        assert_eq!(mul_div(u128::MAX, 2, 4), u128::MAX / 2);
+        assert_eq!(mul_div(1 << 100, 1 << 100, 1 << 90), 1 << 110);
+        let x = 20_000_000_000_000_000_000u128; // 2e19, the reviewed overflow case
+        assert_eq!(mul_div(x, x, x), x);
+        assert_eq!(mul_div(x, x - 1, x), x - 1);
+        assert_eq!(mul_div(x + 7, x, 3 * x), (x + 7) / 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflow in mul_div")]
+    fn mul_div_refuses_a_quotient_too_large() {
+        mul_div(u128::MAX, 2, 1);
+    }
+
+    /// Regression: coverage above ~1.8e19 base units used to overflow
+    /// `pool * w` in distribute and freeze the certificate forever.
+    #[test]
+    fn large_coverage_settles() {
+        let r = 20_000_000_000_000_000_000u128;
+        let a = 30_000_000_000_000_000_000u128;
+        let claims = [arb(r + a / 2), arb(r / 3)];
+        let p = settle(r, a, &claims, 1000);
+        conserve(r, a, &p);
+        assert_eq!(p.payable, r + a / 2 + r / 3);
+        assert_eq!(p.reserve_draw, r);
     }
 }

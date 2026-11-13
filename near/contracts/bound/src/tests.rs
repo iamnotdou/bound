@@ -1708,3 +1708,26 @@ fn excess_deposit_refunded() {
         vec![NearToken::from_millinear(100)]
     );
 }
+
+/// minor: coverage above ~1.8e19 base units used to overflow `pool * w` in
+/// distribute and freeze the certificate; the 256-bit mul_div settles it.
+#[test]
+fn large_coverage_settles_without_overflow() {
+    let mut t = funded();
+    let big: u128 = 20_000_000_000_000_000_000; // 2e19 base units
+    t.deposit("operator.test", big, "");
+    let id = t.publish(Some(vec![a("service.test")]));
+    t.accept(id);
+    t.ctx("operator.test", yocto());
+    t.c.fund_reserve(id, U128(big));
+    t.ctx("auditor.test", yocto());
+    t.c.attest(id, U128(200 * U));
+    let h = t.harm("challenger.test", big);
+    t.resolve(h, true, big);
+    t.now += 200;
+    let s = t.close().unwrap();
+    assert_eq!(s.mode, "fraud");
+    assert_eq!(s.victim_paid.0, big);
+    assert_eq!(s.slash.0, 0);
+}
+
