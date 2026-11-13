@@ -1390,3 +1390,41 @@ fn verify_reports_coverage() {
     let v = t.c.verify(a("agent.test")).unwrap();
     assert_eq!(v.coverage.0, 300 * U);
 }
+
+// ------------------------------------------- regressions (review 2026-11-14)
+
+/// minor: a halted cert does not read as Verified, and `deal` is false
+/// whenever the agent cannot pay right now.
+#[test]
+fn halted_or_empty_float_is_not_a_deal() {
+    let mut t = verified();
+    assert!(t.cert0().deal);
+    t.ctx("operator.test", yocto());
+    t.c.halt(0);
+    let v = t.c.verify(a("agent.test")).unwrap();
+    assert_eq!(v.status, "Halted");
+    assert!(!v.deal);
+    t.ctx("operator.test", yocto());
+    t.c.resume(0);
+    assert_eq!(t.cert0().status, "Verified");
+    assert!(t.cert0().deal);
+    t.ctx("operator.test", yocto());
+    t.c.clawback(0);
+    assert_eq!(t.cert0().status, "Verified");
+    assert!(!t.cert0().deal);
+}
+
+/// minor: only the agent's current cert (the one verify reports) can pay;
+/// an older cert reads Superseded.
+#[test]
+fn superseded_cert_cannot_pay() {
+    let mut t = verified();
+    t.now = T0 + 3600 + 10; // old cert expired, deadline not reached
+    let id = t.publish(None);
+    t.accept(id);
+    assert_eq!(t.c.verify(a("agent.test")).unwrap().cert_id, id);
+    assert_eq!(t.cert0().status, "Superseded");
+    assert!(!t.cert0().deal);
+    let e = panics(|| t.pay("agent.test", "service.test", U));
+    assert!(e.contains("NotCurrentCert"), "{e}");
+}

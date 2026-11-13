@@ -463,8 +463,9 @@ async fn full_lifecycle_settles_victim() -> testresult::TestResult<()> {
             json!({ "auditor": Env::id("auditor") }),
         )
         .await;
-    assert_eq!(stake["free"], (480 * U).to_string());
-    assert_eq!(stake["allocated"], "0");
+    // The unslashed 180 stays allocated until the settlement deadline.
+    assert_eq!(stake["free"], (300 * U).to_string());
+    assert_eq!(stake["allocated"], (180 * U).to_string());
 
     // The victim pulls real tokens out.
     let before = e.ft_bal("service").await;

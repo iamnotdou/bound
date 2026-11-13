@@ -216,9 +216,13 @@ pub struct Stake {
 #[derive(Clone, Debug)]
 pub struct CertView {
     pub cert_id: u64,
-    /// Computed at read time: Pending, Accepted, Verified, Expired,
-    /// Challenged, Invalid, Released. Act only on "Verified".
+    /// Computed at read time: Pending, Accepted, Verified, Halted, Expired,
+    /// Superseded, Challenged, Invalid, Released. Act only on "Verified".
     pub status: String,
+    /// True only when status is "Verified" and the agent can pay right now
+    /// through this certificate (not halted, float > 0). A counterparty that
+    /// expects to be paid by the agent checks this.
+    pub deal: bool,
     pub operator: AccountId,
     pub agent: AccountId,
     pub auditor: AccountId,
@@ -892,6 +896,14 @@ impl Bound {
                 "no payments after the settlement deadline (unchallengeable)",
             );
         }
+        // Only the certificate `verify(agent)` reports can pay, so what a
+        // counterparty reads is what meters the agent.
+        if self.agent_cert.get(&c.agent).copied() != Some(c.id) {
+            fail(
+                "NotCurrentCert",
+                "the agent accepted a newer certificate; this one cannot pay",
+            );
+        }
         if c.halted {
             fail("CertHalted", "the operator halted this certificate");
         }
@@ -1499,9 +1511,12 @@ impl Bound {
     fn view(&self, c: &Cert) -> CertView {
         let now = now_secs();
         let w = self.windows.get(&c.id);
+        let current = self.agent_cert.get(&c.agent).copied() == Some(c.id);
         let status = match c.status {
             CertStatus::Verified if self.is_frozen(c) => "Challenged",
+            CertStatus::Verified if !current => "Superseded",
             CertStatus::Verified if now >= c.expires_at => "Expired",
+            CertStatus::Verified if c.halted => "Halted",
             CertStatus::Pending => "Pending",
             CertStatus::Accepted => "Accepted",
             CertStatus::Verified => "Verified",
@@ -1511,6 +1526,7 @@ impl Bound {
         CertView {
             cert_id: c.id,
             status: status.to_string(),
+            deal: status == "Verified" && c.float > 0,
             operator: c.operator.clone(),
             agent: c.agent.clone(),
             auditor: c.auditor.clone(),
