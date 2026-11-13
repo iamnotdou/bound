@@ -1,8 +1,80 @@
 # Bound Protocol
 
 > **A surety bond for AI agents, on-chain.**
-> Originally built for the Build On Stellar Hackathon — IBW 2026 Istanbul.
-> Now submitted to the Rise In × Stellar **Pro Hackathon 2026, Scale Track**.
+
+## NEAR HACKATHON submission (start here)
+
+Built at NEAR HACKATHON. This branch (`near-hackathon`) adds **Bound on NEAR**:
+the protocol as one near-sdk contract on NEAR testnet, a TypeScript client,
+an agent gate, an MCP server for agents, and read-only web pages. Only the NEAR
+integration is submitted and judged; everything else in this repo is prior
+work from earlier Stellar hackathons (see "Prior work" below).
+
+A counterparty calls `verify(agent)` and sees what stands behind an AI agent's
+NEAR account: a USDC reserve the operator locked, an auditor's slashable stake
+locked to that one certificate, and a spend meter. The agent's only key is a
+function-call key that can call nothing but the contract's `pay`, and the
+account holds no contract code, so NEAR itself refuses any other spend. If the
+agent causes harm, a claim window opens and one atomic settlement pays the
+victim from the reserve and then from the auditor's slash.
+
+| What                       | Where                                                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Full NEAR README           | [`near/README.md`](./near/README.md): try it, demo act by act, libraries, AI disclosure                                   |
+| Design and trust model     | [`near/DESIGN.md`](./near/DESIGN.md)                                                                                      |
+| Contract (testnet)         | `bound-v2.boundproto-nh26.testnet` ([NearBlocks](https://testnet.nearblocks.io/address/bound-v2.boundproto-nh26.testnet)) |
+| Token (testnet)            | `usdc.boundproto-nh26.testnet` (mock USDC, open mint, play money)                                                         |
+| Recorded demo run          | [`near/evidence/near-demo-mwfiv11v.txt`](./near/evidence/near-demo-mwfiv11v.txt) (every tx with a NearBlocks link)        |
+| Code written in the window | [`pre-hackathon...hackathon-submission`](https://github.com/iamnotdou/bound/compare/pre-hackathon...hackathon-submission) |
+| Web pages                  | bound-web branch `near-hackathon`, `/app/near` (run locally; see [`near/README.md`](./near/README.md) step 6)             |
+
+Do this, see that (from a clean clone, no NEAR account needed):
+
+1. `pnpm install --frozen-lockfile`
+2. `cd near && cargo test`: see `test result: ok. 108 passed` (unit), `2 passed`
+   (near-sandbox), `4 passed` (mock token).
+3. `near/scripts/verify.sh`: builds both wasm, checks their sha256 equals the
+   deployed code hash, runs all tests and re-checks every recorded testnet
+   transaction. Ends with `== all checks passed`.
+4. `pnpm --silent near:verify bound-agent2-mwfiv11v.testnet`: a certificate
+   left Verified until 2026-11-30, with its coverage and key confinement
+   (`decision: deal`, exit 0).
+
+Trust model, stated up front: on testnet the arbiter (who decides harm
+claims), the treasury and the contract's full-access key are all held by the
+author. The arbiter could uphold a fake claim. See
+[`near/DESIGN.md`](./near/DESIGN.md) section 7 for this and the other limits.
+
+### Prior work and what is new
+
+- Everything in `near/` and `packages/near/` is new in the window (from
+  2026-10-19). Outside them the NEAR work only touches the root
+  `package.json` (the `near:*` scripts), `Cargo.toml` (excludes `near/` from
+  the Soroban workspace), `.prettierignore`, `pnpm-lock.yaml` and this
+  section of the README.
+- Everything else (Soroban contracts in `contracts/`, `packages/sdk`,
+  `packages/mcp`, `bindings/`, `scripts/`, `docs/`) is prior work from the
+  Build On Stellar Hackathon (IBW 2026 Istanbul) and the Rise In x Stellar Pro
+  Hackathon 2026, tagged `pre-hackathon`. It is not part of this submission.
+
+### Libraries
+
+Rust: near-sdk 5.30.1, near-contract-standards 5.30.1, near-sandbox 0.4,
+near-api 0.8, cargo-near-build 0.11, tokio, testresult, serde_json.
+TypeScript: near-api-js 7.5.3, @modelcontextprotocol/sdk 1.29, zod 3, tsx,
+vitest, typescript, @types/node. Tooling: cargo-near 0.23.0, near-cli-rs 0.31.1.
+
+### AI disclosure
+
+The NEAR contracts, tests, TypeScript package, scripts and docs on this branch
+were written by Claude Code (Anthropic) under the author's direction.
+
+---
+
+## The Stellar version (prior work, not part of the NEAR submission)
+
+> Originally built for the Build On Stellar Hackathon (IBW 2026 Istanbul),
+> then submitted to the Rise In x Stellar Pro Hackathon 2026, Scale Track.
 
 Know your worst case _before_ you transact. AI agents now hold wallets and move money
 autonomously, but reputation can't tell you your maximum downside — models change
@@ -16,7 +88,7 @@ _"can I trust this agent?"_ with a number you can look up:
 
 |                   |                                                                                                                                                                 |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Live demo**     | [www.boundprotocol.dev/app](https://www.boundprotocol.dev/app) — browse bonded agents, publish and fund a certificate, attest one                               |
+| **Live demo**     | [www.boundprotocol.dev/app](https://www.boundprotocol.dev/app) (Stellar version) — browse bonded agents, publish and fund a certificate, attest one             |
 | **Documentation** | [docs.boundprotocol.dev](https://docs.boundprotocol.dev)                                                                                                        |
 | **SDK**           | [`@bound/sdk`](https://www.npmjs.com/package/@bound/sdk) — typed client for the whole lifecycle                                                                 |
 | **MCP connector** | [`@bound/mcp`](https://www.npmjs.com/package/@bound/mcp) — 15 tools for any MCP-capable agent                                                                   |

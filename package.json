@@ -44,7 +44,7 @@
     "test:e2e": "pnpm tools-smoke && pnpm sdk-smoke && pnpm mcp-smoke && pnpm wallet-smoke",
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm format:contracts && pnpm lint:contracts && pnpm test:contracts",
     "prepare": "husky",
-    "near:mcp": "pnpm --filter @bound/near run mcp",
+    "near:mcp": "pnpm --silent --filter @bound/near run mcp",
     "near:mcp-smoke": "pnpm --filter @bound/near run mcp-smoke",
     "near:agent-mcp": "pnpm --filter @bound/near run agent-mcp"
   },

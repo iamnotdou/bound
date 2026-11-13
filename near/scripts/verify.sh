@@ -28,6 +28,11 @@ cd "$NEAR_DIR"
 
 step() { printf '\n== %s\n' "$*"; }
 
+if [ ! -x "$REPO/packages/near/node_modules/.bin/tsc" ]; then
+  step "node_modules missing: pnpm install --frozen-lockfile"
+  (cd "$REPO" && pnpm install --frozen-lockfile)
+fi
+
 step "build wasm with cargo near (mock-usdc, bound)"
 (cd contracts/mock-usdc && cargo near build non-reproducible-wasm)
 (cd contracts/bound && cargo near build non-reproducible-wasm)
@@ -68,7 +73,7 @@ fi
 
 if [ "$DEMO" = 1 ]; then
   step "replay the demo on testnet (near:demo)"
-  (cd "$REPO" && pnpm near:demo)
+  (cd "$REPO" && pnpm --silent near:demo)
 fi
 
 step "all checks passed"
