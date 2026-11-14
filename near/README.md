@@ -85,8 +85,10 @@ pnpm install --frozen-lockfile
    - It creates fresh actors, runs acts 1-8, asserts every balance delta and
      writes new evidence. On the canonical deployment it needs the arbiter key,
      which only the author has. Without any key, use `pnpm near:demo --fresh`:
-     it deploys a private copy from a faucet account, and that account is the
-     arbiter.
+     it creates a new deployer account and deploys a private copy from it. The
+     arbiter of that copy is `arbiter.<deployer>`, a sub-account the script
+     creates, with its key saved in your own `~/.near-credentials/testnet`, so
+     you, not the author, decide its claims.
    - The public faucet rate-limits per IP, sometimes for hours. When it
      refuses, the script creates actors through the `testnet` registrar,
      funded by `--funder <account>`. The default funder is
@@ -197,7 +199,9 @@ the settlement deadline. Its runs stay in `evidence/` and are still checked by
    (expires_at + post_expiry) via `release_allocation`. The service withdraws 135 (5
    prepaid + 120 + 10 bond back) and its token balance rises by 135.
 8. A second cert (cert 1, agent2, expires 2026-11-30) is left Verified for
-   judging.
+   judging. The evidence log counts certs by ordinal and calls this one
+   "cert 2" (`operator publishes cert 2 for agent2`); its on-chain id is 1,
+   as `verify` on the next line of the log shows.
 
 ## Libraries
 
