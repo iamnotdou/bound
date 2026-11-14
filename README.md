@@ -5,9 +5,9 @@
 ## NEAR HACKATHON submission (start here)
 
 **The bond-and-insurance layer for AI agents on NEAR.** You hire a contractor
-because they are licensed, bonded and insured, not because you trust them
-personally. Bound gives AI agents on NEAR the same thing: real money behind the
-agent that pays the people it harms. The operator's locked reserve is the bond,
+because they are bonded and insured, not because you trust them personally.
+Bound gives AI agents on NEAR the same thing: locked money behind the agent that
+pays the people it harms, up to its cover. The operator's locked reserve is the bond,
 an auditor's slashable stake is the insurance, and one view call shows the
 cover before you deal with the agent.
 

@@ -13,9 +13,9 @@ Outside `near/` and `packages/near/` that diff touches only the root
 **The bond-and-insurance layer for AI agents on NEAR.** You hire a contractor
 because they are bonded and insured, not because you trust them personally.
 Bound gives an AI agent the same backing, so a counterparty can check it before
-dealing with the agent. The agent is bonded by a USDC reserve the operator
-pre-funds and locks, and insured by an auditor's slashable stake locked to that
-one certificate. A spend meter that the agent's NEAR key cannot get around
+dealing with the agent. The operator bonds the agent with a USDC reserve it pre-funds
+and locks, and an auditor insures it with a slashable stake locked to that one
+certificate. A spend meter that the agent's NEAR key cannot get around
 limits what it can send. It is a surety bond plus staked cover, not a regulated
 insurance product. `verify(agent)` returns
 `coverage = reserve_locked + allocation`, the cover. That is the most that victims
