@@ -1808,3 +1808,26 @@ fn claim_just_before_deadline_still_extends() {
     assert_eq!(t.c.get_window(0).unwrap().closes_at, t.now + 30);
 }
 
+/// Round 2: a settlement that drew the whole reserve still lets the operator
+/// mark the cert Released after the deadline (amount 0), and only once.
+#[test]
+fn release_reserve_marks_released_when_empty() {
+    let mut t = verified();
+    let id = t.harm("service.test", 10_000 * U);
+    t.resolve(id, true, 10_000 * U);
+    t.now += 90;
+    t.close().unwrap();
+    let c = t.cert0();
+    assert_eq!(c.reserve_locked.0 + c.float.0, 0);
+    assert_eq!(c.status, "Invalid");
+    t.now = c.settlement_deadline;
+    t.ctx("operator.test", yocto());
+    assert_eq!(t.c.release_reserve(0).0, 0);
+    assert_eq!(t.cert0().status, "Released");
+    let e = panics(|| {
+        t.ctx("operator.test", yocto());
+        t.c.release_reserve(0);
+    });
+    assert!(e.contains("NothingToRelease"), "{e}");
+}
+

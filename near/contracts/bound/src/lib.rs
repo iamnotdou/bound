@@ -810,6 +810,7 @@ impl Bound {
             fail("CertFrozen", "a claim window is open");
         }
         let deadline = self.deadline(&c);
+        let was_released = c.status == CertStatus::Released;
         let mut premium_refund = 0;
         match c.status {
             CertStatus::Pending | CertStatus::Accepted => {
@@ -829,7 +830,16 @@ impl Bound {
         // An escrowed premium counts: a never-funded cert still refunds it.
         let out = c.reserve_locked + c.float + premium_refund;
         if out == 0 {
-            fail("NothingToRelease", "");
+            if was_released {
+                fail("NothingToRelease", "");
+            }
+            // A settlement drew everything: still mark the cert Released.
+            self.put_cert(c);
+            emit(
+                "release_reserve",
+                json!({ "cert_id": cert_id, "amount": U128(0) }),
+            );
+            return U128(0);
         }
         c.reserve_locked = 0;
         c.float = 0;
