@@ -66,7 +66,7 @@ pnpm install --frozen-lockfile
      `code_hash == recorded`, the live `get_config` and the cert count.
    - `pnpm --silent near:verify bound-agent2-mwfnc6q8.testnet` shows cert 1,
      left Verified until 2026-11-30. It prints coverage 130 and
-     `confinement: confined (1 key(s), no contract code)`, then
+     `confinement: confined (1 key(s), no contract code, no global contract)`, then
      `decision: deal`, exit 0.
    - `pnpm --silent near:verify bound-agent-mwfnc6q8.testnet` shows the demo
      agent after settlement: status Invalid and the settlement numbers. It
@@ -97,7 +97,7 @@ pnpm install --frozen-lockfile
    on stdio. It has four tools:
    - `near_verify_agent` (returns coverage)
    - `near_get_certificate`
-   - `near_check_agent_keys` (pay-only keys AND no contract code)
+   - `near_check_agent_keys` (pay-only keys AND no contract code, local or global)
    - `near_pay`, enabled only when `BOUND_NEAR_AGENT_ID` and
      `BOUND_NEAR_AGENT_KEY` hold an agent account and its pay-only
      function-call key.
@@ -128,7 +128,11 @@ pnpm install --frozen-lockfile
 
 - Contract: `bound-v3.boundproto-nh26.testnet` (code hash
   `A3yf1yzihbUdZAaHn92aAm5dBAdFCq1QCwhBJixD2B4H`, wasm sha256
-  `867c678c...`), built from this branch with the second review's fixes
+  `867c678c...`), built from this branch with the second review's fixes.
+  The build is `cargo near build non-reproducible-wasm` (the same command
+  `verify.sh` runs), not a reproducible Docker build: the check is that a
+  local build of this commit gives the same wasm sha256 as the deployed code
+  hash, on the pinned toolchain.
 - Token: `usdc.boundproto-nh26.testnet` (mock USDC, open mint)
 - Treasury / arbiter: `treasury.boundproto-nh26.testnet` /
   `arbiter.boundproto-nh26.testnet`
@@ -165,7 +169,8 @@ the settlement deadline. Its runs stay in `evidence/` and are still checked by
    and the auditor attests 200. Premium split: auditor +2.7, treasury +0.3.
 3. The agent adds a function-call key (receiver bound-v3, method `pay`) and
    deletes its full-access key. `view_access_key_list` shows exactly that one
-   key, and `view_account.code_hash` is `111...1` (no contract code). At the
+   key, `view_account.code_hash` is `111...1` (no contract code) and the
+   `global_contract_*` fields are null (no global contract). At the
    gate:
    - an uncertified agent gets 403;
    - the agent pays 5 through `pay` and is served;

@@ -14,7 +14,7 @@ work from earlier Stellar hackathons (see "Prior work and what is new").
 agent's NEAR account and sees what stands behind it: a USDC reserve the
 operator locked, an auditor's slashable stake locked to that one certificate,
 and a spend meter. The agent's only key is a function-call key that can call
-nothing but the contract's `pay`, and the account holds no contract code, so
+nothing but the contract's `pay`, and the account holds no contract code (local or global), so
 NEAR itself refuses any other spend. If the agent causes harm, a claim window
 opens and one atomic settlement pays the victim from the reserve first and
 then from the auditor's slash.
@@ -100,7 +100,7 @@ itself), cargo-near 0.23, node 22, pnpm 10. Run from the repo root.
 5. `pnpm --silent near:status`: the on-chain `code_hash` of bound-v3 equals
    the recorded one, plus the live config.
 6. `pnpm --silent near:verify bound-agent2-mwfnc6q8.testnet`: cert 1
-   Verified, coverage 130, `confinement: confined (1 key(s), no contract code)`,
+   Verified, coverage 130, `confinement: confined (1 key(s), no contract code, no global contract)`,
    `decision: deal`, exit 0.
 7. `pnpm --silent near:verify bound-agent-mwfnc6q8.testnet`: cert 0 Invalid
    after settlement (payable 120, reserve draw 100, slash 20),

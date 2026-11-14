@@ -78,10 +78,14 @@ NOT confined, whatever its key list says. Confined therefore means both:
 
 1. every access key is a function-call key to the Bound contract, methods
    exactly `["pay"]`, and
-2. `view_account(agent).code_hash == "11111111111111111111111111111111"`.
+2. `view_account(agent).code_hash == "11111111111111111111111111111111"` AND
+   `global_contract_hash` and `global_contract_account_id` are both null or
+   absent. An account that uses a NEAR global contract also reports
+   `code_hash` of all ones and names the global code in one of those two
+   fields; that code runs as the agent exactly like local code.
 
 `isConfined` in `packages/near/src/format.ts`, the demo (act 3), `near:verify`,
-the MCP tool `near_check_agent_keys` and the web page all check both. The Bound
+the MCP tool `near_check_agent_keys` and the web page all check all of these. The Bound
 contract cannot read another account's keys or code, so `verify(agent)` alone
 does NOT prove confinement: a counterparty reads `verify` and both RPC views.
 With no full-access key and no code, the key cannot be widened (adding a key
