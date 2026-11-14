@@ -1831,3 +1831,81 @@ fn release_reserve_marks_released_when_empty() {
     assert!(e.contains("NothingToRelease"), "{e}");
 }
 
+/// Value conservation across a hygiene window, two fraud windows on an
+/// Invalid cert, and the releases after the deadline: balances + stake +
+/// reserve + float + premium + pending bonds never change (except the one
+/// later deposit).
+#[test]
+fn conservation_across_windows() {
+    let mut t = funded();
+    t.register("sybil.test");
+    t.register("victim.test");
+    t.register("v2.test");
+    t.deposit("sybil.test", 10 * U, "");
+    t.deposit("victim.test", 10 * U, "");
+    t.deposit("v2.test", 10 * U, "");
+    let accounts = [
+        "operator.test",
+        "auditor.test",
+        "service.test",
+        "challenger.test",
+        "attacker.test",
+        "sybil.test",
+        "victim.test",
+        "v2.test",
+        "treasury.test",
+        "arbiter.test",
+    ];
+    let total = |t: &T| -> u128 {
+        let mut s: u128 = accounts.iter().map(|x| t.bal(x)).sum();
+        let st = t.c.get_stake(a("auditor.test"));
+        s += st.free.0 + st.allocated.0;
+        for i in 0..t.c.cert_count() {
+            let c = t.c.get_cert(i).unwrap();
+            s += c.reserve_locked.0 + c.float.0 + c.premium.0;
+        }
+        for i in 0..t.c.challenge_count() {
+            let ch = t.c.get_challenge(i).unwrap();
+            if ch.verdict == Verdict::Pending {
+                s += ch.bond.0;
+            }
+        }
+        s
+    };
+    let t0 = total(&t);
+    open_cert(&mut t);
+    assert_eq!(total(&t), t0);
+    for _ in 0..8 {
+        t.ctx("operator.test", yocto());
+        t.c.fund_float(0, U128(20 * U));
+        t.pay("agent.test", "sybil.test", 20 * U);
+    }
+    t.ctx("sybil.test", CHALLENGE_DEPOSIT);
+    t.c.challenge(0, Proof::BoundExceeded, None, U128(10 * U));
+    t.now += 91;
+    t.close();
+    assert_eq!(total(&t), t0);
+    let id = harm_for(&mut t, "victim.test", None, 90 * U);
+    let id2 = harm_for(&mut t, "v2.test", None, 90 * U);
+    t.resolve(id, true, 90 * U);
+    t.resolve(id2, true, 90 * U);
+    t.now += 90;
+    t.close();
+    assert_eq!(total(&t), t0);
+    t.deposit("victim.test", 10 * U, "");
+    let id = harm_for(&mut t, "victim.test", None, 500 * U);
+    t.resolve(id, true, 500 * U);
+    t.now += 90;
+    t.close();
+    assert_eq!(total(&t), t0 + 10 * U);
+    t.now = t.cert0().settlement_deadline;
+    t.ctx("operator.test", yocto());
+    t.c.release_reserve(0);
+    assert_eq!(t.cert0().status, "Released");
+    let _ = panics(|| {
+        t.ctx("auditor.test", yocto());
+        t.c.release_allocation(0);
+    });
+    assert_eq!(total(&t), t0 + 10 * U);
+    assert_eq!(t.c.get_stake(a("auditor.test")).allocated.0, 0);
+}
