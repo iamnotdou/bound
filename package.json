@@ -19,6 +19,7 @@
     "evidence": "ts-node --project scripts/tsconfig.json scripts/evidence.ts",
     "near:check": "bash near/scripts/verify.sh",
     "near:test": "cd near && cargo test",
+    "near:build": "pnpm --filter @bound/near build",
     "near:deploy": "pnpm --filter @bound/near run deploy",
     "near:demo": "pnpm --filter @bound/near run demo",
     "near:status": "pnpm --filter @bound/near run status",

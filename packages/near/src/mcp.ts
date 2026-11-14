@@ -15,7 +15,8 @@ import {
   view,
   withRetry,
 } from "./client.js";
-import { loadDeployment } from "./deployment.js";
+import { TESTNET } from "./testnet.js";
+import { VERSION } from "./version.js";
 import {
   assess,
   coverageOf,
@@ -31,7 +32,11 @@ import {
 } from "./format.js";
 
 export interface NearToolEnv {
+  /** A ready provider. Wins over `rpc`. */
   provider?: Provider;
+  /** RPC URLs, tried in order. Default: the bundled testnet endpoints. */
+  rpc?: string[];
+  /** Bound contract account. Default: the bundled testnet deployment. */
   contractId?: string;
   /** Agent account and its function-call private key (ed25519:...). */
   agentId?: string;
@@ -73,9 +78,9 @@ function money(v: CertViewJson) {
 }
 
 export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
-  const provider = env.provider ?? testnetProvider();
-  const contractId = env.contractId ?? loadDeployment().contracts.bound.accountId;
-  const server = new McpServer({ name: "bound-near", version: "0.1.0" });
+  const provider = env.provider ?? testnetProvider(env.rpc?.length ? env.rpc : TESTNET.rpc);
+  const contractId = env.contractId ?? TESTNET.contracts.bound.accountId;
+  const server = new McpServer({ name: "bound-near", version: VERSION });
   const text = (o: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }],
   });

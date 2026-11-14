@@ -5,6 +5,9 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createNearMcpServer } from "../src/mcp.js";
+import { quietRpcRetryLogs } from "../src/quiet.js";
+
+quietRpcRetryLogs();
 
 async function main() {
   const server = createNearMcpServer({

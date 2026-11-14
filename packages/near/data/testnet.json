@@ -1,0 +1,29 @@
+{
+  "network": "testnet",
+  "deployedAt": "2026-11-14T00:07:13.323Z",
+  "contracts": {
+    "bound": {
+      "accountId": "bound-v3.boundproto-nh26.testnet",
+      "codeHash": "A3yf1yzihbUdZAaHn92aAm5dBAdFCq1QCwhBJixD2B4H"
+    },
+    "token": {
+      "accountId": "usdc.boundproto-nh26.testnet",
+      "codeHash": "HRi2r4HbNpjb9Z1p9gSXGXpiHG8kG372jK7Lf3S8NzjM",
+      "decimals": 6,
+      "note": "Mock USDC, 6 decimals, OPEN mint: testnet play money, not Circle USDC."
+    }
+  },
+  "accounts": {
+    "treasury": "treasury.boundproto-nh26.testnet",
+    "arbiter": "arbiter.boundproto-nh26.testnet",
+    "owner": "boundproto-nh26.testnet"
+  },
+  "rpc": ["https://test.rpc.fastnear.com", "https://rpc.testnet.fastnear.com"],
+  "demo": {
+    "runId": "mwfnc6q8",
+    "verifiedAgent": "bound-agent2-mwfnc6q8.testnet",
+    "verifiedCertId": 1,
+    "settledAgent": "bound-agent-mwfnc6q8.testnet",
+    "settledCertId": 0
+  }
+}

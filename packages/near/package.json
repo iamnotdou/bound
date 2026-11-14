@@ -1,11 +1,62 @@
 {
   "name": "@bound/near",
   "version": "0.1.0",
-  "private": true,
-  "description": "Bound on NEAR: typed client, testnet deploy, demo, verify, evidence and the agent gate. NEAR HACKATHON integration.",
+  "description": "Bound on NEAR: verify an AI agent's surety certificate (reserve, auditor stake, coverage, key confinement) before dealing with it. Library, CLI and MCP server for NEAR testnet.",
+  "keywords": [
+    "near",
+    "near-protocol",
+    "ai-agents",
+    "agents",
+    "surety",
+    "mcp",
+    "model-context-protocol",
+    "bound-protocol"
+  ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamnotdou/bound.git",
+    "directory": "packages/near"
+  },
+  "homepage": "https://near.boundprotocol.dev/docs",
+  "bugs": {
+    "url": "https://github.com/iamnotdou/bound/issues"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "bin": {
+    "bound-near": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    },
+    "./testnet.json": "./data/testnet.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "data/testnet.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
     "deploy": "tsx scripts/deploy.ts",
     "demo": "tsx scripts/demo.ts",
     "status": "tsx scripts/status.ts",
@@ -15,7 +66,8 @@
     "test": "vitest run --root .",
     "mcp": "tsx scripts/mcp.ts",
     "mcp-smoke": "tsx scripts/mcp-smoke.ts",
-    "agent-mcp": "tsx scripts/agent-mcp-demo.ts"
+    "agent-mcp": "tsx scripts/agent-mcp-demo.ts",
+    "sync-deployment": "tsx scripts/sync-deployment.ts"
   },
   "dependencies": {
     "near-api-js": "7.5.3",
