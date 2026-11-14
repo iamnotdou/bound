@@ -1909,3 +1909,124 @@ fn conservation_across_windows() {
     assert_eq!(total(&t), t0 + 10 * U);
     assert_eq!(t.c.get_stake(a("auditor.test")).allocated.0, 0);
 }
+
+/// Round 3: a squatter can refill the slots the arbiter frees, after the
+/// deadline too, but only at a full bond per refill and never past the cap.
+#[test]
+fn r3_squatter_refill_is_paid_and_bounded() {
+    let mut t = verified();
+    t.register("victim.test");
+    t.deposit("victim.test", 20 * U, "");
+    t.deposit("attacker.test", 320 * U, "");
+    let deadline = t.cert0().settlement_deadline;
+    let cap = deadline + 90;
+    t.now = deadline - 5;
+    for _ in 0..16 {
+        t.harm("attacker.test", 1);
+    }
+    for id in 0..16u64 {
+        t.resolve(id, false, 0);
+    }
+    let treasury0 = t.bal("treasury.test");
+    t.now = deadline + 10;
+    for _ in 0..16 {
+        t.harm("attacker.test", 1);
+    }
+    let e = panics(|| {
+        harm_for(&mut t, "victim.test", None, 100 * U);
+    });
+    assert!(e.contains("WindowFull"), "{e}");
+    assert!(t.c.get_window(0).unwrap().closes_at <= cap);
+    // Each refill cost a full bond once the arbiter rejects it.
+    for id in 16..32u64 {
+        t.resolve(id, false, 0);
+    }
+    assert_eq!(t.bal("treasury.test"), treasury0 + 160 * U);
+    // A freed slot is open to whoever files first, the victim included.
+    let id = harm_for(&mut t, "victim.test", None, 100 * U);
+    t.resolve(id, true, 100 * U);
+    t.now = t.c.get_window(0).unwrap().closes_at;
+    assert!(t.now <= cap);
+    assert_eq!(t.close().unwrap().victim_paid.0, 100 * U);
+}
+
+/// Round 3: with a Harm claim still undecided, the freeze lasts at most
+/// deadline + claim_window + claim_window/3 (the arbiter grace after the cap).
+#[test]
+fn r3_freeze_ends_at_cap_plus_grace() {
+    let mut t = verified();
+    let deadline = t.cert0().settlement_deadline;
+    let cap = deadline + 90;
+    t.now = deadline - 1;
+    t.harm("challenger.test", 10 * U);
+    t.now = t.c.get_window(0).unwrap().closes_at - 1;
+    t.harm("service.test", 10 * U);
+    assert_eq!(t.c.get_window(0).unwrap().closes_at, cap);
+    t.now = cap + 29;
+    let e = panics(|| {
+        t.close();
+    });
+    assert!(e.contains("ArbiterGrace"), "{e}");
+    t.now = cap + 30;
+    t.close();
+    assert!(t.c.get_window(0).is_none());
+    t.ctx("auditor.test", yocto());
+    assert_eq!(t.c.release_allocation(0).0, 200 * U);
+}
+
+/// Round 3: before the deadline, a claim filed into an expired window that
+/// nobody closed joins it and pushes closes_at out under the extension rule.
+#[test]
+fn r3_claim_into_expired_unclosed_window_reopens_it() {
+    let mut t = verified();
+    harm_on(&mut t, "challenger.test", 0);
+    let w0 = t.c.get_window(0).unwrap();
+    t.now = w0.closes_at + 5;
+    assert!(t.now < t.cert0().settlement_deadline);
+    t.harm("service.test", 10 * U);
+    let w1 = t.c.get_window(0).unwrap();
+    assert_eq!(w1.opened_at, w0.opened_at);
+    assert_eq!(w1.closes_at, t.now + 30);
+    assert_eq!(w1.claims.len(), 2);
+}
+
+/// Round 3: from expires_at on the view reads Expired with deal=false (do
+/// not start new business), while pay still works until the deadline.
+#[test]
+fn r3_expired_view_is_not_a_deal_but_pay_still_works() {
+    let mut t = verified();
+    t.now = T0 + 3600;
+    t.ctx("anyone.test", NearToken::from_yoctonear(0));
+    let v = t.c.verify(a("agent.test")).unwrap();
+    assert_eq!(v.status, "Expired");
+    assert!(!v.deal);
+    t.pay("agent.test", "service.test", 2 * U);
+    assert_eq!(t.cert0().spent.0, 2 * U);
+}
+
+/// Round 3: sixteen proven harms, each capped at a large coverage, sum and
+/// settle without overflow (total_harm <= 16 * coverage).
+#[test]
+fn r3_sixteen_capped_harms_sum_without_overflow() {
+    let mut t = funded();
+    let big: u128 = 20_000_000_000_000_000_000; // 2e19 base units
+    t.deposit("operator.test", big, "");
+    t.deposit("challenger.test", 200 * U, "");
+    let id = t.publish(Some(vec![a("service.test")]));
+    t.accept(id);
+    t.ctx("operator.test", yocto());
+    t.c.fund_reserve(id, U128(big));
+    t.ctx("auditor.test", yocto());
+    t.c.attest(id, U128(200 * U));
+    let coverage = big + 200 * U;
+    for _ in 0..16 {
+        let h = t.harm("challenger.test", u128::MAX);
+        t.resolve(h, true, u128::MAX);
+        assert_eq!(t.c.get_challenge(h).unwrap().harm.0, coverage);
+    }
+    t.now += 200;
+    let s = t.close().unwrap();
+    assert_eq!(s.mode, "fraud");
+    assert!(s.victim_paid.0 <= coverage);
+    assert!(s.victim_paid.0 >= big);
+}
