@@ -1754,3 +1754,57 @@ fn empty_second_settlement_keeps_the_first() {
     assert_eq!(kept.mode, "fraud");
     assert_eq!(kept.victim_paid.0, 300 * U);
 }
+
+/// Round 2: after the deadline, rejecting and refiling a junk claim cannot
+/// push the window past one claim window after the deadline.
+#[test]
+fn post_deadline_extension_is_capped() {
+    let mut t = verified();
+    t.deposit("attacker.test", 10_000 * U, "");
+    let deadline = t.cert0().settlement_deadline;
+    let cap = deadline + 90;
+    t.now = deadline - 1;
+    let mut id = t.harm("attacker.test", 1);
+    let mut refiled = 0;
+    loop {
+        t.resolve(id, false, 0);
+        let w = t.c.get_window(0).unwrap();
+        assert!(w.closes_at <= cap, "closes_at {} > cap {cap}", w.closes_at);
+        t.now = w.closes_at - 1;
+        id = t.harm("attacker.test", 1);
+        refiled += 1;
+        if t.c.get_window(0).unwrap().closes_at == cap {
+            break;
+        }
+        assert!(refiled < 10, "extension never reached the cap");
+    }
+    // Once the capped window closes, no more claims and the collateral frees.
+    t.now = cap;
+    let e = panics(|| {
+        t.harm("attacker.test", 1);
+    });
+    assert!(e.contains("SettlementDeadlinePassed"), "{e}");
+    // The arbiter still gets its grace after the cap.
+    let e = panics(|| {
+        t.close();
+    });
+    assert!(e.contains("ArbiterGrace"), "{e}");
+    t.resolve(id, false, 0);
+    assert!(t.close().is_none());
+    t.ctx("auditor.test", yocto());
+    assert_eq!(t.c.release_allocation(0).0, 200 * U);
+}
+
+/// Round 2: a claim filed just before the deadline still gets the full
+/// extension when it fits under the cap.
+#[test]
+fn claim_just_before_deadline_still_extends() {
+    let mut t = verified();
+    let deadline = t.cert0().settlement_deadline;
+    harm_on(&mut t, "challenger.test", 0);
+    t.now = t.c.get_window(0).unwrap().closes_at - 1;
+    assert!(t.now < deadline);
+    t.harm("service.test", 10 * U);
+    assert_eq!(t.c.get_window(0).unwrap().closes_at, t.now + 30);
+}
+
