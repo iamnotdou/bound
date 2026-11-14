@@ -1,13 +1,13 @@
 {
   "network": "testnet",
-  "deployedAt": "2026-11-13T22:01:51.189Z",
+  "deployedAt": "2026-11-14T00:07:13.323Z",
   "deployer": "boundproto-nh26.testnet",
   "contracts": {
     "bound": {
-      "accountId": "bound-v2.boundproto-nh26.testnet",
-      "wasmSha256": "0272efa860c3960d63c00e503f9c84f86ed9f3ef5bc61586183ab98807069a76",
-      "codeHash": "AZU11gUWgawHb91Zr6maxPqoYAdS89ftNjfT5e3De1b",
-      "wasmBytes": 292033
+      "accountId": "bound-v3.boundproto-nh26.testnet",
+      "wasmSha256": "867c678cdf5717dcdca3f8355e418ddf2fb43ef869a57fb793a96e82e7c82d2e",
+      "codeHash": "A3yf1yzihbUdZAaHn92aAm5dBAdFCq1QCwhBJixD2B4H",
+      "wasmBytes": 294494
     },
     "token": {
       "accountId": "usdc.boundproto-nh26.testnet",
@@ -55,281 +55,281 @@
     },
     {
       "step": "deploy bound (create + deploy + new)",
-      "hash": "HyAicYxvMXMV9j2DYXPVGVRHv2cZdyc9Y2venQneTq7Z",
-      "url": "https://testnet.nearblocks.io/txns/HyAicYxvMXMV9j2DYXPVGVRHv2cZdyc9Y2venQneTq7Z"
+      "hash": "7tM75SZT6U15Brz9pRC5EGSdmqkSR4bEUyFDqApSGGGP",
+      "url": "https://testnet.nearblocks.io/txns/7tM75SZT6U15Brz9pRC5EGSdmqkSR4bEUyFDqApSGGGP"
     },
     {
       "step": "register bound on mock-usdc (storage_deposit)",
-      "hash": "BsFx34MRSjFaxF5fas5aDiYVCd4RpUNGgxg3r9gUA6QQ",
-      "url": "https://testnet.nearblocks.io/txns/BsFx34MRSjFaxF5fas5aDiYVCd4RpUNGgxg3r9gUA6QQ"
+      "hash": "GVbWcQmDUrDLZ2e147pLBK1iyYsJqs8QHZigJLXGKVoS",
+      "url": "https://testnet.nearblocks.io/txns/GVbWcQmDUrDLZ2e147pLBK1iyYsJqs8QHZigJLXGKVoS"
     }
   ],
   "demoRuns": [
     {
-      "runId": "mwfiv11v",
-      "evidence": "near/evidence/near-demo-mwfiv11v.json",
-      "agent": "bound-agent-mwfiv11v.testnet",
-      "agent2": "bound-agent2-mwfiv11v.testnet",
+      "runId": "mwfnc6q8",
+      "evidence": "near/evidence/near-demo-mwfnc6q8.json",
+      "agent": "bound-agent-mwfnc6q8.testnet",
+      "agent2": "bound-agent2-mwfnc6q8.testnet",
       "certId": 0,
       "cert2Id": 1,
       "txs": [
         {
           "act": 1,
-          "step": "mint 1330 mUSDC to bound-operator-mwfiv11v.testnet",
-          "hash": "Do8QYk5izxn7ViUX6ogmd78RmzJmkkopFtDewDrGBUJL",
-          "url": "https://testnet.nearblocks.io/txns/Do8QYk5izxn7ViUX6ogmd78RmzJmkkopFtDewDrGBUJL",
+          "step": "mint 1330 mUSDC to bound-operator-mwfnc6q8.testnet",
+          "hash": "9HHCATXVsC2Lz3gW1YYiLpBUGMs6XtYboRiAwn6G3Q2k",
+          "url": "https://testnet.nearblocks.io/txns/9HHCATXVsC2Lz3gW1YYiLpBUGMs6XtYboRiAwn6G3Q2k",
           "ok": true
         },
         {
           "act": 1,
-          "step": "mint 600 mUSDC to bound-auditor-mwfiv11v.testnet",
-          "hash": "4x48weAVTPn2ouowtUKYkLAXwQix8y3jHYoSp385QXmX",
-          "url": "https://testnet.nearblocks.io/txns/4x48weAVTPn2ouowtUKYkLAXwQix8y3jHYoSp385QXmX",
+          "step": "mint 600 mUSDC to bound-auditor-mwfnc6q8.testnet",
+          "hash": "FEJcmfHryYxDyakgUiDtG2TJ61FDLtrXBzKrnarJKBrE",
+          "url": "https://testnet.nearblocks.io/txns/FEJcmfHryYxDyakgUiDtG2TJ61FDLtrXBzKrnarJKBrE",
           "ok": true
         },
         {
           "act": 1,
-          "step": "mint 50 mUSDC to bound-challenger-mwfiv11v.testnet",
-          "hash": "5CDJneBVpb9BYjiyz76SE4Y7vU4pWhqHxRYKmrFwCmWY",
-          "url": "https://testnet.nearblocks.io/txns/5CDJneBVpb9BYjiyz76SE4Y7vU4pWhqHxRYKmrFwCmWY",
+          "step": "mint 50 mUSDC to bound-challenger-mwfnc6q8.testnet",
+          "hash": "Go9s9WBgvacY8EMw8YdbshbH6jrF8xrBjZvt2AYFB2su",
+          "url": "https://testnet.nearblocks.io/txns/Go9s9WBgvacY8EMw8YdbshbH6jrF8xrBjZvt2AYFB2su",
           "ok": true
         },
         {
           "act": 1,
-          "step": "mint 10 mUSDC to bound-service-mwfiv11v.testnet",
-          "hash": "Ehzyy1hi3ekLGvX1QBpoWPE6KUuVy9iRzty1dRrh7g3q",
-          "url": "https://testnet.nearblocks.io/txns/Ehzyy1hi3ekLGvX1QBpoWPE6KUuVy9iRzty1dRrh7g3q",
+          "step": "mint 10 mUSDC to bound-service-mwfnc6q8.testnet",
+          "hash": "9Ssq5FgkipwoU4tgZYkPxehJY9NQ62Sb3nWnjsX1uJiX",
+          "url": "https://testnet.nearblocks.io/txns/9Ssq5FgkipwoU4tgZYkPxehJY9NQ62Sb3nWnjsX1uJiX",
           "ok": true
         },
         {
           "act": 1,
-          "step": "bound-operator-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
-          "hash": "DTJnsNqLtkpSkvgPo8aVXfGJCXvE7vEBwhbveYC9ozY5",
-          "url": "https://testnet.nearblocks.io/txns/DTJnsNqLtkpSkvgPo8aVXfGJCXvE7vEBwhbveYC9ozY5",
+          "step": "bound-operator-mwfnc6q8.testnet storage_deposit on bound (0.01 NEAR)",
+          "hash": "2FrmYo8amwqESrtHo1pA915P3CumdPrGiJyfKA28oCoW",
+          "url": "https://testnet.nearblocks.io/txns/2FrmYo8amwqESrtHo1pA915P3CumdPrGiJyfKA28oCoW",
           "ok": true
         },
         {
           "act": 1,
-          "step": "bound-auditor-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
-          "hash": "4aKGRLKshoHv2pN6mJQLcKHPeRwrd4DQS5Jn1wBcJXHe",
-          "url": "https://testnet.nearblocks.io/txns/4aKGRLKshoHv2pN6mJQLcKHPeRwrd4DQS5Jn1wBcJXHe",
+          "step": "bound-auditor-mwfnc6q8.testnet storage_deposit on bound (0.01 NEAR)",
+          "hash": "GRYkcKMwP14BmTcjrpyRMXUsxzFb6N2wF3QPE4TYKtVY",
+          "url": "https://testnet.nearblocks.io/txns/GRYkcKMwP14BmTcjrpyRMXUsxzFb6N2wF3QPE4TYKtVY",
           "ok": true
         },
         {
           "act": 1,
-          "step": "bound-challenger-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
-          "hash": "93AQJPqnmpCEXGWT8ATiJehqCYCYdKm43nFcydRxWzVK",
-          "url": "https://testnet.nearblocks.io/txns/93AQJPqnmpCEXGWT8ATiJehqCYCYdKm43nFcydRxWzVK",
+          "step": "bound-challenger-mwfnc6q8.testnet storage_deposit on bound (0.01 NEAR)",
+          "hash": "8vazNDen97WystAYPwPn7LN3z9tBEovwMbym3HiZdfcX",
+          "url": "https://testnet.nearblocks.io/txns/8vazNDen97WystAYPwPn7LN3z9tBEovwMbym3HiZdfcX",
           "ok": true
         },
         {
           "act": 1,
-          "step": "bound-service-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
-          "hash": "HQjPgkz3ooq4av4chF8zHV6wUHZZEmnFC3oX6ffjrnf8",
-          "url": "https://testnet.nearblocks.io/txns/HQjPgkz3ooq4av4chF8zHV6wUHZZEmnFC3oX6ffjrnf8",
+          "step": "bound-service-mwfnc6q8.testnet storage_deposit on bound (0.01 NEAR)",
+          "hash": "6zm26Xrjgg1x3tsb7C32xWN2sM1bmi5zqcjXvEJYcigH",
+          "url": "https://testnet.nearblocks.io/txns/6zm26Xrjgg1x3tsb7C32xWN2sM1bmi5zqcjXvEJYcigH",
           "ok": true
         },
         {
           "act": 2,
           "step": "auditor stakes 600 via ft_transfer_call",
-          "hash": "9rR6c5AYqL4KcHWQN34cYQbJwgs5AZanFp7oqJh8Rdms",
-          "url": "https://testnet.nearblocks.io/txns/9rR6c5AYqL4KcHWQN34cYQbJwgs5AZanFp7oqJh8Rdms",
+          "hash": "7U2XZ4FaBayK1oybTmKCJAdVjdrFQC5MY5tp7bydYAJb",
+          "url": "https://testnet.nearblocks.io/txns/7U2XZ4FaBayK1oybTmKCJAdVjdrFQC5MY5tp7bydYAJb",
           "ok": true
         },
         {
           "act": 2,
           "step": "operator deposits 1300 via ft_transfer_call",
-          "hash": "6m9XnwPEHvJ5bfBEDhzZoq6fWxAsFLhmyXkYQune6mCr",
-          "url": "https://testnet.nearblocks.io/txns/6m9XnwPEHvJ5bfBEDhzZoq6fWxAsFLhmyXkYQune6mCr",
+          "hash": "8TLefjRVoVoTHxL8W1UYCvd6TjrH3oFNs2eWWkMNTHrw",
+          "url": "https://testnet.nearblocks.io/txns/8TLefjRVoVoTHxL8W1UYCvd6TjrH3oFNs2eWWkMNTHrw",
           "ok": true
         },
         {
           "act": 2,
           "step": "challenger deposits 50",
-          "hash": "HJy7ehLjtFH66WXvjfN8F5BeVy3X23KerzQZiVRPKnGo",
-          "url": "https://testnet.nearblocks.io/txns/HJy7ehLjtFH66WXvjfN8F5BeVy3X23KerzQZiVRPKnGo",
+          "hash": "Grhmh8SrKewUCruAeJ27eb4tyEcH1xn3d6M8SNcHJP5t",
+          "url": "https://testnet.nearblocks.io/txns/Grhmh8SrKewUCruAeJ27eb4tyEcH1xn3d6M8SNcHJP5t",
           "ok": true
         },
         {
           "act": 2,
           "step": "service deposits 10 (for its claim bond)",
-          "hash": "6Px5kGfCtfF6TyTbyqg1UHovQj2cTuRTf2aQqWK8Tfzz",
-          "url": "https://testnet.nearblocks.io/txns/6Px5kGfCtfF6TyTbyqg1UHovQj2cTuRTf2aQqWK8Tfzz",
+          "hash": "E21tLGC9QHmhZN5iuU6GK6cEC7jgu33gcgiyRHq2RjEc",
+          "url": "https://testnet.nearblocks.io/txns/E21tLGC9QHmhZN5iuU6GK6cEC7jgu33gcgiyRHq2RjEc",
           "ok": true
         },
         {
           "act": 2,
           "step": "operator publishes cert: bound 150, reserve 100, float cap 20, allowlist [service], premium 3, expires +1h",
-          "hash": "4x6PzUZVhQV4ixDepme1n4FE799xYRs9MFgrQ1ubqm5N",
-          "url": "https://testnet.nearblocks.io/txns/4x6PzUZVhQV4ixDepme1n4FE799xYRs9MFgrQ1ubqm5N",
+          "hash": "Ec2fCtsmyuQMpu88u4v1TME3JTSkjQrcqpQhnSaWY1AN",
+          "url": "https://testnet.nearblocks.io/txns/Ec2fCtsmyuQMpu88u4v1TME3JTSkjQrcqpQhnSaWY1AN",
           "ok": true
         },
         {
           "act": 2,
           "step": "agent accepts (its full-access key, the last time it is used)",
-          "hash": "9nHtssZeMKGrzCDxYs9EgMHnRqdvLG3UdHyVtUyVqukL",
-          "url": "https://testnet.nearblocks.io/txns/9nHtssZeMKGrzCDxYs9EgMHnRqdvLG3UdHyVtUyVqukL",
+          "hash": "EKuD1bmj5iRYJHpcAYHA2HVz9Te6zE6KZ68bavFcwaZ3",
+          "url": "https://testnet.nearblocks.io/txns/EKuD1bmj5iRYJHpcAYHA2HVz9Te6zE6KZ68bavFcwaZ3",
           "ok": true
         },
         {
           "act": 2,
           "step": "operator funds reserve 100",
-          "hash": "8qf5Z7zJYZNXRk8G2PN6VyMKCAPaLqh48hX9WYXUj65V",
-          "url": "https://testnet.nearblocks.io/txns/8qf5Z7zJYZNXRk8G2PN6VyMKCAPaLqh48hX9WYXUj65V",
+          "hash": "9AuoWUhPFQ2LeuRw1rEchZSGQJKbMyu9tEctoTuBC2QK",
+          "url": "https://testnet.nearblocks.io/txns/9AuoWUhPFQ2LeuRw1rEchZSGQJKbMyu9tEctoTuBC2QK",
           "ok": true
         },
         {
           "act": 2,
           "step": "operator funds float 20",
-          "hash": "HtkbnW2rvQ3YtdEjaMmiUTH5KCESR3bATKeDWEdSNdzq",
-          "url": "https://testnet.nearblocks.io/txns/HtkbnW2rvQ3YtdEjaMmiUTH5KCESR3bATKeDWEdSNdzq",
+          "hash": "3mi1p6MNv6kme5kRjE8g4MMu5dgcdu7uJzjwswqV6qwA",
+          "url": "https://testnet.nearblocks.io/txns/3mi1p6MNv6kme5kRjE8g4MMu5dgcdu7uJzjwswqV6qwA",
           "ok": true
         },
         {
           "act": 2,
           "step": "auditor attests, locking 200 of its stake behind this cert",
-          "hash": "E4AWvmn7T3R8duVNR7za1VRZUoZAm3jheEqwJZrcFYye",
-          "url": "https://testnet.nearblocks.io/txns/E4AWvmn7T3R8duVNR7za1VRZUoZAm3jheEqwJZrcFYye",
+          "hash": "8B53DHbhg7j54t82GDkHxsUFyB6gmLyWmw4tpDnGivWD",
+          "url": "https://testnet.nearblocks.io/txns/8B53DHbhg7j54t82GDkHxsUFyB6gmLyWmw4tpDnGivWD",
           "ok": true
         },
         {
           "act": 3,
-          "step": "agent adds a function-call key: receiver bound-v2.boundproto-nh26.testnet, methods [\"pay\"], allowance 0.25 NEAR (gas only)",
-          "hash": "9vLm1fg26CXw7innkyJHcZ5vCVtfaGipdqaLoU3J19GC",
-          "url": "https://testnet.nearblocks.io/txns/9vLm1fg26CXw7innkyJHcZ5vCVtfaGipdqaLoU3J19GC",
+          "step": "agent adds a function-call key: receiver bound-v3.boundproto-nh26.testnet, methods [\"pay\"], allowance 0.25 NEAR (gas only)",
+          "hash": "D7EQYAiKt7KszcH5Yh1k2CV198mZ9DXSovphVK8Vr483",
+          "url": "https://testnet.nearblocks.io/txns/D7EQYAiKt7KszcH5Yh1k2CV198mZ9DXSovphVK8Vr483",
           "ok": true
         },
         {
           "act": 3,
           "step": "agent DELETES its full-access key",
-          "hash": "DugHa1wY1CLpNd7LGDqHkcwHh2e6gPJcFjyRjfhBf9ko",
-          "url": "https://testnet.nearblocks.io/txns/DugHa1wY1CLpNd7LGDqHkcwHh2e6gPJcFjyRjfhBf9ko",
+          "hash": "3xo9H1JbMMTsZMowwwDCLhXuJ7VwzSdSpEbXQrkHcTkr",
+          "url": "https://testnet.nearblocks.io/txns/3xo9H1JbMMTsZMowwwDCLhXuJ7VwzSdSpEbXQrkHcTkr",
           "ok": true
         },
         {
           "act": 3,
           "step": "agent pays service 5 through bound pay (the function-call key, no deposit)",
-          "hash": "Hrs1ZY96Z4RVePnW3GWZ6aFoDPbwvtbayyyhzft5zmSG",
-          "url": "https://testnet.nearblocks.io/txns/Hrs1ZY96Z4RVePnW3GWZ6aFoDPbwvtbayyyhzft5zmSG",
+          "hash": "CfV9XQWjur7KrvwW11k9wf7dVis9SehEGgJN7DKkcK8k",
+          "url": "https://testnet.nearblocks.io/txns/CfV9XQWjur7KrvwW11k9wf7dVis9SehEGgJN7DKkcK8k",
           "ok": true
         },
         {
           "act": 4,
           "step": "agent pays 50 to service (float is 15)",
-          "hash": "737Yzh8PDwZhwf7rGmifE3Bsb1oxHSu4MW5zKjBAVeYW",
-          "url": "https://testnet.nearblocks.io/txns/737Yzh8PDwZhwf7rGmifE3Bsb1oxHSu4MW5zKjBAVeYW",
+          "hash": "DUe2fDHN9aDUaHH4s8dSpvtJtaXVjmTEZsMKxuapfZro",
+          "url": "https://testnet.nearblocks.io/txns/DUe2fDHN9aDUaHH4s8dSpvtJtaXVjmTEZsMKxuapfZro",
           "ok": false
         },
         {
           "act": 4,
-          "step": "agent pays 10 to bound-attacker-mwfiv11v.testnet",
-          "hash": "Gp8ouw9o7CsVPNAVaDfsViShrxSXdAtNHsSMWHJZDSLr",
-          "url": "https://testnet.nearblocks.io/txns/Gp8ouw9o7CsVPNAVaDfsViShrxSXdAtNHsSMWHJZDSLr",
+          "step": "agent pays 10 to bound-attacker-mwfnc6q8.testnet",
+          "hash": "CuXuHhfG58T7C3fFGxcuaBN5dEpWmdKMQXBB9MN9USF5",
+          "url": "https://testnet.nearblocks.io/txns/CuXuHhfG58T7C3fFGxcuaBN5dEpWmdKMQXBB9MN9USF5",
           "ok": false
         },
         {
           "act": 4,
           "step": "operator halts the cert",
-          "hash": "59yjzo9hqtjSk8kuKhCkfpZTxP2ZqGv22BEEAagpoH7S",
-          "url": "https://testnet.nearblocks.io/txns/59yjzo9hqtjSk8kuKhCkfpZTxP2ZqGv22BEEAagpoH7S",
+          "hash": "ZjNxTPtB1JyHXzBdPqRSRoVbzhBWq3Vp4sAFDfmJjq4",
+          "url": "https://testnet.nearblocks.io/txns/ZjNxTPtB1JyHXzBdPqRSRoVbzhBWq3Vp4sAFDfmJjq4",
           "ok": true
         },
         {
           "act": 4,
           "step": "agent pays 1 to service while halted",
-          "hash": "3W8DVi3CP6T6PZaxWxRp9qiWJxEe5JuFmQwgiM2aNAoJ",
-          "url": "https://testnet.nearblocks.io/txns/3W8DVi3CP6T6PZaxWxRp9qiWJxEe5JuFmQwgiM2aNAoJ",
+          "hash": "ceRd2LS6jCxNkzznTwgeU4Vn8wDemv7oUcf58u6HcEd",
+          "url": "https://testnet.nearblocks.io/txns/ceRd2LS6jCxNkzznTwgeU4Vn8wDemv7oUcf58u6HcEd",
           "ok": false
         },
         {
           "act": 5,
           "step": "challenger files BoundExceeded (bond 10) while spent 5 <= bound 150",
-          "hash": "9Lk9pQ697BuhH1FAhfipZgU8h3Lb6h1q2uTfsc3CWaq2",
-          "url": "https://testnet.nearblocks.io/txns/9Lk9pQ697BuhH1FAhfipZgU8h3Lb6h1q2uTfsc3CWaq2",
+          "hash": "FBSjeUNdQZ8w4ekmPo4Z9ds5bTbJmPtzGfX1bhvtHj6j",
+          "url": "https://testnet.nearblocks.io/txns/FBSjeUNdQZ8w4ekmPo4Z9ds5bTbJmPtzGfX1bhvtHj6j",
           "ok": true
         },
         {
           "act": 6,
-          "step": "service files Harm 120 citing near/evidence/gate-mwfiv11v-invoices.json#inv-1 (bond 10)",
-          "hash": "F9s2x5nGB61h1hBtXUUHibBLYezTVjD6YenwYvYcRMor",
-          "url": "https://testnet.nearblocks.io/txns/F9s2x5nGB61h1hBtXUUHibBLYezTVjD6YenwYvYcRMor",
+          "step": "service files Harm 120 citing near/evidence/gate-mwfnc6q8-invoices.json#inv-1 (bond 10)",
+          "hash": "FkAyuN4qvegyRbEi1PsPvQ1pyeRmZdjqf7jgX7c5r5RX",
+          "url": "https://testnet.nearblocks.io/txns/FkAyuN4qvegyRbEi1PsPvQ1pyeRmZdjqf7jgX7c5r5RX",
           "ok": true
         },
         {
           "act": 6,
           "step": "anyone tries to close the window right away",
-          "hash": "E8jkmauydVJ26QggnAQgTG3jii748XVcPjijbX6CPkqg",
-          "url": "https://testnet.nearblocks.io/txns/E8jkmauydVJ26QggnAQgTG3jii748XVcPjijbX6CPkqg",
+          "hash": "6mh2Dz18dhLUS5ABzVb7fLrAeK3SLowTJpjeGXkVVYRL",
+          "url": "https://testnet.nearblocks.io/txns/6mh2Dz18dhLUS5ABzVb7fLrAeK3SLowTJpjeGXkVVYRL",
           "ok": false
         },
         {
           "act": 6,
           "step": "arbiter resolves: proven, harm 120",
-          "hash": "EmBcWDzctAEUKFZB4BnmbPqcH5iDrKWsK2mKe2eRzeUv",
-          "url": "https://testnet.nearblocks.io/txns/EmBcWDzctAEUKFZB4BnmbPqcH5iDrKWsK2mKe2eRzeUv",
+          "hash": "4HyE7LAsygqR7MsJgaoqwg6cFeNwAsCPNSSLppbdkHyY",
+          "url": "https://testnet.nearblocks.io/txns/4HyE7LAsygqR7MsJgaoqwg6cFeNwAsCPNSSLppbdkHyY",
           "ok": true
         },
         {
           "act": 6,
           "step": "operator resumes (so the next refusal is the freeze, not the halt)",
-          "hash": "83bgvKV79bPyWeWgvn7yucw9qSxMQJvVWUNXpeovvP56",
-          "url": "https://testnet.nearblocks.io/txns/83bgvKV79bPyWeWgvn7yucw9qSxMQJvVWUNXpeovvP56",
+          "hash": "9oFv91GuWAgpy6SYK4pxbJJyWzEck4mxGsh7Krz1hBZX",
+          "url": "https://testnet.nearblocks.io/txns/9oFv91GuWAgpy6SYK4pxbJJyWzEck4mxGsh7Krz1hBZX",
           "ok": true
         },
         {
           "act": 6,
           "step": "agent pays 1 while the claim window is open",
-          "hash": "7hGu8ZCPyY2tJDP9qQofS2qg13fVW1nkw8PKY7qTSq2y",
-          "url": "https://testnet.nearblocks.io/txns/7hGu8ZCPyY2tJDP9qQofS2qg13fVW1nkw8PKY7qTSq2y",
+          "hash": "6ABTGrX7KNTQXXTVNp76vjkwF1Cpj4RwJ32XqKrz8xWE",
+          "url": "https://testnet.nearblocks.io/txns/6ABTGrX7KNTQXXTVNp76vjkwF1Cpj4RwJ32XqKrz8xWE",
           "ok": false
         },
         {
           "act": 7,
           "step": "challenger (anyone) calls close_window",
-          "hash": "9D2aiLU5VBQyCZ8KD3rEYRHXakL3FeVdhjFUgVta47CB",
-          "url": "https://testnet.nearblocks.io/txns/9D2aiLU5VBQyCZ8KD3rEYRHXakL3FeVdhjFUgVta47CB",
+          "hash": "GT4SuspDnRd4m2N6XDy35h9P6fqKwYZ1SWMvQ1oStwDu",
+          "url": "https://testnet.nearblocks.io/txns/GT4SuspDnRd4m2N6XDy35h9P6fqKwYZ1SWMvQ1oStwDu",
           "ok": true
         },
         {
           "act": 7,
           "step": "service withdraws 135 to its token account",
-          "hash": "6yM6BresGGPepxxoCqGCq74RBYKoYNJKQsgPAtd7VZdR",
-          "url": "https://testnet.nearblocks.io/txns/6yM6BresGGPepxxoCqGCq74RBYKoYNJKQsgPAtd7VZdR",
+          "hash": "AReDbvB1croL5oq8QwBtFpCuF69oeshxBssBgNaTWrfD",
+          "url": "https://testnet.nearblocks.io/txns/AReDbvB1croL5oq8QwBtFpCuF69oeshxBssBgNaTWrfD",
           "ok": true
         },
         {
           "act": 8,
           "step": "operator publishes cert 2 for agent2: bound 50, reserve 30, float cap 10, premium 1",
-          "hash": "495EqDiq9fCdGyVvMLxcqKSq7rbP2g9F7kjUVg8WoKTb",
-          "url": "https://testnet.nearblocks.io/txns/495EqDiq9fCdGyVvMLxcqKSq7rbP2g9F7kjUVg8WoKTb",
+          "hash": "FGuXn4DModurmVqPyEQspjtniTg7qx5BYVMHEw4Ey8RC",
+          "url": "https://testnet.nearblocks.io/txns/FGuXn4DModurmVqPyEQspjtniTg7qx5BYVMHEw4Ey8RC",
           "ok": true
         },
         {
           "act": 8,
           "step": "agent2 accepts",
-          "hash": "FvBbW3dqDwRrpP5upQMxqN3kAs8umBetfK7ygqjqvQeW",
-          "url": "https://testnet.nearblocks.io/txns/FvBbW3dqDwRrpP5upQMxqN3kAs8umBetfK7ygqjqvQeW",
+          "hash": "2bWEtMYCopzc6Wb5Dq4WJvXrRcq7tLSE28gX3df6ZUmQ",
+          "url": "https://testnet.nearblocks.io/txns/2bWEtMYCopzc6Wb5Dq4WJvXrRcq7tLSE28gX3df6ZUmQ",
           "ok": true
         },
         {
           "act": 8,
           "step": "operator funds reserve 30 (ft_transfer_call with the reserve action)",
-          "hash": "CDzpsULznpjGZNivu2KjcWYyGcvAKZziiw2m8g38Doqz",
-          "url": "https://testnet.nearblocks.io/txns/CDzpsULznpjGZNivu2KjcWYyGcvAKZziiw2m8g38Doqz",
+          "hash": "5yPBo61QCEpC4YYeGcp5sLxcx6mUaCqo4AHdUfLzMSRU",
+          "url": "https://testnet.nearblocks.io/txns/5yPBo61QCEpC4YYeGcp5sLxcx6mUaCqo4AHdUfLzMSRU",
           "ok": true
         },
         {
           "act": 8,
           "step": "operator funds float 10",
-          "hash": "2ozrVFAYGkrUKfDm6axq4ZeWX1hPBAJR4dZ3uqsavu1A",
-          "url": "https://testnet.nearblocks.io/txns/2ozrVFAYGkrUKfDm6axq4ZeWX1hPBAJR4dZ3uqsavu1A",
+          "hash": "ChMUHNgWmmY63Ktvo8LRsp5ebrbC3RNg2dytBCtRknzL",
+          "url": "https://testnet.nearblocks.io/txns/ChMUHNgWmmY63Ktvo8LRsp5ebrbC3RNg2dytBCtRknzL",
           "ok": true
         },
         {
           "act": 8,
           "step": "auditor attests cert 2 with 100",
-          "hash": "AzxwmPjkLypsWms7R5T7RTarr1C5cQTZph1dMXmvvrbG",
-          "url": "https://testnet.nearblocks.io/txns/AzxwmPjkLypsWms7R5T7RTarr1C5cQTZph1dMXmvvrbG",
+          "hash": "DL9WpZ8MnMmjpWTZ9AeJA9VmpTRbjjS594sG7w8ZhiNR",
+          "url": "https://testnet.nearblocks.io/txns/DL9WpZ8MnMmjpWTZ9AeJA9VmpTRbjjS594sG7w8ZhiNR",
           "ok": true
         }
       ],
@@ -342,7 +342,7 @@
         {
           "act": 4,
           "step": "same key calls mint on the token (no deposit needed)",
-          "error": "AccessKeyReceiverMismatchActionError: Access key receiver bound-v2.boundproto-nh26.testnet does not match transaction receiver usdc.boundproto-nh26.testnet"
+          "error": "AccessKeyReceiverMismatchActionError: Access key receiver bound-v3.boundproto-nh26.testnet does not match transaction receiver usdc.boundproto-nh26.testnet"
         },
         {
           "act": 4,
@@ -358,6 +358,319 @@
     }
   ],
   "previous": [
+    {
+      "accountId": "bound-v2.boundproto-nh26.testnet",
+      "codeHash": "AZU11gUWgawHb91Zr6maxPqoYAdS89ftNjfT5e3De1b",
+      "wasmSha256": "0272efa860c3960d63c00e503f9c84f86ed9f3ef5bc61586183ab98807069a76",
+      "deployedAt": "2026-11-13T22:01:51.189Z",
+      "supersededAt": "2026-11-14T00:07:13.323Z",
+      "reason": "review round 2 fixes (feafba6..87a7381): bound-v2 ran the pre-fix code",
+      "txs": [
+        {
+          "step": "deploy bound (create + deploy + new)",
+          "hash": "HyAicYxvMXMV9j2DYXPVGVRHv2cZdyc9Y2venQneTq7Z",
+          "url": "https://testnet.nearblocks.io/txns/HyAicYxvMXMV9j2DYXPVGVRHv2cZdyc9Y2venQneTq7Z"
+        },
+        {
+          "step": "register bound on mock-usdc (storage_deposit)",
+          "hash": "BsFx34MRSjFaxF5fas5aDiYVCd4RpUNGgxg3r9gUA6QQ",
+          "url": "https://testnet.nearblocks.io/txns/BsFx34MRSjFaxF5fas5aDiYVCd4RpUNGgxg3r9gUA6QQ"
+        }
+      ],
+      "demoRuns": [
+        {
+          "runId": "mwfiv11v",
+          "evidence": "near/evidence/near-demo-mwfiv11v.json",
+          "agent": "bound-agent-mwfiv11v.testnet",
+          "agent2": "bound-agent2-mwfiv11v.testnet",
+          "certId": 0,
+          "cert2Id": 1,
+          "txs": [
+            {
+              "act": 1,
+              "step": "mint 1330 mUSDC to bound-operator-mwfiv11v.testnet",
+              "hash": "Do8QYk5izxn7ViUX6ogmd78RmzJmkkopFtDewDrGBUJL",
+              "url": "https://testnet.nearblocks.io/txns/Do8QYk5izxn7ViUX6ogmd78RmzJmkkopFtDewDrGBUJL",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "mint 600 mUSDC to bound-auditor-mwfiv11v.testnet",
+              "hash": "4x48weAVTPn2ouowtUKYkLAXwQix8y3jHYoSp385QXmX",
+              "url": "https://testnet.nearblocks.io/txns/4x48weAVTPn2ouowtUKYkLAXwQix8y3jHYoSp385QXmX",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "mint 50 mUSDC to bound-challenger-mwfiv11v.testnet",
+              "hash": "5CDJneBVpb9BYjiyz76SE4Y7vU4pWhqHxRYKmrFwCmWY",
+              "url": "https://testnet.nearblocks.io/txns/5CDJneBVpb9BYjiyz76SE4Y7vU4pWhqHxRYKmrFwCmWY",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "mint 10 mUSDC to bound-service-mwfiv11v.testnet",
+              "hash": "Ehzyy1hi3ekLGvX1QBpoWPE6KUuVy9iRzty1dRrh7g3q",
+              "url": "https://testnet.nearblocks.io/txns/Ehzyy1hi3ekLGvX1QBpoWPE6KUuVy9iRzty1dRrh7g3q",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "bound-operator-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
+              "hash": "DTJnsNqLtkpSkvgPo8aVXfGJCXvE7vEBwhbveYC9ozY5",
+              "url": "https://testnet.nearblocks.io/txns/DTJnsNqLtkpSkvgPo8aVXfGJCXvE7vEBwhbveYC9ozY5",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "bound-auditor-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
+              "hash": "4aKGRLKshoHv2pN6mJQLcKHPeRwrd4DQS5Jn1wBcJXHe",
+              "url": "https://testnet.nearblocks.io/txns/4aKGRLKshoHv2pN6mJQLcKHPeRwrd4DQS5Jn1wBcJXHe",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "bound-challenger-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
+              "hash": "93AQJPqnmpCEXGWT8ATiJehqCYCYdKm43nFcydRxWzVK",
+              "url": "https://testnet.nearblocks.io/txns/93AQJPqnmpCEXGWT8ATiJehqCYCYdKm43nFcydRxWzVK",
+              "ok": true
+            },
+            {
+              "act": 1,
+              "step": "bound-service-mwfiv11v.testnet storage_deposit on bound (0.01 NEAR)",
+              "hash": "HQjPgkz3ooq4av4chF8zHV6wUHZZEmnFC3oX6ffjrnf8",
+              "url": "https://testnet.nearblocks.io/txns/HQjPgkz3ooq4av4chF8zHV6wUHZZEmnFC3oX6ffjrnf8",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "auditor stakes 600 via ft_transfer_call",
+              "hash": "9rR6c5AYqL4KcHWQN34cYQbJwgs5AZanFp7oqJh8Rdms",
+              "url": "https://testnet.nearblocks.io/txns/9rR6c5AYqL4KcHWQN34cYQbJwgs5AZanFp7oqJh8Rdms",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "operator deposits 1300 via ft_transfer_call",
+              "hash": "6m9XnwPEHvJ5bfBEDhzZoq6fWxAsFLhmyXkYQune6mCr",
+              "url": "https://testnet.nearblocks.io/txns/6m9XnwPEHvJ5bfBEDhzZoq6fWxAsFLhmyXkYQune6mCr",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "challenger deposits 50",
+              "hash": "HJy7ehLjtFH66WXvjfN8F5BeVy3X23KerzQZiVRPKnGo",
+              "url": "https://testnet.nearblocks.io/txns/HJy7ehLjtFH66WXvjfN8F5BeVy3X23KerzQZiVRPKnGo",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "service deposits 10 (for its claim bond)",
+              "hash": "6Px5kGfCtfF6TyTbyqg1UHovQj2cTuRTf2aQqWK8Tfzz",
+              "url": "https://testnet.nearblocks.io/txns/6Px5kGfCtfF6TyTbyqg1UHovQj2cTuRTf2aQqWK8Tfzz",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "operator publishes cert: bound 150, reserve 100, float cap 20, allowlist [service], premium 3, expires +1h",
+              "hash": "4x6PzUZVhQV4ixDepme1n4FE799xYRs9MFgrQ1ubqm5N",
+              "url": "https://testnet.nearblocks.io/txns/4x6PzUZVhQV4ixDepme1n4FE799xYRs9MFgrQ1ubqm5N",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "agent accepts (its full-access key, the last time it is used)",
+              "hash": "9nHtssZeMKGrzCDxYs9EgMHnRqdvLG3UdHyVtUyVqukL",
+              "url": "https://testnet.nearblocks.io/txns/9nHtssZeMKGrzCDxYs9EgMHnRqdvLG3UdHyVtUyVqukL",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "operator funds reserve 100",
+              "hash": "8qf5Z7zJYZNXRk8G2PN6VyMKCAPaLqh48hX9WYXUj65V",
+              "url": "https://testnet.nearblocks.io/txns/8qf5Z7zJYZNXRk8G2PN6VyMKCAPaLqh48hX9WYXUj65V",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "operator funds float 20",
+              "hash": "HtkbnW2rvQ3YtdEjaMmiUTH5KCESR3bATKeDWEdSNdzq",
+              "url": "https://testnet.nearblocks.io/txns/HtkbnW2rvQ3YtdEjaMmiUTH5KCESR3bATKeDWEdSNdzq",
+              "ok": true
+            },
+            {
+              "act": 2,
+              "step": "auditor attests, locking 200 of its stake behind this cert",
+              "hash": "E4AWvmn7T3R8duVNR7za1VRZUoZAm3jheEqwJZrcFYye",
+              "url": "https://testnet.nearblocks.io/txns/E4AWvmn7T3R8duVNR7za1VRZUoZAm3jheEqwJZrcFYye",
+              "ok": true
+            },
+            {
+              "act": 3,
+              "step": "agent adds a function-call key: receiver bound-v2.boundproto-nh26.testnet, methods [\"pay\"], allowance 0.25 NEAR (gas only)",
+              "hash": "9vLm1fg26CXw7innkyJHcZ5vCVtfaGipdqaLoU3J19GC",
+              "url": "https://testnet.nearblocks.io/txns/9vLm1fg26CXw7innkyJHcZ5vCVtfaGipdqaLoU3J19GC",
+              "ok": true
+            },
+            {
+              "act": 3,
+              "step": "agent DELETES its full-access key",
+              "hash": "DugHa1wY1CLpNd7LGDqHkcwHh2e6gPJcFjyRjfhBf9ko",
+              "url": "https://testnet.nearblocks.io/txns/DugHa1wY1CLpNd7LGDqHkcwHh2e6gPJcFjyRjfhBf9ko",
+              "ok": true
+            },
+            {
+              "act": 3,
+              "step": "agent pays service 5 through bound pay (the function-call key, no deposit)",
+              "hash": "Hrs1ZY96Z4RVePnW3GWZ6aFoDPbwvtbayyyhzft5zmSG",
+              "url": "https://testnet.nearblocks.io/txns/Hrs1ZY96Z4RVePnW3GWZ6aFoDPbwvtbayyyhzft5zmSG",
+              "ok": true
+            },
+            {
+              "act": 4,
+              "step": "agent pays 50 to service (float is 15)",
+              "hash": "737Yzh8PDwZhwf7rGmifE3Bsb1oxHSu4MW5zKjBAVeYW",
+              "url": "https://testnet.nearblocks.io/txns/737Yzh8PDwZhwf7rGmifE3Bsb1oxHSu4MW5zKjBAVeYW",
+              "ok": false
+            },
+            {
+              "act": 4,
+              "step": "agent pays 10 to bound-attacker-mwfiv11v.testnet",
+              "hash": "Gp8ouw9o7CsVPNAVaDfsViShrxSXdAtNHsSMWHJZDSLr",
+              "url": "https://testnet.nearblocks.io/txns/Gp8ouw9o7CsVPNAVaDfsViShrxSXdAtNHsSMWHJZDSLr",
+              "ok": false
+            },
+            {
+              "act": 4,
+              "step": "operator halts the cert",
+              "hash": "59yjzo9hqtjSk8kuKhCkfpZTxP2ZqGv22BEEAagpoH7S",
+              "url": "https://testnet.nearblocks.io/txns/59yjzo9hqtjSk8kuKhCkfpZTxP2ZqGv22BEEAagpoH7S",
+              "ok": true
+            },
+            {
+              "act": 4,
+              "step": "agent pays 1 to service while halted",
+              "hash": "3W8DVi3CP6T6PZaxWxRp9qiWJxEe5JuFmQwgiM2aNAoJ",
+              "url": "https://testnet.nearblocks.io/txns/3W8DVi3CP6T6PZaxWxRp9qiWJxEe5JuFmQwgiM2aNAoJ",
+              "ok": false
+            },
+            {
+              "act": 5,
+              "step": "challenger files BoundExceeded (bond 10) while spent 5 <= bound 150",
+              "hash": "9Lk9pQ697BuhH1FAhfipZgU8h3Lb6h1q2uTfsc3CWaq2",
+              "url": "https://testnet.nearblocks.io/txns/9Lk9pQ697BuhH1FAhfipZgU8h3Lb6h1q2uTfsc3CWaq2",
+              "ok": true
+            },
+            {
+              "act": 6,
+              "step": "service files Harm 120 citing near/evidence/gate-mwfiv11v-invoices.json#inv-1 (bond 10)",
+              "hash": "F9s2x5nGB61h1hBtXUUHibBLYezTVjD6YenwYvYcRMor",
+              "url": "https://testnet.nearblocks.io/txns/F9s2x5nGB61h1hBtXUUHibBLYezTVjD6YenwYvYcRMor",
+              "ok": true
+            },
+            {
+              "act": 6,
+              "step": "anyone tries to close the window right away",
+              "hash": "E8jkmauydVJ26QggnAQgTG3jii748XVcPjijbX6CPkqg",
+              "url": "https://testnet.nearblocks.io/txns/E8jkmauydVJ26QggnAQgTG3jii748XVcPjijbX6CPkqg",
+              "ok": false
+            },
+            {
+              "act": 6,
+              "step": "arbiter resolves: proven, harm 120",
+              "hash": "EmBcWDzctAEUKFZB4BnmbPqcH5iDrKWsK2mKe2eRzeUv",
+              "url": "https://testnet.nearblocks.io/txns/EmBcWDzctAEUKFZB4BnmbPqcH5iDrKWsK2mKe2eRzeUv",
+              "ok": true
+            },
+            {
+              "act": 6,
+              "step": "operator resumes (so the next refusal is the freeze, not the halt)",
+              "hash": "83bgvKV79bPyWeWgvn7yucw9qSxMQJvVWUNXpeovvP56",
+              "url": "https://testnet.nearblocks.io/txns/83bgvKV79bPyWeWgvn7yucw9qSxMQJvVWUNXpeovvP56",
+              "ok": true
+            },
+            {
+              "act": 6,
+              "step": "agent pays 1 while the claim window is open",
+              "hash": "7hGu8ZCPyY2tJDP9qQofS2qg13fVW1nkw8PKY7qTSq2y",
+              "url": "https://testnet.nearblocks.io/txns/7hGu8ZCPyY2tJDP9qQofS2qg13fVW1nkw8PKY7qTSq2y",
+              "ok": false
+            },
+            {
+              "act": 7,
+              "step": "challenger (anyone) calls close_window",
+              "hash": "9D2aiLU5VBQyCZ8KD3rEYRHXakL3FeVdhjFUgVta47CB",
+              "url": "https://testnet.nearblocks.io/txns/9D2aiLU5VBQyCZ8KD3rEYRHXakL3FeVdhjFUgVta47CB",
+              "ok": true
+            },
+            {
+              "act": 7,
+              "step": "service withdraws 135 to its token account",
+              "hash": "6yM6BresGGPepxxoCqGCq74RBYKoYNJKQsgPAtd7VZdR",
+              "url": "https://testnet.nearblocks.io/txns/6yM6BresGGPepxxoCqGCq74RBYKoYNJKQsgPAtd7VZdR",
+              "ok": true
+            },
+            {
+              "act": 8,
+              "step": "operator publishes cert 2 for agent2: bound 50, reserve 30, float cap 10, premium 1",
+              "hash": "495EqDiq9fCdGyVvMLxcqKSq7rbP2g9F7kjUVg8WoKTb",
+              "url": "https://testnet.nearblocks.io/txns/495EqDiq9fCdGyVvMLxcqKSq7rbP2g9F7kjUVg8WoKTb",
+              "ok": true
+            },
+            {
+              "act": 8,
+              "step": "agent2 accepts",
+              "hash": "FvBbW3dqDwRrpP5upQMxqN3kAs8umBetfK7ygqjqvQeW",
+              "url": "https://testnet.nearblocks.io/txns/FvBbW3dqDwRrpP5upQMxqN3kAs8umBetfK7ygqjqvQeW",
+              "ok": true
+            },
+            {
+              "act": 8,
+              "step": "operator funds reserve 30 (ft_transfer_call with the reserve action)",
+              "hash": "CDzpsULznpjGZNivu2KjcWYyGcvAKZziiw2m8g38Doqz",
+              "url": "https://testnet.nearblocks.io/txns/CDzpsULznpjGZNivu2KjcWYyGcvAKZziiw2m8g38Doqz",
+              "ok": true
+            },
+            {
+              "act": 8,
+              "step": "operator funds float 10",
+              "hash": "2ozrVFAYGkrUKfDm6axq4ZeWX1hPBAJR4dZ3uqsavu1A",
+              "url": "https://testnet.nearblocks.io/txns/2ozrVFAYGkrUKfDm6axq4ZeWX1hPBAJR4dZ3uqsavu1A",
+              "ok": true
+            },
+            {
+              "act": 8,
+              "step": "auditor attests cert 2 with 100",
+              "hash": "AzxwmPjkLypsWms7R5T7RTarr1C5cQTZph1dMXmvvrbG",
+              "url": "https://testnet.nearblocks.io/txns/AzxwmPjkLypsWms7R5T7RTarr1C5cQTZph1dMXmvvrbG",
+              "ok": true
+            }
+          ],
+          "keyLevelRefusals": [
+            {
+              "act": 4,
+              "step": "same key calls ft_transfer on the token",
+              "error": "AccessKeyDepositWithFunctionCallActionError: Deposit is not allowed with function call"
+            },
+            {
+              "act": 4,
+              "step": "same key calls mint on the token (no deposit needed)",
+              "error": "AccessKeyReceiverMismatchActionError: Access key receiver bound-v2.boundproto-nh26.testnet does not match transaction receiver usdc.boundproto-nh26.testnet"
+            },
+            {
+              "act": 4,
+              "step": "same key calls bound withdraw (needs 1 yocto)",
+              "error": "AccessKeyDepositWithFunctionCallActionError: Deposit is not allowed with function call"
+            },
+            {
+              "act": 4,
+              "step": "same key sends 0.01 NEAR to the attacker",
+              "error": "AccessKeyRequiresFullAccessActionError: Access key requires full access"
+            }
+          ]
+        }
+      ]
+    },
     {
       "accountId": "bound-v1.boundproto-nh26.testnet",
       "codeHash": "FstF2Tj8nHkco8AGLJ2gqfiAqdgaoTbgkpjaBLFCvJcD",

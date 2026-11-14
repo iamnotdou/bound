@@ -1,0 +1,11 @@
+[
+  {
+    "id": "inv-1",
+    "agent": "bound-agent-mwfnc6q8.testnet",
+    "certId": 0,
+    "amount": "120000000",
+    "description": "batch inference job, post-paid",
+    "issuedAt": "2026-11-14T00:09:03.563Z",
+    "status": "unpaid"
+  }
+]
