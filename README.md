@@ -48,7 +48,7 @@ number a service can read: `coverage = reserve_locked + allocation`.
 | Token (testnet)             | [`usdc.boundproto-nh26.testnet`](https://testnet.nearblocks.io/address/usdc.boundproto-nh26.testnet): mock USDC, open mint, play money                                                                                                             |
 | Recorded demo run           | [`near/evidence/near-demo-mwfnc6q8.txt`](./near/evidence/near-demo-mwfnc6q8.txt): 41 steps, 37 txs, 36 assertions, 0 failed                                                                                                                        |
 | Recorded MCP agent run      | [`near/evidence/mcp-agent-mwfnc6q8.txt`](./near/evidence/mcp-agent-mwfnc6q8.txt)                                                                                                                                                                   |
-| Live demo (web)             | [bound-near.vercel.app/app/near](https://bound-near.vercel.app/app/near) (bound-web branch `near-hackathon`, read-only, no wallet). Run it locally with `near/README.md` step 6. The demo video is linked from the X post.                         |
+| Live demo (web)             | [near.boundprotocol.dev/app/near](https://near.boundprotocol.dev/app/near) (bound-web branch `near-hackathon`, read-only, no wallet). Run it locally with `near/README.md` step 6. The demo video is linked from the X post.                       |
 | Code written in the window  | bound: [`pre-hackathon...near-hackathon`](https://github.com/iamnotdou/bound/compare/pre-hackathon...near-hackathon), bound-web: [`pre-hackathon...near-hackathon`](https://github.com/iamnotdou/bound-web/compare/pre-hackathon...near-hackathon) |
 
 ### On-chain proof (NEAR testnet, run mwfnc6q8 on bound-v3)
@@ -275,7 +275,7 @@ What is not fixed is listed below: the trusted roles remain.
   superseded; `bound-v2` ran the code from before the second review's
   fixes (`near/DESIGN.md` section 10) and is superseded by `bound-v3`. Their
   runs stay in `near/evidence/` and are labeled.
-- The hosted web demo (https://bound-near.vercel.app/app/near) is a frozen deploy of the `hackathon-submission` commit; it reads live testnet state.
+- The hosted web demo (https://near.boundprotocol.dev/app/near) is a frozen deploy of the `hackathon-submission` commit; it reads live testnet state.
 - Old transactions are read from an archival RPC node; a rate-limited IP can
   see "could not be fetched just now" for them, which is labeled as no
   answer, not as a mismatch.
