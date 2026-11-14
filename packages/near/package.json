@@ -28,7 +28,7 @@
   },
   "sideEffects": false,
   "bin": {
-    "bound-near": "./dist/cli.js"
+    "bound-near": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
