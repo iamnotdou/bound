@@ -49,8 +49,10 @@ async function main() {
   const keys = await call("near_check_agent_keys", { agent: run.agent });
   check(
     `near_check_agent_keys ${run.agent} confined`,
-    keys.json?.confined === true && keys.json?.no_contract_code === true,
-    `${keys.json?.keys?.length} key(s), code_hash ${keys.json?.code_hash}`,
+    keys.json?.confined === true &&
+      keys.json?.no_contract_code === true &&
+      keys.json?.global_contract === null,
+    `${keys.json?.keys?.length} key(s), code_hash ${keys.json?.code_hash}, global contract ${keys.json?.global_contract}`,
   );
   const pay = await call("near_pay", { cert_id: run.cert2Id, to: "x.testnet", amount: "1" });
   check("near_pay without a key is refused locally", pay.isError && /disabled/.test(pay.text));

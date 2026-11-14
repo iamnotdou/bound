@@ -151,9 +151,9 @@ async function main() {
   );
   const k = await call("near_check_agent_keys", { agent: agentId });
   expect(
-    "near_check_agent_keys(self) -> confined (pay-only keys AND no contract code)",
-    k.confined === true && k.no_contract_code === true,
-    { keys: k.keys, code_hash: k.code_hash },
+    "near_check_agent_keys(self) -> confined (pay-only keys AND no contract code, local or global)",
+    k.confined === true && k.no_contract_code === true && k.global_contract === null,
+    { keys: k.keys, code_hash: k.code_hash, global_contract: k.global_contract },
   );
   const after = await view<CertViewJson>(provider, B, "get_cert", { cert_id: run.cert2Id });
   expect("float dropped by exactly 1", floatBefore - BigInt(after.float) === 1_000_000n, {

@@ -37,7 +37,7 @@ import {
   TGAS,
   accountFromKey,
   chainNow,
-  codeHashOf,
+  accountCodeOf,
   decodeOutcome,
   errorText,
   testnetProvider,
@@ -60,6 +60,7 @@ import {
   describeCert,
   explorerAccount,
   fmtUsdc,
+  globalContractOf,
   usdc,
   type CertViewJson,
 } from "../src/format.js";
@@ -477,10 +478,18 @@ async function main() {
   );
   // Keys are not the whole story: contract code on the agent account would
   // run as the agent with no key at all. Confined = pay-only keys AND no code.
-  const agentCode = await codeHashOf(provider, agent.accountId);
+  // A NEAR global contract also shows code_hash all ones, so the
+  // global_contract_* fields must be empty too.
+  const agentAcct = await accountCodeOf(provider, agent.accountId);
+  const agentCode = agentAcct.code_hash;
   extra.agentCodeHash = agentCode;
   out(`  view_account(${agent.accountId}).code_hash = ${agentCode}`);
   check("no contract code on the agent account (code_hash all ones)", agentCode, NO_CODE_HASH);
+  check(
+    "no global contract on the agent account (global_contract_hash and global_contract_account_id null)",
+    globalContractOf(agentAcct) ?? "none",
+    "none",
+  );
 
   const gate = new Gate(provider, B, service.accountId, usdc("5"), gateFiles);
   const g0 = await gate.handle({ agent: agent2.accountId });

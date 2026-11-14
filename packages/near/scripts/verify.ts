@@ -2,13 +2,13 @@
 // counterparty reads before dealing with an agent. Exit 0 if Verified,
 // 2 if the agent has a certificate in any other state, 3 if none.
 
-import { codeHashOf, testnetProvider, view, withRetry } from "../src/client.js";
+import { accountCodeOf, testnetProvider, view, withRetry } from "../src/client.js";
 import { loadDeployment } from "../src/deployment.js";
 import {
-  NO_CODE_HASH,
   assess,
   coverageOf,
   describeCert,
+  describeCode,
   fmtUsdc,
   isConfined,
   type AccessKeyInfo,
@@ -43,12 +43,10 @@ async function main() {
       } as never),
     )) as unknown as { keys: AccessKeyInfo[] }
   ).keys;
-  const code = await codeHashOf(provider, target);
+  const code = await accountCodeOf(provider, target);
   const confined = isConfined(keys, d.contracts.bound.accountId, code);
   console.log(
-    `  confinement: ${confined ? "confined" : "NOT confined"} (${keys.length} key(s), ${
-      code === NO_CODE_HASH ? "no contract code" : `contract code ${code}`
-    })`,
+    `  confinement: ${confined ? "confined" : "NOT confined"} (${keys.length} key(s), ${describeCode(code)})`,
   );
   if (v.settlement) console.log(`  settled: ${JSON.stringify(v.settlement)}`);
   console.log(`  decision: ${a.ok ? "deal (Verified)" : `refuse (${a.reason})`}`);
