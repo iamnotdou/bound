@@ -25,7 +25,7 @@ import {
   view,
   withRetry,
 } from "../src/client.js";
-import { DEMO_KEYS_DIR, EVIDENCE_DIR, loadDeployment } from "../src/deployment.js";
+import { DEMO_KEYS_DIR, EVIDENCE_DIR, loadDeployment } from "../tooling/deployment.js";
 import { keysConfined, type AccessKeyInfo, type CertViewJson } from "../src/format.js";
 import { createNearMcpServer } from "../src/mcp.js";
 

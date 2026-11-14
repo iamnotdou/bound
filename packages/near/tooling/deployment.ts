@@ -6,6 +6,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import type { KeyPairString } from "near-api-js";
+import { quietRpcRetryLogs } from "../src/quiet.js";
+
+// Every workspace script imports this module: keep their RPC retry noise off.
+quietRpcRetryLogs();
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(here, "../../..");

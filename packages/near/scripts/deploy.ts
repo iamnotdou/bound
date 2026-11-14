@@ -14,8 +14,8 @@ import {
   loadDeployment,
   readCredential,
   saveDeployment,
-} from "../src/deployment.js";
-import { WASM, deployAll } from "../src/deploy-lib.js";
+} from "../tooling/deployment.js";
+import { WASM, deployAll } from "../tooling/deploy-lib.js";
 
 function arg(name: string, def: string): string {
   const i = process.argv.indexOf(`--${name}`);

@@ -3,7 +3,7 @@
 // 2 if the agent has a certificate in any other state, 3 if none.
 
 import { accountCodeOf, testnetProvider, view, withRetry } from "../src/client.js";
-import { loadDeployment } from "../src/deployment.js";
+import { loadDeployment } from "../tooling/deployment.js";
 import {
   assess,
   coverageOf,

@@ -2,7 +2,7 @@
 // code_hash check and certificate count. Reads only; needs no credentials.
 
 import { testnetProvider, view, withRetry } from "../src/client.js";
-import { loadDeployment } from "../src/deployment.js";
+import { loadDeployment } from "../tooling/deployment.js";
 import { explorerAccount, explorerTx } from "../src/format.js";
 
 async function main() {

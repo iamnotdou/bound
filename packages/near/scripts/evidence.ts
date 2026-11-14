@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TESTNET_ARCHIVAL_RPCS, testnetProvider, withRetry } from "../src/client.js";
-import { EVIDENCE_DIR, REPO_ROOT, loadDeployment } from "../src/deployment.js";
+import { EVIDENCE_DIR, REPO_ROOT, loadDeployment } from "../tooling/deployment.js";
 
 interface Check {
   label: string;

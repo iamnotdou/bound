@@ -20,8 +20,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Provider } from "near-api-js";
-import { view } from "./client.js";
-import { assess, coverageOf, fmtUsdc, payEvents, type CertViewJson } from "./format.js";
+import { view } from "../src/client.js";
+import { assess, coverageOf, fmtUsdc, payEvents, type CertViewJson } from "../src/format.js";
 
 export interface GateRequest {
   agent: string;

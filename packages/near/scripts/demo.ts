@@ -53,8 +53,8 @@ import {
   readCredential,
   saveDeployment,
   type NearDeployment,
-} from "../src/deployment.js";
-import { deployAll } from "../src/deploy-lib.js";
+} from "../tooling/deployment.js";
+import { deployAll } from "../tooling/deploy-lib.js";
 import {
   NO_CODE_HASH,
   describeCert,
@@ -64,7 +64,7 @@ import {
   usdc,
   type CertViewJson,
 } from "../src/format.js";
-import { Gate } from "../src/gate.js";
+import { Gate } from "../tooling/gate.js";
 
 const FAUCET = "https://helper.nearprotocol.com/account";
 const fresh = process.argv.includes("--fresh");

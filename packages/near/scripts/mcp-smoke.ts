@@ -5,7 +5,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createNearMcpServer } from "../src/mcp.js";
-import { loadDeployment } from "../src/deployment.js";
+import { loadDeployment } from "../tooling/deployment.js";
 
 async function main() {
   const run = loadDeployment().demoRuns.at(-1)!;

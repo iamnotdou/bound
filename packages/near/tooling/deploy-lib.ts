@@ -7,8 +7,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Account, KeyPair, actions, baseEncode, nearToYocto, type Provider } from "near-api-js";
 import { NEAR_DIR, type NearDeployment, type TxRef, writeCredential } from "./deployment.js";
-import { TGAS, decodeOutcome, TESTNET_RPCS } from "./client.js";
-import { explorerTx } from "./format.js";
+import { TGAS, decodeOutcome, TESTNET_RPCS } from "../src/client.js";
+import { explorerTx } from "../src/format.js";
 
 export const WASM = {
   bound: join(NEAR_DIR, "target/near/bound/bound.wasm"),
