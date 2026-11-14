@@ -90,7 +90,7 @@ itself), cargo-near 0.23, node 22, pnpm 10. Run from the repo root.
 
 1. `git clone -b near-hackathon https://github.com/iamnotdou/bound && cd bound`
 2. `pnpm install --frozen-lockfile`: exit 0.
-3. `cd near && cargo test && cd ..`: see `127 passed` (unit), `2 passed`
+3. `cd near && cargo test && cd ..`: see `132 passed` (unit), `2 passed`
    (near-sandbox), `4 passed` (mock token). About 4 minutes cold; the first
    run downloads the sandbox binary.
 4. `near/scripts/verify.sh`: builds both wasm, checks their sha256 equals the
@@ -178,7 +178,7 @@ New in the window:
 - `near/contracts/bound`: the protocol as one near-sdk 5.30.1 contract
   (certificates, reserve, auditor stake and allocation, float and `pay`
   meter, allowlist, halt, claims, claim window, settlement waterfall,
-  storage management, NEP-297 events), with 127 unit tests and 2
+  storage management, NEP-297 events), with 132 unit tests and 2
   near-sandbox lifecycle tests.
 - `near/contracts/mock-usdc`: NEP-141/145/148 token with open mint.
 - `packages/near`: near-api-js client, deploy, the 8-act testnet demo, the

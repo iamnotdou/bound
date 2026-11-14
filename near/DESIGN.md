@@ -112,7 +112,7 @@ throwaway accounts.
 | Slash recipient          | the whole slash goes to the treasury                                | the slash pays unpaid ARBITRATED harm first, pro rata; only the rest goes to the treasury                                                                       | a victim whose harm exceeds the reserve is made whole up to `coverage = reserve + allocation`. Only arbiter-assessed victims receive it, so a predicate claimant still cannot self-deal                                                                  |
 | Unadjudicated claim      | bond returned                                                       | half the bond forfeited to the treasury                                                                                                                         | freezing a certificate must cost something; otherwise anyone can freeze it every window for free                                                                                                                                                         |
 | Who may challenge        | anyone                                                              | anyone except the cert's operator, agent and auditor (`ConflictedChallenger`)                                                                                   | stops the operator filling the 16 claim slots with junk to lock real victims out                                                                                                                                                                         |
-| Late claims              | fixed window                                                        | a claim with less than a third of a window left extends the window to now + window/3                                                                            | a late victim (and the arbiter) always get time                                                                                                                                                                                                          |
+| Late claims              | fixed window                                                        | a claim with less than a third of a window left extends the window to now + window/3, never past deadline + claim_window_secs (section 10)                      | a late victim (and the arbiter) always get time                                                                                                                                                                                                          |
 | Arbiter grace            | n/a                                                                 | `close_window` refuses (`ArbiterGrace`) while a Harm claim is undecided, until closes_at + window/3                                                             | nobody can front-run the arbiter by closing at the exact second                                                                                                                                                                                          |
 | Payments after deadline  | router stops at expiry + window                                     | `pay` refused from the settlement deadline on (`SettlementDeadlinePassed`), and only on the cert `verify(agent)` reports (`NotCurrentCert`)                     | spend that can no longer be challenged is not allowed; what a counterparty reads is what meters the agent                                                                                                                                                |
 | Ids                      | u32/u64 per contract                                                | ABI ids are u64; any id above u32::MAX is `NoSuchCert` / `NoSuchChallenge`; frozen = a window exists for the cert's own id                                      | bound-v1 truncated ids (`as u32`), so `2^32` aliased cert 0 with its own window (fixed in bound-v2, section 9)                                                                                                                                           |
@@ -148,34 +148,35 @@ catches). The demo's gate therefore extends credit up to
 
 ## 5. Test map
 
-Unit tests: `near/contracts/bound/src/tests.rs` (115) and `src/settle.rs` (12).
+Unit tests: `near/contracts/bound/src/tests.rs` (120) and `src/settle.rs` (12).
 Sandbox tests: `near/contracts/bound/tests/sandbox.rs` (2). Mock token: 4.
 
-| NEAR test                                                                                                                                                         | Corresponds to Soroban test (`contracts/integration-tests/tests/cross_contract.rs`)                                         |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `settle::harm_above_reserve_slashes_the_difference`, `demo_vector_harm_above_reserve`                                                                             | `insufficient_reserve_fraud_draws_the_reserve_first_then_the_allocation`                                                    |
-| `settle::harm_above_reserve_plus_allocation_is_capped`, `harm_above_reserve_plus_allocation_capped`                                                               | `slash_is_capped_by_the_certificates_allocation`                                                                            |
-| `settle::single_victim_harm_below_reserve_no_slash`, `harm_below_reserve_no_slash_fee_from_reserve`                                                               | `slash_is_capped_by_proven_harm`                                                                                            |
-| `settle::predicate_share_goes_to_treasury_not_victim`                                                                                                             | `insufficient_reserve_slash_goes_to_the_treasury_and_never_to_victim_or_challenger`                                         |
-| `settle::two_victims_pro_rata`, `two_victims_pro_rata`                                                                                                            | (new) pro-rata split of one window                                                                                          |
-| `false_insufficient_reserve_rejected_bond_to_treasury`                                                                                                            | `insufficient_reserve_no_fraud_forfeits_the_challengers_bond`, `over_funded_reserve_is_not_fraud`                           |
-| `challenge_bond_too_small_rejected`                                                                                                                               | `challenge_below_minimum_bond_is_rejected_without_moving_money`                                                             |
-| `bound_exceeded_settles_in_hygiene_mode`                                                                                                                          | `hygiene_mode_kills_the_certificate_and_pays_a_flat_bounty_without_touching_the_reserve` (bounty source differs, section 4) |
-| `verify_reads_expired_after_expiry`                                                                                                                               | `certificate_becomes_invalid_after_expiry`                                                                                  |
-| `release_reserve_before_deadline_rejected`, `release_allocation_before_deadline_rejected`                                                                         | `reserve_and_allocation_stay_locked_through_the_post_expiry_challenge_window`                                               |
-| `release_after_deadline_returns_collateral`                                                                                                                       | `clean_expiry_returns_stake_and_reserve`                                                                                    |
-| `attest_below_min_stake_rejected`, `attest_above_free_stake_rejected`                                                                                             | `under_staked_auditor_cannot_attest`                                                                                        |
-| `attest_by_other_rejected`                                                                                                                                        | `attest_rejects_a_signature_from_the_wrong_address`                                                                         |
-| `pending_cert_does_not_block_agent`, `second_live_cert_rejected`, `accept_by_other_rejected`                                                                      | `defect_publish_overwrites_agent_mapping_without_agent_consent`                                                             |
-| sandbox `withdraw_failure_recredits_and_guards_hold` (second `new` refused)                                                                                       | `defect_initialize_requires_no_authorization`                                                                               |
-| `verify_returns_verified_view`, sandbox `full_lifecycle_settles_victim`                                                                                           | `happy_path_publishes_funds_attests_and_verifies`                                                                           |
-| `alias_cert_id_rejected_everywhere`, `collateral_stays_locked_while_window_open`, `close_window_refuses_settled_cert`, `window_cap_holds`                         | (new, judge review B1) id aliasing regression tests                                                                         |
-| `conflicted_challenger_rejected`, `grief_freeze_costs_bond`, `late_claim_extends_window`, `arbiter_grace_blocks_front_run`                                        | (new, judge review M3) claim-window griefing                                                                                |
-| `premium_refunded_when_reserve_never_funded`, `pay_after_deadline_rejected`, `verify_reports_coverage`, `settle::slash_beyond_unpaid_harm_goes_to_treasury`       | (new, judge review m1, m2, M1)                                                                                              |
-| `c1_hygiene_settlement_keeps_liability_until_deadline`, `c1_tiny_fraud_settlement_keeps_liability_until_deadline`, `settled_cert_refuses_new_predicate_challenge` | (new, review 2026-11-14 C1, section 10)                                                                                     |
-| `c2_rejected_claims_free_slots_and_late_victim_is_heard`, `c2_duplicate_trustless_claim_refused`, `deadline_boundary_is_consistent`                               | (new, review 2026-11-14 C2 and deadline boundary)                                                                           |
-| `huge_harm_capped_at_coverage`, `conflicted_victim_rejected`, `excess_deposit_refunded`, `halted_or_empty_float_is_not_a_deal`, `superseded_cert_cannot_pay`      | (new, review 2026-11-14 minor findings)                                                                                     |
-| `large_coverage_settles_without_overflow`, `empty_second_settlement_keeps_the_first`, `settle::mul_div_is_exact_past_u128`, `settle::large_coverage_settles`      | (new, review 2026-11-14 round 2)                                                                                            |
+| NEAR test                                                                                                                                                                                                                             | Corresponds to Soroban test (`contracts/integration-tests/tests/cross_contract.rs`)                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `settle::harm_above_reserve_slashes_the_difference`, `demo_vector_harm_above_reserve`                                                                                                                                                 | `insufficient_reserve_fraud_draws_the_reserve_first_then_the_allocation`                                                    |
+| `settle::harm_above_reserve_plus_allocation_is_capped`, `harm_above_reserve_plus_allocation_capped`                                                                                                                                   | `slash_is_capped_by_the_certificates_allocation`                                                                            |
+| `settle::single_victim_harm_below_reserve_no_slash`, `harm_below_reserve_no_slash_fee_from_reserve`                                                                                                                                   | `slash_is_capped_by_proven_harm`                                                                                            |
+| `settle::predicate_share_goes_to_treasury_not_victim`                                                                                                                                                                                 | `insufficient_reserve_slash_goes_to_the_treasury_and_never_to_victim_or_challenger`                                         |
+| `settle::two_victims_pro_rata`, `two_victims_pro_rata`                                                                                                                                                                                | (new) pro-rata split of one window                                                                                          |
+| `false_insufficient_reserve_rejected_bond_to_treasury`                                                                                                                                                                                | `insufficient_reserve_no_fraud_forfeits_the_challengers_bond`, `over_funded_reserve_is_not_fraud`                           |
+| `challenge_bond_too_small_rejected`                                                                                                                                                                                                   | `challenge_below_minimum_bond_is_rejected_without_moving_money`                                                             |
+| `bound_exceeded_settles_in_hygiene_mode`                                                                                                                                                                                              | `hygiene_mode_kills_the_certificate_and_pays_a_flat_bounty_without_touching_the_reserve` (bounty source differs, section 4) |
+| `verify_reads_expired_after_expiry`                                                                                                                                                                                                   | `certificate_becomes_invalid_after_expiry`                                                                                  |
+| `release_reserve_before_deadline_rejected`, `release_allocation_before_deadline_rejected`                                                                                                                                             | `reserve_and_allocation_stay_locked_through_the_post_expiry_challenge_window`                                               |
+| `release_after_deadline_returns_collateral`                                                                                                                                                                                           | `clean_expiry_returns_stake_and_reserve`                                                                                    |
+| `attest_below_min_stake_rejected`, `attest_above_free_stake_rejected`                                                                                                                                                                 | `under_staked_auditor_cannot_attest`                                                                                        |
+| `attest_by_other_rejected`                                                                                                                                                                                                            | `attest_rejects_a_signature_from_the_wrong_address`                                                                         |
+| `pending_cert_does_not_block_agent`, `second_live_cert_rejected`, `accept_by_other_rejected`                                                                                                                                          | `defect_publish_overwrites_agent_mapping_without_agent_consent`                                                             |
+| sandbox `withdraw_failure_recredits_and_guards_hold` (second `new` refused)                                                                                                                                                           | `defect_initialize_requires_no_authorization`                                                                               |
+| `verify_returns_verified_view`, sandbox `full_lifecycle_settles_victim`                                                                                                                                                               | `happy_path_publishes_funds_attests_and_verifies`                                                                           |
+| `alias_cert_id_rejected_everywhere`, `collateral_stays_locked_while_window_open`, `close_window_refuses_settled_cert`, `window_cap_holds`                                                                                             | (new, judge review B1) id aliasing regression tests                                                                         |
+| `conflicted_challenger_rejected`, `grief_freeze_costs_bond`, `late_claim_extends_window`, `arbiter_grace_blocks_front_run`                                                                                                            | (new, judge review M3) claim-window griefing                                                                                |
+| `premium_refunded_when_reserve_never_funded`, `pay_after_deadline_rejected`, `verify_reports_coverage`, `settle::slash_beyond_unpaid_harm_goes_to_treasury`                                                                           | (new, judge review m1, m2, M1)                                                                                              |
+| `c1_hygiene_settlement_keeps_liability_until_deadline`, `c1_tiny_fraud_settlement_keeps_liability_until_deadline`, `settled_cert_refuses_new_predicate_challenge`                                                                     | (new, review 2026-11-14 C1, section 10)                                                                                     |
+| `c2_rejected_claims_free_slots_and_late_victim_is_heard`, `c2_duplicate_trustless_claim_refused`, `deadline_boundary_is_consistent`                                                                                                   | (new, review 2026-11-14 C2 and deadline boundary)                                                                           |
+| `huge_harm_capped_at_coverage`, `conflicted_victim_rejected`, `excess_deposit_refunded`, `halted_or_empty_float_is_not_a_deal`, `superseded_cert_cannot_pay`                                                                          | (new, review 2026-11-14 minor findings)                                                                                     |
+| `large_coverage_settles_without_overflow`, `empty_second_settlement_keeps_the_first`, `settle::mul_div_is_exact_past_u128`, `settle::large_coverage_settles`                                                                          | (new, review 2026-11-14 round 2)                                                                                            |
+| `r3_squatter_refill_is_paid_and_bounded`, `r3_freeze_ends_at_cap_plus_grace`, `r3_claim_into_expired_unclosed_window_reopens_it`, `r3_expired_view_is_not_a_deal_but_pay_still_works`, `r3_sixteen_capped_harms_sum_without_overflow` | (new, review 2026-11-14 round 3: documented behaviour, no code change)                                                      |
 
 ## 6. Security checklist
 
@@ -342,8 +343,10 @@ predicates could squat too, so a window takes one claim per predicate kind.
   rejection frees the slot, an attacker could reject-and-refile forever and
   keep the reserve and the allocation frozen past the deadline (one forfeited
   bond per cycle). The extension is now capped: `closes_at` never moves past
-  `deadline + claim_window_secs`; the arbiter grace in `close_window` still
-  follows the cap (`post_deadline_extension_is_capped`,
+  `deadline + claim_window_secs`. The arbiter grace in `close_window` runs
+  after that cap, so with a Harm claim still undecided the collateral stays
+  frozen until at most `deadline + claim_window_secs + claim_window_secs/3`
+  (`r3_freeze_ends_at_cap_plus_grace`, `post_deadline_extension_is_capped`,
   `claim_just_before_deadline_still_extends`).
 - _Emptied cert._ When a settlement drew the whole reserve and the float was
   0, `release_reserve` failed with `NothingToRelease` and the cert read
@@ -351,6 +354,29 @@ predicates could squat too, so a window takes one claim per predicate kind.
   returns 0; a second call still fails
   (`release_reserve_marks_released_when_empty`).
 - _Conservation test._ See the conservation bullet below.
+
+**Third review round (documentation and tests only, bound-v3 unchanged):**
+
+The third round found no blocker or major issue. Its minor findings are
+behaviours of the deployed code, now written down here and pinned by tests;
+the contract source changed only in a comment and the built wasm still hashes
+to the recorded bound-v3 value.
+
+- _Expired window, not yet closed._ Before the deadline, a claim filed into a
+  window whose `closes_at` has passed but that nobody has closed yet joins
+  that window (its `opened_at` stays) and pushes `closes_at` out under the
+  same extension rule and cap
+  (`r3_claim_into_expired_unclosed_window_reopens_it`).
+- _Expired view._ From `expires_at` on, the view reads `Expired` with
+  `deal=false`, while `pay` still works until the settlement deadline and
+  post-expiry spend is metered. This is deliberate: `deal=false` tells a
+  counterparty not to start new business with the agent, even though an
+  in-flight payment can still land
+  (`r3_expired_view_is_not_a_deal_but_pay_still_works`).
+- _Summed harm._ Each proven harm is capped at the coverage, and
+  `close_window` sums at most 16 of them in a u128. That can overflow only if
+  the coverage exceeds `u128::MAX / 16`, which the 6-decimal USDC token cannot
+  reach (`r3_sixteen_capped_harms_sum_without_overflow`).
 
 **Remaining limitations, stated honestly:**
 
@@ -360,7 +386,10 @@ predicates could squat too, so a window takes one claim per predicate kind.
   idle arbiter, 16 undecided claims cost the attacker only 16 half-bonds
   (80 USDC with the demo config).
 - _Refile race._ A rejection frees its slot, but the attacker can refile into
-  it in the same block, ahead of the victim. Each cycle costs the attacker one
+  it in the same block, ahead of the victim, before the deadline and after it
+  (`r3_squatter_refill_is_paid_and_bounded`). Relief for a late victim
+  depends on the arbiter's liveness: how fast it rejects junk claims and
+  whether the victim files first. Each cycle costs the attacker one
   forfeited bond, yet a determined attacker can keep a late victim out until
   the window closes, at the latest `deadline + claim_window_secs`. A real fix is a bond that grows with
   the number of claims in the window, or one slot held for claims that arrive

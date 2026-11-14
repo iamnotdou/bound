@@ -51,7 +51,7 @@ pnpm install --frozen-lockfile
 `verify.sh` also runs this install if `node_modules` is missing.
 
 1. Full lifecycle offline, with no network and no keys: `cd near && cargo test`
-   - You should see `test result: ok. 127 passed` (unit), then `2 passed`
+   - You should see `test result: ok. 132 passed` (unit), then `2 passed`
      (near-sandbox: `full_lifecycle_settles_victim`,
      `withdraw_failure_recredits_and_guards_hold`), then `4 passed` (mock
      token). The first run downloads the sandbox binary.
