@@ -218,6 +218,38 @@ direction. A pre-submission review, also run with Claude Code, found the
 bound-v1 issues that bound-v2 fixes (listed in `near/DESIGN.md` section 9)
 and the issues that bound-v3 fixes (section 10).
 
+### Found by review, fixed before submission
+
+A separate pre-submission security review of the code and the deployed
+contract (run as its own pass, see "AI tools used") found real bugs. Each fix
+has a regression test that failed on the reviewed code. Details:
+`near/DESIGN.md` sections 9 and 10.
+
+- bound-v1: a certificate id cast from u64 to u32 could alias another
+  certificate and let collateral escape during an open claim window; the
+  confinement check ignored contract code on the agent account. Fixed in
+  bound-v2.
+- bound-v2, C1: the operator could end its liability early (loop the float
+  through a sybil until `spent > bound`, file `BoundExceeded`, and the
+  settlement released the reserve and the auditor's allocation at once).
+  Now a settled cert stays open to Harm claims until the settlement
+  deadline and its collateral stays locked until then.
+- bound-v2, C2: 16 cheap claims just before the deadline could fill the
+  claim window and lock the real victim out. Now a rejected claim frees its
+  slot at once, and a window opened before the deadline still accepts claims
+  until it closes.
+- C3 (clients): an account using a NEAR global contract reported the empty
+  code hash and passed the confinement check. The client, the MCP tool and
+  the web pages now also require the `global_contract_*` fields to be null.
+- Six minor contract issues (harm overflow, deadline off-by-one, conflicted
+  victim, excess deposit refund, halted and superseded views) were fixed in
+  the same pass, and two follow-up review rounds added a cap on the
+  post-deadline window extension and an overflow-free settlement
+  multiplication. The fixed code is deployed as bound-v3; bound-v1 and
+  bound-v2 stay on chain with their runs, labeled superseded.
+
+What is not fixed is listed below: the trusted roles remain.
+
 ### Honest limitations
 
 - Trusted roles: on testnet the author holds the arbiter (decides Harm
