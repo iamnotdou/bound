@@ -183,6 +183,11 @@ New in the window:
 - `near/contracts/mock-usdc`: NEP-141/145/148 token with open mint.
 - `packages/near`: near-api-js client, deploy, the 8-act testnet demo, the
   agent gate, the `bound-near` MCP server, status, verify, evidence checks.
+  The keyless part (read client, `bound-near verify|cert|mcp` CLI, MCP
+  server, bundled testnet deployment) is packaged for npm as `@bound/near`;
+  see `packages/near/README.md`. Run it with
+  `npx @bound/near verify <agent>` or as an MCP server with
+  `npx -y @bound/near mcp`.
 - `near/deployments/testnet.json` and `near/evidence/`: the deployment
   record and every demo transaction.
 - bound-web: `/app/near`, `/app/near/cert/<id>`, `/app/near/run/<runId>`,

@@ -28,15 +28,15 @@ Sputnik DAO arbiter).
 
 ## Layout
 
-| Path                       | What                                                                                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `contracts/bound`          | the protocol, one near-sdk 5.30.1 contract (`src/lib.rs`), settlement math (`src/settle.rs`), unit tests (`src/tests.rs`), near-sandbox tests (`tests/sandbox.rs`) |
-| `contracts/mock-usdc`      | NEP-141/145/148 token, 6 decimals, open `mint` (testnet play money)                                                                                                |
-| `deployments/testnet.json` | contract ids, deploy txs, wasm sha256 + on-chain code hash, demo runs with every tx hash, the superseded bound-v1 under `previous`                                 |
-| `evidence/`                | committed demo logs: `near-demo-<run>.txt` (human) + `.json` (machine), gate ledger and invoices, MCP agent runs                                                   |
-| `scripts/verify.sh`        | install check, build, test, checks, optional demo replay                                                                                                           |
-| `DESIGN.md`                | Soroban to NEAR deviations, trust model, limits, test map, failure modes, bound-v1                                                                                 |
-| `../packages/near`         | `@bound/near`: near-api-js 7.5.3 client, deploy, demo, gate, MCP server, status/verify/evidence                                                                    |
+| Path                       | What                                                                                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contracts/bound`          | the protocol, one near-sdk 5.30.1 contract (`src/lib.rs`), settlement math (`src/settle.rs`), unit tests (`src/tests.rs`), near-sandbox tests (`tests/sandbox.rs`)                                               |
+| `contracts/mock-usdc`      | NEP-141/145/148 token, 6 decimals, open `mint` (testnet play money)                                                                                                                                              |
+| `deployments/testnet.json` | contract ids, deploy txs, wasm sha256 + on-chain code hash, demo runs with every tx hash, the superseded bound-v1 under `previous`                                                                               |
+| `evidence/`                | committed demo logs: `near-demo-<run>.txt` (human) + `.json` (machine), gate ledger and invoices, MCP agent runs                                                                                                 |
+| `scripts/verify.sh`        | install check, build, test, checks, optional demo replay                                                                                                                                                         |
+| `DESIGN.md`                | Soroban to NEAR deviations, trust model, limits, test map, failure modes, bound-v1                                                                                                                               |
+| `../packages/near`         | `@bound/near` (npm-ready, 0.1.0): read client, `bound-near` CLI (`verify`, `cert`, `mcp`) and MCP server in `src/`; deploy, demo and gate tooling (needs local keys, not published) in `tooling/` and `scripts/` |
 
 ## Try it
 
