@@ -70,7 +70,10 @@ pnpm install --frozen-lockfile
      `decision: deal`, exit 0.
    - `pnpm --silent near:verify bound-agent-mwfnc6q8.testnet` shows the demo
      agent after settlement: status Invalid and the settlement numbers. It
-     exits with code 2 on purpose (2 = "refuse"). Without `--silent`, pnpm adds
+     exits with code 2 on purpose (2 = "refuse"). Its `allocation` and
+     `coverage` lines show the unslashed 180 still held by the cert: that is
+     not live coverage. After the settlement deadline the auditor may call
+     `release_allocation` to take it back, and then those lines drop. Without `--silent`, pnpm adds
      `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` / `ELIFECYCLE`. That only reports the
      exit code 2 and is not a crash.
    - `pnpm --silent near:evidence` re-checks every recorded tx hash: the demo
