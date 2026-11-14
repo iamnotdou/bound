@@ -26,6 +26,16 @@ fake one. Forfeited bonds and leftover slash go to the treasury. See
 `DESIGN.md` section 7, which also has the roadmap (a per-certificate or
 Sputnik DAO arbiter).
 
+## Links
+
+- Site: [near.boundprotocol.dev](https://near.boundprotocol.dev) (landing with live testnet numbers)
+- Docs: [near.boundprotocol.dev/docs](https://near.boundprotocol.dev/docs) (quickstart, protocol, SDK, CLI, MCP, HTTP API, contract reference)
+- Deck: [near.boundprotocol.dev/deck](https://near.boundprotocol.dev/deck)
+- Web demo: [near.boundprotocol.dev/app/near](https://near.boundprotocol.dev/app/near)
+- npm: [`@bound/near`](https://www.npmjs.com/package/@bound/near) (published right after submission prep):
+  `npx -y @bound/near verify bound-agent2-mwfnc6q8.testnet`
+- MCP: `{"command": "npx", "args": ["-y", "@bound/near", "mcp"]}`
+
 ## Layout
 
 | Path                       | What                                                                                                                                                                                                             |
@@ -109,12 +119,15 @@ pnpm install --frozen-lockfile
 
    The first three are read-only and need no key. Client config (stdout
    stays pure JSON-RPC):
-   `{"command": "pnpm", "args": ["--silent", "--dir", "<repo>", "near:mcp"]}`.
+   `{"command": "pnpm", "args": ["--silent", "--dir", "<repo>", "near:mcp"]}`,
+   or without a clone, from npm:
+   `{"command": "npx", "args": ["-y", "@bound/near", "mcp"]}`.
    - `near/evidence/mcp-agent-mwfnc6q8.txt` is the record of `pnpm near:agent-mcp`.
      It confined cert 1's agent (`bound-agent2-mwfnc6q8.testnet`) to a pay-only
      key. Then, through the MCP tools, the agent paid 1 to the allowlisted
      service. It was refused with `FloatExceeded` for 500 and with
-     `RecipientNotAllowed` for the treasury. Every step has a tx. The tool
+     `RecipientNotAllowed` for the treasury. Every write (the key swap and the
+     three payments) has a tx; the reads are view calls. The tool
      reported it confined (code hash all ones), and its float dropped by
      exactly 1. Replaying needs the run's local demo keys
      (`near/.demo-keys/`, gitignored).
