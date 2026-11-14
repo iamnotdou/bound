@@ -1,8 +1,15 @@
 # Bound Protocol
 
-> **A surety bond for AI agents, on-chain.**
+> **Bonded and insured AI agents: a surety bond plus staked cover, on-chain.**
 
 ## NEAR HACKATHON submission (start here)
+
+**The bond-and-insurance layer for AI agents on NEAR.** You hire a contractor
+because they are licensed, bonded and insured, not because you trust them
+personally. Bound gives AI agents on NEAR the same thing: real money behind the
+agent that pays the people it harms. The operator's locked reserve is the bond,
+an auditor's slashable stake is the insurance, and one view call shows the
+cover before you deal with the agent.
 
 Built at NEAR HACKATHON. Branch `near-hackathon` adds **Bound on NEAR**: the
 protocol as one near-sdk contract on NEAR testnet, a TypeScript client, an
@@ -12,18 +19,25 @@ work from earlier Stellar hackathons (see "Prior work and what is new").
 
 **What it is.** A counterparty calls `verify(agent)` before dealing with an AI
 agent's NEAR account and sees what stands behind it: a USDC reserve the
-operator locked, an auditor's slashable stake locked to that one certificate,
-and a spend meter. The agent's only key is a function-call key that can call
+operator locked (the bond), an auditor's slashable stake locked to that one
+certificate (the insurance), and a spend meter. The agent's only key is a function-call key that can call
 nothing but the contract's `pay`, and the account holds no contract code (local or global), so
 NEAR itself refuses any other spend. If the agent causes harm, a claim window
 opens and one atomic settlement pays the victim from the reserve first and
 then from the auditor's slash.
 
-**The problem.** Agents now hold keys and pay for things. A service that
-serves an agent, or extends it credit, cannot know its worst case:
-reputation says nothing about a fresh account, and a spending limit caps what
-the agent can send, not what it can owe or break. Bound turns that into one
-number a service can read: `coverage = reserve_locked + allocation`.
+**The problem.** Agents now hold keys and pay for things, and you cannot
+trust an agent you cannot sue. A service that serves an agent, or extends it
+credit, has no one to recover from: reputation says nothing about a fresh
+account, and a spending limit caps what the agent can send, not what it can
+owe or break. Bound turns that into cover a service can read in one call:
+`coverage = reserve_locked + allocation`. `bound` is a spend meter, not a
+guarantee.
+
+**Is it insurance?** Not a regulated insurance product. It is a surety bond
+(the operator's reserve) plus staked cover (the auditor's allocation), paid
+only to victims whose harm claim the arbiter upholds, up to the coverage. On
+testnet the author holds the arbiter, the treasury and the contract keys.
 
 **Why NEAR.**
 

@@ -10,11 +10,15 @@ Outside `near/` and `packages/near/` that diff touches only the root
 `.prettierignore`, `pnpm-lock.yaml` and the NEAR section of the root
 `README.md`.
 
-Bound lets a counterparty check what stands behind an AI agent before dealing
-with it. Three things back the agent: a USDC reserve the operator pre-funds, an
-auditor's slashable stake locked to that one certificate, and a spend meter
-that the agent's NEAR key cannot get around. `verify(agent)` returns
-`coverage = reserve_locked + allocation`. That is the most that victims
+**The bond-and-insurance layer for AI agents on NEAR.** You hire a contractor
+because they are bonded and insured, not because you trust them personally.
+Bound gives an AI agent the same backing, so a counterparty can check it before
+dealing with the agent. The agent is bonded by a USDC reserve the operator
+pre-funds and locks, and insured by an auditor's slashable stake locked to that
+one certificate. A spend meter that the agent's NEAR key cannot get around
+limits what it can send. It is a surety bond plus staked cover, not a regulated
+insurance product. `verify(agent)` returns
+`coverage = reserve_locked + allocation`, the cover. That is the most that victims
 upheld by the arbiter can recover in total. If the agent causes harm, a claim
 window opens. One atomic settlement then pays the victim from the reserve
 first and then from the auditor's slash, for whatever the reserve could not
