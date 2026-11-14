@@ -1,0 +1,19 @@
+Bound on NEAR: agent bound-agent2-mwfnc6q8.testnet spends through the bound-near MCP server
+contract bound-v3.boundproto-nh26.testnet, cert 1, run mwfnc6q8, 2026-11-14T00:12:54.321Z
+  OK   agent2 adds a function-call key (bound-v3.boundproto-nh26.testnet, [pay], 0.25 NEAR)
+       {"tx":"https://testnet.nearblocks.io/txns/AnmNsnXJjKmLAAQcU96tY31Dj8xqxyC8ZMwb7SwVDrjS","error":null}
+  OK   agent2 deletes its full-access key
+       {"tx":"https://testnet.nearblocks.io/txns/8KDwfH6oCYLAYfT5zX4yf7cbsogVk8fsGc6c5987TnEn","error":null}
+  OK   near_verify_agent(self) -> deal
+       {"reason":"Verified"}
+  OK   near_pay 1 to allowlisted bound-service-mwfnc6q8.testnet succeeds
+       {"tx":"https://testnet.nearblocks.io/txns/DXQefHoUNs79KRWk4cPXSJwcvYRG9gqNBze1EymQnAon","logs":["EVENT_JSON:{\"standard\":\"bound\",\"version\":\"1.0.0\",\"event\":\"pay\",\"data\":[{\"cert_id\":1,\"agent\":\"bound-agent2-mwfnc6q8.testnet\",\"to\":\"bound-service-mwfnc6q8.testnet\",\"amount\":\"1000000\",\"memo\":\"mcp tool call\",\"spent\":\"1000000\"}]}"]}
+  OK   near_pay 500 (over the float) is refused by the contract
+       {"tx":"https://testnet.nearblocks.io/txns/F4rFLPHuvTGZRSw2GfP1vfUbscBGPyVxRnngYUk5w3g7","error":"FloatExceeded: amount 500000000 > float 9000000"}
+  OK   near_pay to an account off the allowlist is refused
+       {"tx":"https://testnet.nearblocks.io/txns/EJHDkWsesjnz37CPvdA7MXGh3yqTGWeQ9dozRK7hrX4c","error":"RecipientNotAllowed: treasury.boundproto-nh26.testnet is not on the operator allowlist"}
+  OK   near_check_agent_keys(self) -> confined (pay-only keys AND no contract code)
+       {"keys":[{"access_key":{"nonce":277582167000003,"permission":{"FunctionCall":{"allowance":"249345860226464700000000","method_names":["pay"],"receiver_id":"bound-v3.boundproto-nh26.testnet"}}},"public_key":"ed25519:7y9HVKPeXorjxfuV35HGLTqqVXoaNCs5ZgddRAiuQgoh"}],"code_hash":"11111111111111111111111111111111"}
+  OK   float dropped by exactly 1
+       {"before":"10000000","after":"9000000","spent":"1000000"}
+all MCP agent steps behaved as expected
