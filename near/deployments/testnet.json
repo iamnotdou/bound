@@ -364,7 +364,7 @@
       "wasmSha256": "0272efa860c3960d63c00e503f9c84f86ed9f3ef5bc61586183ab98807069a76",
       "deployedAt": "2026-11-13T22:01:51.189Z",
       "supersededAt": "2026-11-14T00:07:13.323Z",
-      "reason": "review round 2 fixes (feafba6..87a7381): bound-v2 ran the pre-fix code",
+      "reason": "review round 2 fixes (ee22515..00d9d79): bound-v2 ran the pre-fix code",
       "txs": [
         {
           "step": "deploy bound (create + deploy + new)",
