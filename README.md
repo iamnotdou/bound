@@ -28,11 +28,11 @@ number a service can read: `coverage = reserve_locked + allocation`.
 **Why NEAR.**
 
 - Function-call access keys are a protocol feature. The agent's key is
-  limited to `receiver = bound-v2`, `methods = ["pay"]`, no deposit. The
+  limited to `receiver = bound-v3`, `methods = ["pay"]`, no deposit. The
   limit is enforced by NEAR before execution, not by our contract or an SDK,
   and anyone can check it with `view_access_key_list` plus
   `view_account.code_hash`.
-- Named accounts: `verify("bound-agent2-mwfiv11v.testnet")` is readable by a
+- Named accounts: `verify("bound-agent2-mwfnc6q8.testnet")` is readable by a
   human and an agent alike.
 - NEP-141 `ft_transfer_call` gives custody in one transaction (stake,
   deposit, fund reserve), and NEP-297 events are the payment receipts the
@@ -44,42 +44,42 @@ number a service can read: `coverage = reserve_locked + allocation`.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Full NEAR README            | [`near/README.md`](./near/README.md): try it, demo act by act                                                                                                                                                                                      |
 | Design, trust model, limits | [`near/DESIGN.md`](./near/DESIGN.md)                                                                                                                                                                                                               |
-| Contract (testnet)          | [`bound-v2.boundproto-nh26.testnet`](https://testnet.nearblocks.io/address/bound-v2.boundproto-nh26.testnet), code hash `AZU11gUWgawHb91Zr6maxPqoYAdS89ftNjfT5e3De1b`                                                                              |
+| Contract (testnet)          | [`bound-v3.boundproto-nh26.testnet`](https://testnet.nearblocks.io/address/bound-v3.boundproto-nh26.testnet), code hash `A3yf1yzihbUdZAaHn92aAm5dBAdFCq1QCwhBJixD2B4H`                                                                             |
 | Token (testnet)             | [`usdc.boundproto-nh26.testnet`](https://testnet.nearblocks.io/address/usdc.boundproto-nh26.testnet): mock USDC, open mint, play money                                                                                                             |
-| Recorded demo run           | [`near/evidence/near-demo-mwfiv11v.txt`](./near/evidence/near-demo-mwfiv11v.txt): 41 steps, 37 txs, 36 assertions, 0 failed                                                                                                                        |
-| Recorded MCP agent run      | [`near/evidence/mcp-agent-mwfiv11v.txt`](./near/evidence/mcp-agent-mwfiv11v.txt)                                                                                                                                                                   |
+| Recorded demo run           | [`near/evidence/near-demo-mwfnc6q8.txt`](./near/evidence/near-demo-mwfnc6q8.txt): 41 steps, 37 txs, 36 assertions, 0 failed                                                                                                                        |
+| Recorded MCP agent run      | [`near/evidence/mcp-agent-mwfnc6q8.txt`](./near/evidence/mcp-agent-mwfnc6q8.txt)                                                                                                                                                                   |
 | Live demo (web)             | bound-web branch `near-hackathon`, route `/app/near`. No hosted copy yet: run it locally (`near/README.md` step 6). The demo video is linked from the X post.                                                                                      |
 | Code written in the window  | bound: [`pre-hackathon...near-hackathon`](https://github.com/iamnotdou/bound/compare/pre-hackathon...near-hackathon), bound-web: [`pre-hackathon...near-hackathon`](https://github.com/iamnotdou/bound-web/compare/pre-hackathon...near-hackathon) |
 
-### On-chain proof (NEAR testnet, run mwfiv11v on bound-v2)
+### On-chain proof (NEAR testnet, run mwfnc6q8 on bound-v3)
 
 Every hash below is re-checked against RPC by `pnpm --silent near:evidence`.
 NearBlocks shows a bot wall to `curl`; open the links in a browser.
 
 | Step                                                                  | Result                                               | Tx                                                                                                                                                                                             |
 | --------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy bound-v2 (create + deploy + `new`)                             | succeeded                                            | [HyAicYxv...](https://testnet.nearblocks.io/txns/HyAicYxvMXMV9j2DYXPVGVRHv2cZdyc9Y2venQneTq7Z)                                                                                                 |
-| Operator publishes cert 0 (bound 150, reserve 100, float cap 20)      | succeeded                                            | [4x6PzUZV...](https://testnet.nearblocks.io/txns/4x6PzUZVhQV4ixDepme1n4FE799xYRs9MFgrQ1ubqm5N)                                                                                                 |
-| Operator funds reserve 100                                            | succeeded                                            | [8qf5Z7zJ...](https://testnet.nearblocks.io/txns/8qf5Z7zJYZNXRk8G2PN6VyMKCAPaLqh48hX9WYXUj65V)                                                                                                 |
-| Auditor attests, locking 200 of its stake                             | succeeded                                            | [E4AWvmn7...](https://testnet.nearblocks.io/txns/E4AWvmn7T3R8duVNR7za1VRZUoZAm3jheEqwJZrcFYye)                                                                                                 |
-| Agent adds a function-call key (bound-v2, `pay`)                      | succeeded                                            | [9vLm1fg2...](https://testnet.nearblocks.io/txns/9vLm1fg26CXw7innkyJHcZ5vCVtfaGipdqaLoU3J19GC)                                                                                                 |
-| Agent deletes its full-access key                                     | succeeded                                            | [DugHa1wY...](https://testnet.nearblocks.io/txns/DugHa1wY1CLpNd7LGDqHkcwHh2e6gPJcFjyRjfhBf9ko)                                                                                                 |
-| Agent pays the service 5 through `pay`                                | succeeded                                            | [Hrs1ZY96...](https://testnet.nearblocks.io/txns/Hrs1ZY96Z4RVePnW3GWZ6aFoDPbwvtbayyyhzft5zmSG)                                                                                                 |
-| Scripted attack: pay 50 over a float of 15                            | refused on chain, `FloatExceeded` (expected)         | [737Yzh8P...](https://testnet.nearblocks.io/txns/737Yzh8PDwZhwf7rGmifE3Bsb1oxHSu4MW5zKjBAVeYW)                                                                                                 |
-| Scripted attack: pay 10 to an attacker                                | refused on chain, `RecipientNotAllowed` (expected)   | [Gp8ouw9o...](https://testnet.nearblocks.io/txns/Gp8ouw9o7CsVPNAVaDfsViShrxSXdAtNHsSMWHJZDSLr)                                                                                                 |
+| Deploy bound-v3 (create + deploy + `new`)                             | succeeded                                            | [7tM75SZT...](https://testnet.nearblocks.io/txns/7tM75SZT6U15Brz9pRC5EGSdmqkSR4bEUyFDqApSGGGP)                                                                                                 |
+| Operator publishes cert 0 (bound 150, reserve 100, float cap 20)      | succeeded                                            | [Ec2fCtsm...](https://testnet.nearblocks.io/txns/Ec2fCtsmyuQMpu88u4v1TME3JTSkjQrcqpQhnSaWY1AN)                                                                                                 |
+| Operator funds reserve 100                                            | succeeded                                            | [9AuoWUhP...](https://testnet.nearblocks.io/txns/9AuoWUhPFQ2LeuRw1rEchZSGQJKbMyu9tEctoTuBC2QK)                                                                                                 |
+| Auditor attests, locking 200 of its stake                             | succeeded                                            | [8B53DHbh...](https://testnet.nearblocks.io/txns/8B53DHbhg7j54t82GDkHxsUFyB6gmLyWmw4tpDnGivWD)                                                                                                 |
+| Agent adds a function-call key (bound-v3, `pay`)                      | succeeded                                            | [D7EQYAiK...](https://testnet.nearblocks.io/txns/D7EQYAiKt7KszcH5Yh1k2CV198mZ9DXSovphVK8Vr483)                                                                                                 |
+| Agent deletes its full-access key                                     | succeeded                                            | [3xo9H1Jb...](https://testnet.nearblocks.io/txns/3xo9H1JbMMTsZMowwwDCLhXuJ7VwzSdSpEbXQrkHcTkr)                                                                                                 |
+| Agent pays the service 5 through `pay`                                | succeeded                                            | [CfV9XQWj...](https://testnet.nearblocks.io/txns/CfV9XQWjur7KrvwW11k9wf7dVis9SehEGgJN7DKkcK8k)                                                                                                 |
+| Scripted attack: pay 50 over a float of 15                            | refused on chain, `FloatExceeded` (expected)         | [DUe2fDHN...](https://testnet.nearblocks.io/txns/DUe2fDHN9aDUaHH4s8dSpvtJtaXVjmTEZsMKxuapfZro)                                                                                                 |
+| Scripted attack: pay 10 to an attacker                                | refused on chain, `RecipientNotAllowed` (expected)   | [CuXuHhfG...](https://testnet.nearblocks.io/txns/CuXuHhfG58T7C3fFGxcuaBN5dEpWmdKMQXBB9MN9USF5)                                                                                                 |
 | Same key: `ft_transfer`, `mint`, `withdraw`, send NEAR                | refused by NEAR before execution (no tx exists)      | errors recorded in the evidence file                                                                                                                                                           |
-| Operator halts; agent pays 1                                          | refused, `CertHalted` (expected)                     | [3W8DVi3C...](https://testnet.nearblocks.io/txns/3W8DVi3CP6T6PZaxWxRp9qiWJxEe5JuFmQwgiM2aNAoJ)                                                                                                 |
-| False `BoundExceeded` claim (spent 5 <= bound 150)                    | rejected in the same tx, bond to treasury            | [9Lk9pQ69...](https://testnet.nearblocks.io/txns/9Lk9pQ697BuhH1FAhfipZgU8h3Lb6h1q2uTfsc3CWaq2)                                                                                                 |
-| Service files Harm 120 citing its unpaid invoice                      | succeeded                                            | [F9s2x5nG...](https://testnet.nearblocks.io/txns/F9s2x5nGB61h1hBtXUUHibBLYezTVjD6YenwYvYcRMor)                                                                                                 |
-| Arbiter upholds harm 120                                              | succeeded                                            | [EmBcWDzc...](https://testnet.nearblocks.io/txns/EmBcWDzctAEUKFZB4BnmbPqcH5iDrKWsK2mKe2eRzeUv)                                                                                                 |
-| Agent pays 1 while the claim window is open                           | refused, `CertFrozen` (expected)                     | [7hGu8ZCP...](https://testnet.nearblocks.io/txns/7hGu8ZCPyY2tJDP9qQofS2qg13fVW1nkw8PKY7qTSq2y)                                                                                                 |
-| Anyone calls `close_window`: victim gets 120 (100 reserve + 20 slash) | succeeded                                            | [9D2aiLU5...](https://testnet.nearblocks.io/txns/9D2aiLU5VBQyCZ8KD3rEYRHXakL3FeVdhjFUgVta47CB)                                                                                                 |
-| Service withdraws 135 (5 prepaid + 120 + 10 bond back)                | succeeded                                            | [6yM6Bres...](https://testnet.nearblocks.io/txns/6yM6BresGGPepxxoCqGCq74RBYKoYNJKQsgPAtd7VZdR)                                                                                                 |
-| Cert 1 published for agent2, left Verified until 2026-11-30           | succeeded                                            | [495EqDiq...](https://testnet.nearblocks.io/txns/495EqDiq9fCdGyVvMLxcqKSq7rbP2g9F7kjUVg8WoKTb)                                                                                                 |
-| MCP: agent2 pays 1 through `near_pay`                                 | succeeded                                            | [ztsUFXzB...](https://testnet.nearblocks.io/txns/ztsUFXzB4jXnrvtL9UuGb5Bm9sNoXEkjUwMp4RmfBYx)                                                                                                  |
-| MCP: agent2 pays 500 (over the float), then pays the treasury         | refused, `FloatExceeded`, then `RecipientNotAllowed` | [CYePPyqS...](https://testnet.nearblocks.io/txns/CYePPyqSjbHBUKqP1JGArEXxxeNfnTG9eJnRkPXQwwvr), [CZCuLCim...](https://testnet.nearblocks.io/txns/CZCuLCimgLMik6dvkrgWCAhtZ2WZ5B9oytVSbxwoEm8m) |
+| Operator halts; agent pays 1                                          | refused, `CertHalted` (expected)                     | [ceRd2LS6...](https://testnet.nearblocks.io/txns/ceRd2LS6jCxNkzznTwgeU4Vn8wDemv7oUcf58u6HcEd)                                                                                                  |
+| False `BoundExceeded` claim (spent 5 <= bound 150)                    | rejected in the same tx, bond to treasury            | [FBSjeUNd...](https://testnet.nearblocks.io/txns/FBSjeUNdQZ8w4ekmPo4Z9ds5bTbJmPtzGfX1bhvtHj6j)                                                                                                 |
+| Service files Harm 120 citing its unpaid invoice                      | succeeded                                            | [FkAyuN4q...](https://testnet.nearblocks.io/txns/FkAyuN4qvegyRbEi1PsPvQ1pyeRmZdjqf7jgX7c5r5RX)                                                                                                 |
+| Arbiter upholds harm 120                                              | succeeded                                            | [4HyE7LAs...](https://testnet.nearblocks.io/txns/4HyE7LAsygqR7MsJgaoqwg6cFeNwAsCPNSSLppbdkHyY)                                                                                                 |
+| Agent pays 1 while the claim window is open                           | refused, `CertFrozen` (expected)                     | [6ABTGrX7...](https://testnet.nearblocks.io/txns/6ABTGrX7KNTQXXTVNp76vjkwF1Cpj4RwJ32XqKrz8xWE)                                                                                                 |
+| Anyone calls `close_window`: victim gets 120 (100 reserve + 20 slash) | succeeded                                            | [GT4SuspD...](https://testnet.nearblocks.io/txns/GT4SuspDnRd4m2N6XDy35h9P6fqKwYZ1SWMvQ1oStwDu)                                                                                                 |
+| Service withdraws 135 (5 prepaid + 120 + 10 bond back)                | succeeded                                            | [AReDbvB1...](https://testnet.nearblocks.io/txns/AReDbvB1croL5oq8QwBtFpCuF69oeshxBssBgNaTWrfD)                                                                                                 |
+| Cert 1 published for agent2, left Verified until 2026-11-30           | succeeded                                            | [FGuXn4DM...](https://testnet.nearblocks.io/txns/FGuXn4DModurmVqPyEQspjtniTg7qx5BYVMHEw4Ey8RC)                                                                                                 |
+| MCP: agent2 pays 1 through `near_pay`                                 | succeeded                                            | [DXQefHoU...](https://testnet.nearblocks.io/txns/DXQefHoUNs79KRWk4cPXSJwcvYRG9gqNBze1EymQnAon)                                                                                                 |
+| MCP: agent2 pays 500 (over the float), then pays the treasury         | refused, `FloatExceeded`, then `RecipientNotAllowed` | [F4rFLPHu...](https://testnet.nearblocks.io/txns/F4rFLPHuvTGZRSw2GfP1vfUbscBGPyVxRnngYUk5w3g7), [EJHDkWse...](https://testnet.nearblocks.io/txns/EJHDkWsesjnz37CPvdA7MXGh3yqTGWeQ9dozRK7hrX4c) |
 
-The full list (every tx of every run, the superseded bound-v1 included) is in
+The full list (every tx of every run, the superseded bound-v1 and bound-v2 included) is in
 [`near/deployments/testnet.json`](./near/deployments/testnet.json) and
 `near/evidence/`.
 
@@ -90,22 +90,22 @@ itself), cargo-near 0.23, node 22, pnpm 10. Run from the repo root.
 
 1. `git clone -b near-hackathon https://github.com/iamnotdou/bound && cd bound`
 2. `pnpm install --frozen-lockfile`: exit 0.
-3. `cd near && cargo test && cd ..`: see `108 passed` (unit), `2 passed`
+3. `cd near && cargo test && cd ..`: see `127 passed` (unit), `2 passed`
    (near-sandbox), `4 passed` (mock token). About 4 minutes cold; the first
    run downloads the sandbox binary.
 4. `near/scripts/verify.sh`: builds both wasm, checks their sha256 equals the
    deployed code hash, runs fmt, clippy, all tests, typecheck and vitest, and
    re-checks every recorded testnet transaction. Ends with
    `== all checks passed`, exit 0 (about 3 minutes).
-5. `pnpm --silent near:status`: the on-chain `code_hash` of bound-v2 equals
+5. `pnpm --silent near:status`: the on-chain `code_hash` of bound-v3 equals
    the recorded one, plus the live config.
-6. `pnpm --silent near:verify bound-agent2-mwfiv11v.testnet`: cert 1
+6. `pnpm --silent near:verify bound-agent2-mwfnc6q8.testnet`: cert 1
    Verified, coverage 130, `confinement: confined (1 key(s), no contract code)`,
    `decision: deal`, exit 0.
-7. `pnpm --silent near:verify bound-agent-mwfiv11v.testnet`: cert 0 Invalid
+7. `pnpm --silent near:verify bound-agent-mwfnc6q8.testnet`: cert 0 Invalid
    after settlement (payable 120, reserve draw 100, slash 20),
    `decision: refuse`, exit 2 on purpose.
-8. `pnpm --silent near:evidence`: `all 128 recorded transactions match the chain`.
+8. `pnpm --silent near:evidence`: `all 172 recorded transactions match the chain`.
 9. `pnpm --silent near:mcp-smoke`: `bound-near MCP smoke passed`.
 10. Optional, writes to testnet: `pnpm near:demo --fresh` deploys a private
     copy and replays acts 1-8 (about 5 minutes, needs a funded testnet
@@ -139,7 +139,7 @@ flowchart LR
   end
 
   subgraph near["NEAR testnet"]
-    bound["bound-v2.boundproto-nh26.testnet<br/>certs, reserve, stake, float,<br/>claims, settlement"]
+    bound["bound-v3.boundproto-nh26.testnet<br/>certs, reserve, stake, float,<br/>claims, settlement"]
     usdc[("usdc.boundproto-nh26.testnet<br/>NEP-141 mock USDC")]
   end
 
@@ -178,7 +178,7 @@ New in the window:
 - `near/contracts/bound`: the protocol as one near-sdk 5.30.1 contract
   (certificates, reserve, auditor stake and allocation, float and `pay`
   meter, allowlist, halt, claims, claim window, settlement waterfall,
-  storage management, NEP-297 events), with 108 unit tests and 2
+  storage management, NEP-297 events), with 127 unit tests and 2
   near-sandbox lifecycle tests.
 - `near/contracts/mock-usdc`: NEP-141/145/148 token with open mint.
 - `packages/near`: near-api-js client, deploy, the 8-act testnet demo, the
@@ -215,7 +215,8 @@ design for NEAR, not a compiled copy; the deviations are in
 Claude Code (Anthropic) wrote the NEAR contracts, tests, TypeScript package,
 scripts, web pages and these docs on this branch, under the author's
 direction. A pre-submission review, also run with Claude Code, found the
-bound-v1 issues that bound-v2 fixes (listed in `near/DESIGN.md` section 9).
+bound-v1 issues that bound-v2 fixes (listed in `near/DESIGN.md` section 9)
+and the issues that bound-v3 fixes (section 10).
 
 ### Honest limitations
 
@@ -239,7 +240,9 @@ bound-v1 issues that bound-v2 fixes (listed in `near/DESIGN.md` section 9).
   trustless predicate. `InsufficientReserve` is unreachable on NEAR and kept
   for ABI parity.
 - `bound-v1` (first deployment) had a certificate-id aliasing bug and is
-  superseded; its runs stay in `near/evidence/` and are labeled.
+  superseded; `bound-v2` ran the code from before the second review's
+  fixes (`near/DESIGN.md` section 10) and is superseded by `bound-v3`. Their
+  runs stay in `near/evidence/` and are labeled.
 - No hosted web demo yet: the NEAR pages run locally.
 - Old transactions are read from an archival RPC node; a rate-limited IP can
   see "could not be fetched just now" for them, which is labeled as no

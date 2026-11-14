@@ -51,7 +51,7 @@ pnpm install --frozen-lockfile
 `verify.sh` also runs this install if `node_modules` is missing.
 
 1. Full lifecycle offline, with no network and no keys: `cd near && cargo test`
-   - You should see `test result: ok. 108 passed` (unit), then `2 passed`
+   - You should see `test result: ok. 127 passed` (unit), then `2 passed`
      (near-sandbox: `full_lifecycle_settles_victim`,
      `withdraw_failure_recredits_and_guards_hold`), then `4 passed` (mock
      token). The first run downloads the sandbox binary.
@@ -64,19 +64,20 @@ pnpm install --frozen-lockfile
    `pnpm --silent` so pnpm does not add its own lines:
    - `pnpm --silent near:status` shows contract ids, the on-chain
      `code_hash == recorded`, the live `get_config` and the cert count.
-   - `pnpm --silent near:verify bound-agent2-mwfiv11v.testnet` shows cert 1,
+   - `pnpm --silent near:verify bound-agent2-mwfnc6q8.testnet` shows cert 1,
      left Verified until 2026-11-30. It prints coverage 130 and
      `confinement: confined (1 key(s), no contract code)`, then
      `decision: deal`, exit 0.
-   - `pnpm --silent near:verify bound-agent-mwfiv11v.testnet` shows the demo
+   - `pnpm --silent near:verify bound-agent-mwfnc6q8.testnet` shows the demo
      agent after settlement: status Invalid and the settlement numbers. It
      exits with code 2 on purpose (2 = "refuse"). Without `--silent`, pnpm adds
      `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` / `ELIFECYCLE`. That only reports the
      exit code 2 and is not a crash.
    - `pnpm --silent near:evidence` re-checks every recorded tx hash: the demo
-     runs, the MCP agent runs and the deployment txs (of bound-v2 and of the
-     superseded bound-v1). It asks an archival RPC node, because regular nodes
-     forget transactions after a few epochs, and prints OK per tx.
+     runs, the MCP agent runs and the deployment txs (of bound-v3 and of the
+     superseded bound-v2 and bound-v1). It asks an archival RPC node,
+     because regular nodes forget transactions after a few epochs, and prints
+     OK per tx.
    - `pnpm --silent near:mcp-smoke` connects an MCP client to the `bound-near`
      server in-process and calls every read tool against testnet (8 checks,
      exit 0).
@@ -104,8 +105,8 @@ pnpm install --frozen-lockfile
    The first three are read-only and need no key. Client config (stdout
    stays pure JSON-RPC):
    `{"command": "pnpm", "args": ["--silent", "--dir", "<repo>", "near:mcp"]}`.
-   - `near/evidence/mcp-agent-mwfiv11v.txt` is the record of `pnpm near:agent-mcp`.
-     It confined cert 1's agent (`bound-agent2-mwfiv11v.testnet`) to a pay-only
+   - `near/evidence/mcp-agent-mwfnc6q8.txt` is the record of `pnpm near:agent-mcp`.
+     It confined cert 1's agent (`bound-agent2-mwfnc6q8.testnet`) to a pay-only
      key. Then, through the MCP tools, the agent paid 1 to the allowlisted
      service. It was refused with `FloatExceeded` for 500 and with
      `RecipientNotAllowed` for the treasury. Every step has a tx. The tool
@@ -125,19 +126,19 @@ pnpm install --frozen-lockfile
 
 ## Deployed on testnet
 
-- Contract: `bound-v2.boundproto-nh26.testnet` (code hash
-  `AZU11gUWgawHb91Zr6maxPqoYAdS89ftNjfT5e3De1b`, wasm sha256
-  `0272efa8...`)
+- Contract: `bound-v3.boundproto-nh26.testnet` (code hash
+  `A3yf1yzihbUdZAaHn92aAm5dBAdFCq1QCwhBJixD2B4H`, wasm sha256
+  `867c678c...`), built from this branch with the second review's fixes
 - Token: `usdc.boundproto-nh26.testnet` (mock USDC, open mint)
 - Treasury / arbiter: `treasury.boundproto-nh26.testnet` /
   `arbiter.boundproto-nh26.testnet`
 - Deploy and demo transactions with NearBlocks links are in
-  `deployments/testnet.json` and `evidence/near-demo-mwfiv11v.txt`.
+  `deployments/testnet.json` and `evidence/near-demo-mwfnc6q8.txt`.
   (NearBlocks blocks `curl` with a bot wall. Use a browser, or
   `pnpm --silent near:evidence`.)
 
 Without a browser: `near contract call-function as-read-only
-bound-v2.boundproto-nh26.testnet get_config json-args '{}' network-config
+bound-v3.boundproto-nh26.testnet get_config json-args '{}' network-config
 testnet now`, or `pnpm --silent near:status`.
 
 **bound-v1 is superseded.** The first deployment,
@@ -147,7 +148,14 @@ was found in review and is fixed in bound-v2 (`DESIGN.md` section 9). Its runs
 still checked by `near:evidence`. Its certificates 0-2 came from early
 development runs and carry no evidence. Do not use bound-v1.
 
-## The demo, act by act (run mwfiv11v, bound-v2)
+**bound-v2 is superseded.** `bound-v2.boundproto-nh26.testnet` ran the code
+from before the second review's fixes (`DESIGN.md` section 10). In its run
+`mwfiv11v` the unslashed allocation went back to the auditor's free stake at
+`close_window` (free 580, allocated 0); on bound-v3 it stays allocated until
+the settlement deadline. Its runs stay in `evidence/` and are still checked by
+`near:evidence`. Do not use bound-v2.
+
+## The demo, act by act (run mwfnc6q8, bound-v3)
 
 1. Actors are created, mock USDC is minted, and the actors register storage on
    Bound.
@@ -155,7 +163,7 @@ development runs and carry no evidence. Do not use bound-v1.
    operator publishes cert 0: bound 150, reserve 100, float cap 20, allowlist
    [service], premium 3. The agent accepts, the reserve and float are funded,
    and the auditor attests 200. Premium split: auditor +2.7, treasury +0.3.
-3. The agent adds a function-call key (receiver bound-v2, method `pay`) and
+3. The agent adds a function-call key (receiver bound-v3, method `pay`) and
    deletes its full-access key. `view_access_key_list` shows exactly that one
    key, and `view_account.code_hash` is `111...1` (no contract code). At the
    gate:
@@ -199,4 +207,5 @@ vitest, typescript, @types/node. Tooling: cargo-near 0.23.0, near-cli-rs
 Claude Code (Anthropic) wrote the NEAR contracts, tests, TypeScript package,
 scripts and these docs on this branch, under the author's direction. A
 pre-submission review (also AI-run) found the bound-v1 issues fixed in
-bound-v2. They are listed in `DESIGN.md`.
+bound-v2, and a second one the issues fixed in bound-v3. They are listed in
+`DESIGN.md`.

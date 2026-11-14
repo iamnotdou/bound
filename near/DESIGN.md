@@ -49,7 +49,7 @@ specific is in section 3.
 
 1. **Protocol-level key confinement.** The demo agent accepts its certificate
    with its full-access key, adds a function-call key scoped to receiver
-   `bound-v2.boundproto-nh26.testnet` and method `pay` (0.25 NEAR gas
+   `bound-v3.boundproto-nh26.testnet` and method `pay` (0.25 NEAR gas
    allowance), then deletes its full-access key. From then on NEAR itself
    refuses anything else the key tries, before any contract runs:
    - a call with any deposit (`ft_transfer`, `withdraw`):
@@ -148,7 +148,7 @@ catches). The demo's gate therefore extends credit up to
 
 ## 5. Test map
 
-Unit tests: `near/contracts/bound/src/tests.rs` (111) and `src/settle.rs` (12).
+Unit tests: `near/contracts/bound/src/tests.rs` (115) and `src/settle.rs` (12).
 Sandbox tests: `near/contracts/bound/tests/sandbox.rs` (2). Mock token: 4.
 
 | NEAR test                                                                                                                                                         | Corresponds to Soroban test (`contracts/integration-tests/tests/cross_contract.rs`)                                         |
@@ -207,7 +207,7 @@ Sandbox tests: `near/contracts/bound/tests/sandbox.rs` (2). Mock token: 4.
   author's treasury. This is a testnet demo trust model, not a production one.
   Roadmap: a per-certificate arbiter named at `publish`, or a Sputnik DAO
   arbiter, a DAO-held treasury, and deleting the contract key.
-- **Contract upgrade key.** `bound-v2.boundproto-nh26.testnet` keeps the
+- **Contract upgrade key.** `bound-v3.boundproto-nh26.testnet` keeps the
   deployer's full-access key during judging so a bug can be fixed by deploying
   to a fresh account. That key could replace the code. Check that the code on
   chain is the code in this repo: `pnpm near:status` compares the on-chain
@@ -266,9 +266,15 @@ cert 0 with the run recorded in `deployments/testnet.json`.
 A pre-submission security review of bound-v2 found two major and six minor
 contract issues. Each one has a regression test in `src/tests.rs` that
 failed on the reviewed code and passes now (section 5). The fixes are in the
-repository; **they are not deployed yet**: `bound-v2.boundproto-nh26.testnet`
-still runs the reviewed code until it is redeployed. The borsh layout of the
-stored state did not change (only the JSON view gained a field).
+repository and deployed to a fresh account,
+`bound-v3.boundproto-nh26.testnet` (demo run `mwfnc6q8`, MCP run
+`mwfnc6q8`); `bound-v2.boundproto-nh26.testnet` keeps running the reviewed
+code so its run `mwfiv11v` stays checkable (`previous` in
+`deployments/testnet.json`). The visible difference in the demo: on bound-v2
+the unslashed allocation went back to the auditor's free stake at
+`close_window` (free 580, allocated 0); on bound-v3 the 180 stays allocated
+until the settlement deadline (free 400, allocated 180). The borsh layout of
+the stored state did not change (only the JSON view gained a field).
 
 **C1, major: the operator could end its liability early.** With no
 allowlist, the agent could loop the float through an operator sybil until
@@ -329,6 +335,23 @@ predicates could squat too, so a window takes one claim per predicate kind.
   simpler one was taken: `pay` refuses any cert other than the one `verify`
   reports (`NotCurrentCert`), and such a cert reads `Superseded`.
 
+**Second review round (fixed in bound-v3):**
+
+- _Post-deadline extension._ After the deadline, a claim filed just before
+  `closes_at` pushed the window out by a third of a window. Because a
+  rejection frees the slot, an attacker could reject-and-refile forever and
+  keep the reserve and the allocation frozen past the deadline (one forfeited
+  bond per cycle). The extension is now capped: `closes_at` never moves past
+  `deadline + claim_window_secs`; the arbiter grace in `close_window` still
+  follows the cap (`post_deadline_extension_is_capped`,
+  `claim_just_before_deadline_still_extends`).
+- _Emptied cert._ When a settlement drew the whole reserve and the float was
+  0, `release_reserve` failed with `NothingToRelease` and the cert read
+  `Invalid` forever. After the deadline it now marks the cert `Released` and
+  returns 0; a second call still fails
+  (`release_reserve_marks_released_when_empty`).
+- _Conservation test._ See the conservation bullet below.
+
 **Remaining limitations, stated honestly:**
 
 - Freeing a squatted slot depends on the arbiter rejecting the junk claim in
@@ -339,14 +362,9 @@ predicates could squat too, so a window takes one claim per predicate kind.
 - _Refile race._ A rejection frees its slot, but the attacker can refile into
   it in the same block, ahead of the victim. Each cycle costs the attacker one
   forfeited bond, yet a determined attacker can keep a late victim out until
-  the window closes after the deadline. A real fix is a bond that grows with
+  the window closes, at the latest `deadline + claim_window_secs`. A real fix is a bond that grows with
   the number of claims in the window, or one slot held for claims that arrive
   after a rejection; it is out of scope for the hackathon build.
-- After the deadline each accepted claim can still extend the open window by
-  a third of a window. With no arbiter action this is bounded by the 16
-  slots (about +524 s past the deadline with the demo config); with arbiter
-  rejections it has no upper bound, but every rejected claim costs its full
-  bond. Capping `closes_at` at `deadline + claim_window_secs` would bound it.
 - The hygiene bounty still goes to whoever files the true predicate, which
   can be the operator's own sybil. It is paid from the operator's own reserve,
   so it is cost-neutral to the operator, but it no longer ends any liability.
@@ -355,10 +373,11 @@ predicates could squat too, so a window takes one claim per predicate kind.
   `auditor_returned` reports the allocation that stays locked, although
   nothing is returned at that point.
 - Value conservation is proven for the pure waterfall (`settle.rs`
-  `conserve()`) and by hand review of every contract path (pay, challenge,
-  resolve, close_window in fraud and hygiene mode, release_reserve,
-  release_allocation, withdraw). There is no contract-level test that sums
-  every balance, stake, reserve, float and escrowed premium at each step.
+  `conserve()`), by one contract-level test (`conservation_across_windows`:
+  a hygiene window, two fraud windows on the Invalid cert, then the releases
+  after the deadline; balances + stake + reserve + float + premium + pending
+  bonds are equal at every step) and by hand review of the other paths. It is
+  not a property test over random call sequences.
 - New view values (`Halted`, `Superseded`, `deal`). A client that acts only
   on status `Verified` already treats them as "do not deal"; a client that
   looks for specific bad statuses has to learn the two new ones.
