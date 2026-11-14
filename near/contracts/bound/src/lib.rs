@@ -1168,10 +1168,10 @@ impl Bound {
             );
         }
         // A claim filed late in a window extends it, so a late victim (and
-        // the arbiter) always get at least a third of a window. The extension
-        // never runs past one claim window after the settlement deadline, so
-        // refiling after each rejection cannot keep the collateral frozen
-        // forever (the arbiter grace in `close_window` still follows the cap).
+        // the arbiter) always get at least a third of a window. `closes_at`
+        // never runs past deadline + claim_window_secs, so refiling after each
+        // rejection cannot freeze the collateral forever; the arbiter grace in
+        // `close_window` can add claim_window_secs/3 after that cap at most.
         let cap = deadline.saturating_add(self.config.claim_window_secs);
         let extended = now.saturating_add(self.extension_secs()).min(cap);
         if w.closes_at < extended {
