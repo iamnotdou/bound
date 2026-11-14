@@ -168,15 +168,49 @@ export function keysConfined(keys: AccessKeyInfo[], contractId: string): boolean
   );
 }
 
-/** Confined = keys confined AND no contract code on the agent account
- *  (`view_account.code_hash` is all ones). Code on the account would run as
- *  the agent and could call `pay`, `ft_transfer` or add a full-access key
- *  without any key. The Bound contract cannot check this itself, so a
- *  counterparty reads `verify(agent)` AND both of these. */
+/** The `view_account` fields confinement needs. An account that uses a NEAR
+ *  global contract reports `code_hash` of all ones, like an account with no
+ *  code, and names the global contract in `global_contract_hash` or
+ *  `global_contract_account_id` instead (both absent or null otherwise).
+ *  That code runs as the account just like local code. */
+export interface AccountCode {
+  code_hash: string;
+  global_contract_hash?: string | null;
+  global_contract_account_id?: string | null;
+}
+
+/** The global contract an account uses (its hash or the account that
+ *  publishes it), or null when it uses none. */
+export function globalContractOf(account: AccountCode | undefined): string | null {
+  return account?.global_contract_hash || account?.global_contract_account_id || null;
+}
+
+/** True when the account runs no code at all: `code_hash` is all ones AND
+ *  it uses no global contract. */
+export function hasNoCode(account: AccountCode | undefined): boolean {
+  return account?.code_hash === NO_CODE_HASH && globalContractOf(account) === null;
+}
+
+/** Confined = keys confined AND no code on the agent account: `code_hash`
+ *  all ones and both `global_contract_*` fields empty. Code on the account
+ *  (local or global) would run as the agent and could call `pay`,
+ *  `ft_transfer` or add a full-access key without any key. The Bound
+ *  contract cannot check this itself, so a counterparty reads
+ *  `verify(agent)` AND both of these. */
 export function isConfined(
   keys: AccessKeyInfo[],
   contractId: string,
-  codeHash: string | undefined,
+  account: AccountCode | undefined,
 ): boolean {
-  return codeHash === NO_CODE_HASH && keysConfined(keys, contractId);
+  return hasNoCode(account) && keysConfined(keys, contractId);
+}
+
+/** One line on the account's code, for logs and the verify CLI. */
+export function describeCode(account: AccountCode | undefined): string {
+  if (!account) return "code unknown";
+  const g = globalContractOf(account);
+  if (g) return `global contract ${g}`;
+  return account.code_hash === NO_CODE_HASH
+    ? "no contract code, no global contract"
+    : `contract code ${account.code_hash}`;
 }

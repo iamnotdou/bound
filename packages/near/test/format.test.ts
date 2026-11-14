@@ -155,8 +155,40 @@ describe("keysConfined / isConfined", () => {
   it("contract code on the agent account breaks confinement", async () => {
     const { isConfined, NO_CODE_HASH } = await import("../src/format.js");
     const keys = [fc(C, ["pay"])];
-    expect(isConfined(keys, C, NO_CODE_HASH)).toBe(true);
-    expect(isConfined(keys, C, "FstF2Tj8nHkco8AGLJ2gqfiAqdgaoTbgkpjaBLFCvJcD")).toBe(false);
+    expect(isConfined(keys, C, { code_hash: NO_CODE_HASH })).toBe(true);
+    expect(
+      isConfined(keys, C, {
+        code_hash: NO_CODE_HASH,
+        global_contract_hash: null,
+        global_contract_account_id: null,
+      }),
+    ).toBe(true);
+    expect(isConfined(keys, C, { code_hash: "FstF2Tj8nHkco8AGLJ2gqfiAqdgaoTbgkpjaBLFCvJcD" })).toBe(
+      false,
+    );
     expect(isConfined(keys, C, undefined)).toBe(false);
+  });
+  it("a NEAR global contract breaks confinement although code_hash is all ones", async () => {
+    const { isConfined, hasNoCode, globalContractOf, describeCode, NO_CODE_HASH } =
+      await import("../src/format.js");
+    const keys = [fc(C, ["pay"])];
+    const byHash = {
+      code_hash: NO_CODE_HASH,
+      global_contract_hash: "8FstF2Tj8nHkco8AGLJ2gqfiAqdgaoTbgkpjaBLFCvJ",
+      global_contract_account_id: null,
+    };
+    const byAccount = {
+      code_hash: NO_CODE_HASH,
+      global_contract_hash: null,
+      global_contract_account_id: "wallet-code.testnet",
+    };
+    expect(isConfined(keys, C, byHash)).toBe(false);
+    expect(isConfined(keys, C, byAccount)).toBe(false);
+    expect(hasNoCode(byHash)).toBe(false);
+    expect(hasNoCode(byAccount)).toBe(false);
+    expect(globalContractOf(byAccount)).toBe("wallet-code.testnet");
+    expect(globalContractOf({ code_hash: NO_CODE_HASH })).toBe(null);
+    expect(describeCode(byHash)).toBe(`global contract ${byHash.global_contract_hash}`);
+    expect(describeCode({ code_hash: NO_CODE_HASH })).toBe("no contract code, no global contract");
   });
 });

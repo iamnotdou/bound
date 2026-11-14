@@ -13,7 +13,7 @@ import {
   type KeyPairString,
   type Provider,
 } from "near-api-js";
-import { explorerTx } from "./format.js";
+import { explorerTx, type AccountCode } from "./format.js";
 
 // rpc.testnet.near.org now answers every call with -429 "THIS ENDPOINT IS
 // DEPRECATED" (checked 2026-11-13), so both entries are FastNEAR hostnames.
@@ -227,10 +227,22 @@ export async function chainNow(provider: Provider): Promise<number> {
   );
 }
 
-/** `view_account.code_hash` of `accountId` ("111...1" when no contract). */
-export async function codeHashOf(provider: Provider, accountId: string): Promise<string> {
+/** The code fields of `view_account` for `accountId`: `code_hash` ("111...1"
+ *  when no local contract) and the `global_contract_*` fields (absent or null
+ *  when the account uses no global contract). */
+export async function accountCodeOf(provider: Provider, accountId: string): Promise<AccountCode> {
   const acc = (await withRetry(() =>
     provider.viewAccount({ accountId, blockQuery: { finality: "final" } } as never),
-  )) as unknown as { code_hash: string };
-  return acc.code_hash;
+  )) as unknown as AccountCode;
+  return {
+    code_hash: acc.code_hash,
+    global_contract_hash: acc.global_contract_hash ?? null,
+    global_contract_account_id: acc.global_contract_account_id ?? null,
+  };
+}
+
+/** `view_account.code_hash` of `accountId` ("111...1" when no contract). A
+ *  global contract also shows all ones: use `accountCodeOf` for confinement. */
+export async function codeHashOf(provider: Provider, accountId: string): Promise<string> {
+  return (await accountCodeOf(provider, accountId)).code_hash;
 }

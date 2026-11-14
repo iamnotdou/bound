@@ -7,12 +7,21 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Provider } from "near-api-js";
 import { z } from "zod";
-import { accountFromKey, codeHashOf, testnetProvider, tryCall, view, withRetry } from "./client.js";
+import {
+  accountCodeOf,
+  accountFromKey,
+  testnetProvider,
+  tryCall,
+  view,
+  withRetry,
+} from "./client.js";
 import { loadDeployment } from "./deployment.js";
 import {
   assess,
   coverageOf,
   fmtUsdc,
+  globalContractOf,
+  hasNoCode,
   isConfined,
   keysConfined,
   NO_CODE_HASH,
@@ -117,7 +126,7 @@ export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
     "near_check_agent_keys",
     {
       description:
-        "List a NEAR account's access keys and contract code hash and say whether it is confined: every key a function-call key for the Bound contract's pay method AND no contract code deployed on the account (code would run as the agent without a key), so NEAR itself refuses any other spend. Call this together with near_verify_agent: the Bound contract cannot check confinement itself.",
+        "List a NEAR account's access keys and contract code hash and say whether it is confined: every key a function-call key for the Bound contract's pay method AND no contract code on the account, neither local (code_hash all ones) nor a NEAR global contract (global_contract_hash and global_contract_account_id empty), since code would run as the agent without a key, so NEAR itself refuses any other spend. Call this together with near_verify_agent: the Bound contract cannot check confinement itself.",
       inputSchema: { agent: accountId },
       annotations: { readOnlyHint: true },
     },
@@ -128,14 +137,18 @@ export function createNearMcpServer(env: NearToolEnv = {}): McpServer {
           finalityQuery: { finality: "final" },
         } as never),
       )) as unknown as { keys: AccessKeyInfo[] };
-      const codeHash = await codeHashOf(provider, agent);
+      const code = await accountCodeOf(provider, agent);
       return text({
         agent,
         contract: contractId,
-        confined: isConfined(r.keys, contractId, codeHash),
+        confined: isConfined(r.keys, contractId, code),
         keys_confined: keysConfined(r.keys, contractId),
-        code_hash: codeHash,
-        no_contract_code: codeHash === NO_CODE_HASH,
+        code_hash: code.code_hash,
+        global_contract_hash: code.global_contract_hash,
+        global_contract_account_id: code.global_contract_account_id,
+        no_contract_code: hasNoCode(code),
+        no_local_code: code.code_hash === NO_CODE_HASH,
+        global_contract: globalContractOf(code),
         keys: r.keys,
       });
     }),
